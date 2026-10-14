@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,10 +58,10 @@ func stableProgramLiteral(lit *ast.BasicLit, pathRewritten bool) bool {
 
 // rawExecSites counts the exec.Command calls in src whose program is not a stable literal and that no etxtbsyRetryHelpers closure returns: each can exec a fresh fixture and fail with ETXTBSY (golang/go#22315). A saved exec.Command value counts too, since what it later runs is not checked.
 func rawExecSites(t *testing.T, name, src string) int {
-	return rawExecSitesIn(t, name, src, false)
+	return rawExecSitesIn(t, name, src, false, nil)
 }
 
-// packageRawExecSites returns raw sites per file, with PATH rewrites read package-wide.
+// packageRawExecSites returns raw sites per file, with PATH rewrites and execNames read package-wide.
 func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int {
 	t.Helper()
 	var parsed []*ast.File
@@ -69,18 +70,19 @@ func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int
 		byName[name] = parseSource(t, name, src)
 		parsed = append(parsed, byName[name])
 	}
+	names := packageExecNames(parsed)
 	rewrites := packageRewritesProcessPath(parsed)
 	counts := map[string]int{}
 	for name, file := range byName {
-		if n := rawExecSitesInFile(file, rewrites); n > 0 {
+		if n := rawExecSitesInFile(file, rewrites, &names); n > 0 {
 			counts[name] = n
 		}
 	}
 	return counts
 }
 
-// execCommandNameIn returns, under every os/exec import name of file, a function naming exec.Command or CommandContext, and whether os/exec is dot imported.
-func execCommandNameIn(file *ast.File) (func(ast.Expr) string, bool) {
+// execCommandNameIn returns, under every os/exec import name of file, a function naming exec.Command or CommandContext, a predicate for the exec.Cmd type, and whether os/exec is dot imported.
+func execCommandNameIn(file *ast.File) (func(ast.Expr) string, func(ast.Expr) bool, bool) {
 	execPkgs := map[string]bool{}
 	for _, imp := range file.Imports {
 		if path, err := strconv.Unquote(imp.Path.Value); err == nil && path == "os/exec" {
@@ -112,13 +114,25 @@ func execCommandNameIn(file *ast.File) (func(ast.Expr) string, bool) {
 			return name
 		}
 		return ""
-	}, execPkgs["."]
+	}, func(expr ast.Expr) bool { return member(expr) == "Cmd" }, execPkgs["."]
 }
 
-// rawExecSitesIn is rawExecSites with a package-wide PATH rewrite.
-func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool) int {
+// execNames are a package's os/exec names: exec.Command aliases, exec.Cmd types and command holders.
+type execNames struct {
+	aliases, factories, holders map[any]bool
+	cmdTypes                    map[string]bool
+}
+
+// packageExecNames collects the execNames of files read together.
+func packageExecNames(files []*ast.File) execNames {
+	aliases, factories := packageCommandAliases(files)
+	return execNames{aliases, factories, commandHolders(files, aliases), cmdTypeNames(files)}
+}
+
+// rawExecSitesIn is rawExecSites with package-wide PATH and execNames; nil names reads the file alone.
+func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, names *execNames) int {
 	t.Helper()
-	return rawExecSitesInFile(parseSource(t, name, src), packageRewritesPath)
+	return rawExecSitesInFile(parseSource(t, name, src), packageRewritesPath, names)
 }
 
 func parseSource(t *testing.T, name, src string) *ast.File {
@@ -130,21 +144,41 @@ func parseSource(t *testing.T, name, src string) *ast.File {
 	return file
 }
 
-// rawExecSitesInFile counts the raw exec sites of one parsed file.
-func rawExecSitesInFile(file *ast.File, packageRewritesPath bool) int {
-	execCommandName, dotImported := execCommandNameIn(file)
-	aliases, factories := savedSetenvAliases(file)
-	pathRewritten := packageRewritesPath || rewritesProcessPath(file, aliases, factories)
+// rawExecSitesInFile counts file, the parse names was built from, since local holders key by its objects.
+func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNames) int {
+	execCommandName, isCmdType, dotImported := execCommandNameIn(file)
+	writers, factories := savedSetenvAliases(file)
+	pathRewritten := packageRewritesPath || rewritesProcessPath(file, writers, factories)
+	if names == nil {
+		own := packageExecNames([]*ast.File{file})
+		names = &own
+	}
+	aliases := names.aliases
+	isCommand, _ := commandValueIn(file, execCommandName, isCmdType, names.holders)
 	count := 0
 	called := map[ast.Expr]bool{}
 	// A file that declares its own execRetryETXTBSY shadows the helper, so those calls are not trusted.
 	helpersShadowed := declaresRetryHelper(file)
 	// retried holds the command expressions a retry helper's closure returns: only those run under the helper's ETXTBSY retry. Any other execution inside the closure runs while the closure builds its result and is raw.
 	retried := map[ast.Expr]bool{}
-	// build returns the counted node for an exec.Command call.
+	isCmdLit := func(lit *ast.CompositeLit) bool {
+		id, ok := lit.Type.(*ast.Ident)
+		return isCmdType(lit.Type) || ok && names.cmdTypes[id.Name]
+	}
+	// build returns the counted node for an exec.Command call or a Cmd literal, direct or by &.
 	build := func(expr ast.Expr) ast.Expr {
-		if v, ok := unparen(expr).(*ast.CallExpr); ok && execCommandName(v.Fun) != "" {
-			return v
+		if u, ok := unparen(expr).(*ast.UnaryExpr); ok && u.Op == token.AND {
+			expr = u.X
+		}
+		switch v := unparen(expr).(type) {
+		case *ast.CallExpr:
+			if execCommandName(v.Fun) != "" {
+				return v
+			}
+		case *ast.CompositeLit:
+			if isCmdLit(v) {
+				return v
+			}
 		}
 		return nil
 	}
@@ -168,8 +202,38 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool) int {
 		return true
 	})
 	ast.Inspect(file, func(c ast.Node) bool {
-		call, ok := c.(*ast.CallExpr)
-		if !ok {
+		var call *ast.CallExpr
+		switch n := c.(type) {
+		case *ast.AssignStmt:
+			// A command whose Path field is reassigned runs a program that exec.Command never saw, so each such assignment is a raw site. A Path field of a value that holds no command starts nothing.
+			for _, lhs := range n.Lhs {
+				if sel, ok := unparen(lhs).(*ast.SelectorExpr); ok && sel.Sel.Name == "Path" && isCommand(sel.X) {
+					count++
+				}
+			}
+			return true
+		case *ast.CompositeLit:
+			// A Cmd literal names its program in Path, not through exec.Command.
+			if isCmdLit(n) && !retried[n] {
+				count++
+			}
+			return true
+		case *ast.CallExpr:
+			call = n
+		default:
+			return true
+		}
+		// Every call through a saved exec.Command value, or one a factory returns, is a raw site.
+		fun, calls := unparen(call.Fun), aliases
+		if inner, ok := fun.(*ast.CallExpr); ok {
+			fun, calls = factoryName(inner), names.factories
+		}
+		if id, ok := fun.(*ast.Ident); ok && (calls[id.Name] || calls[id.Obj]) {
+			count++
+			return true
+		}
+		if sel, ok := fun.(*ast.SelectorExpr); ok && calls[commandField(sel.Sel.Name)] {
+			count++
 			return true
 		}
 		if name := execCommandName(call.Fun); name != "" {
@@ -360,6 +424,11 @@ func declaresRetryHelper(file *ast.File) bool {
 	return found
 }
 
+// factoryName returns a factory call's callee as an identifier, reading a method such as m.factory() or an instantiation such as factory[int]() by name.
+func factoryName(call *ast.CallExpr) ast.Expr {
+	return ast.NewIdent(calleeName(call.Fun))
+}
+
 // unparen strips parentheses, so (exec.Command) and (run) read as what they wrap.
 func unparen(expr ast.Expr) ast.Expr {
 	for {
@@ -371,6 +440,350 @@ func unparen(expr ast.Expr) ast.Expr {
 	}
 }
 
+// returnsHeld reports whether a function returns a held value in any return statement, or holds one in a named result that a bare return carries; the one reader of both PATH writer and command factories.
+func returnsHeld(fn *ast.FuncType, body *ast.BlockStmt, named func(*ast.Ident) bool, holds func(ast.Expr) bool) bool {
+	found := false
+	if fn.Results != nil {
+		for _, field := range fn.Results.List {
+			for _, name := range field.Names {
+				found = found || named(name)
+			}
+		}
+	}
+	ast.Inspect(body, func(c ast.Node) bool {
+		if ret, ok := c.(*ast.ReturnStmt); ok {
+			for _, result := range ret.Results {
+				found = found || holds(result)
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// commandField keys a struct field given a command constructor by its name alone, since the AST cannot always type the value a call selects the field from; a same-named field of another struct type counts too, which only makes the count stricter.
+type commandField string
+
+// packageCommandAliases lists, to a fixed point, exec.Command aliases and factories that return one.
+func packageCommandAliases(files []*ast.File) (map[any]bool, map[any]bool) {
+	aliases, factories, params, fields := map[any]bool{}, map[any]bool{}, funcParams(files), structFields(files)
+	for {
+		added := false
+		for _, file := range files {
+			execCommandName, _, _ := execCommandNameIn(file)
+			added = collectCommandAliases(aliases, factories, params, fields, file, execCommandName) || added
+		}
+		if !added {
+			return aliases, factories
+		}
+	}
+}
+
+// funcParams lists by name the parameters of each function, method and named func literal; Go names all of a list's parameters or none.
+func funcParams(files []*ast.File) map[string][][]*ast.Ident {
+	params := map[string][][]*ast.Ident{}
+	add := func(name, value ast.Expr) {
+		id, named := name.(*ast.Ident)
+		if lit, ok := value.(*ast.FuncLit); ok && named {
+			var names []*ast.Ident
+			for _, field := range lit.Type.Params.List {
+				names = append(names, field.Names...)
+			}
+			params[id.Name] = append(params[id.Name], names)
+		}
+	}
+	for _, file := range files {
+		ast.Inspect(file, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.FuncDecl:
+				add(n.Name, &ast.FuncLit{Type: n.Type})
+			case *ast.AssignStmt:
+				for i := range min(len(n.Lhs), len(n.Rhs)) {
+					add(n.Lhs[i], n.Rhs[i])
+				}
+			case *ast.ValueSpec:
+				for i := range min(len(n.Names), len(n.Values)) {
+					add(n.Names[i], n.Values[i])
+				}
+			}
+			return true
+		})
+	}
+	return params
+}
+
+// structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
+func structFields(files []*ast.File) map[string][][]string {
+	fields := map[string][][]string{}
+	for _, file := range files {
+		ast.Inspect(file, func(c ast.Node) bool {
+			if spec, ok := c.(*ast.TypeSpec); ok {
+				if st, ok := spec.Type.(*ast.StructType); ok {
+					var names []string
+					for _, field := range st.Fields.List {
+						if len(field.Names) == 0 {
+							names = append(names, "")
+						}
+						for _, name := range field.Names {
+							names = append(names, name.Name)
+						}
+					}
+					fields[spec.Name.Name] = append(fields[spec.Name.Name], names)
+				}
+			}
+			return true
+		})
+	}
+	return fields
+}
+
+// collectCommandAliases adds one pass of file's aliases and factories, including a parameter that receives one, and reports whether any was new.
+func collectCommandAliases(aliases, factories map[any]bool, params map[string][][]*ast.Ident, fields map[string][][]string, file *ast.File, execCommandName func(ast.Expr) string) bool {
+	added := false
+	add := func(set map[any]bool, name any) {
+		if !set[name] {
+			set[name], added = true, true
+		}
+	}
+	var isAlias func(value ast.Expr) bool
+	isAlias = func(value ast.Expr) bool {
+		switch v := unparen(value).(type) {
+		case *ast.Ident:
+			return aliases[v.Name] || aliases[v.Obj] || execCommandName(v) != ""
+		case *ast.SelectorExpr:
+			return aliases[commandField(v.Sel.Name)] || execCommandName(v) != ""
+		case *ast.CallExpr: // a factory's result, or a conversion such as runner(exec.Command), matched without types so any single-argument call of a constructor only fails closed
+			id, ok := factoryName(v).(*ast.Ident)
+			return ok && factories[id.Name] || len(v.Args) == 1 && isAlias(v.Args[0])
+		}
+		return execCommandName(value) != ""
+	}
+	returnsAlias := func(fn *ast.FuncType, body *ast.BlockStmt) bool {
+		return returnsHeld(fn, body, func(name *ast.Ident) bool { return aliases[name.Name] || aliases[name.Obj] }, isAlias)
+	}
+	record := func(names []ast.Expr, values []ast.Expr) {
+		if len(values) == 1 && len(names) > 1 { // any result of a tuple call may be the alias
+			values = slices.Repeat(values, len(names))
+		}
+		for i := 0; i < len(values) && i < len(names); i++ {
+			if sel, ok := unparen(names[i]).(*ast.SelectorExpr); ok && isAlias(values[i]) {
+				add(aliases, commandField(sel.Sel.Name))
+			}
+			id, ok := unparen(names[i]).(*ast.Ident)
+			lit, isLit := unparen(values[i]).(*ast.FuncLit)
+			from, isIdent := unparen(values[i]).(*ast.Ident)
+			switch {
+			case !ok:
+			case isAlias(values[i]):
+				add(aliases, id.Name)
+			case isLit && returnsAlias(lit.Type, lit.Body), isIdent && factories[from.Name]:
+				add(factories, id.Name)
+			}
+		}
+	}
+	ast.Inspect(file, func(c ast.Node) bool {
+		switch n := c.(type) {
+		case *ast.AssignStmt:
+			record(n.Lhs, n.Rhs)
+		case *ast.ValueSpec:
+			names := make([]ast.Expr, len(n.Names))
+			for i, name := range n.Names {
+				names[i] = name
+			}
+			record(names, n.Values)
+		case *ast.FuncDecl:
+			if n.Body != nil && returnsAlias(n.Type, n.Body) {
+				add(factories, n.Name.Name)
+			}
+		case *ast.CompositeLit: // a struct field given a command constructor, by key or by position
+			typ := literalType(n.Type)
+			for i, elt := range n.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					if key, ok := kv.Key.(*ast.Ident); ok && isAlias(kv.Value) {
+						add(aliases, commandField(key.Name))
+					}
+				} else if typ != "" && isAlias(elt) {
+					for _, names := range fields[typ] {
+						if i < len(names) {
+							add(aliases, commandField(names[i]))
+						}
+					}
+				}
+			}
+		case *ast.CallExpr: // a parameter given a command constructor is an alias in its callee's scope
+			if callee, ok := factoryName(n).(*ast.Ident); ok {
+				for _, names := range params[callee.Name] {
+					for i, name := range names {
+						if i < len(n.Args) && name.Obj != nil && isAlias(n.Args[i]) {
+							add(aliases, name.Obj)
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return added
+}
+
+// cmdTypeNames lists, to a fixed point, types declared from exec.Cmd or from one of those.
+func cmdTypeNames(files []*ast.File) map[string]bool {
+	cmdTypes := map[string]bool{}
+	for added := true; added; {
+		added = false
+		for _, file := range files {
+			_, isCmdType, _ := execCommandNameIn(file)
+			ast.Inspect(file, func(c ast.Node) bool {
+				if spec, ok := c.(*ast.TypeSpec); ok && !cmdTypes[spec.Name.Name] {
+					if id, ok := spec.Type.(*ast.Ident); isCmdType(spec.Type) || ok && cmdTypes[id.Name] {
+						cmdTypes[spec.Name.Name] = true
+						added = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	return cmdTypes
+}
+
+// commandValueIn returns predicates for an expression that yields a command (an exec.Command or holder call, a holder, or new or a literal of a Cmd type) and for a type that mentions exec.Cmd or a holder outside its parameters.
+func commandValueIn(file *ast.File, execCommandName func(ast.Expr) string, isCmdType func(ast.Expr) bool, holders map[any]bool) (func(ast.Expr) bool, func(ast.Node) bool) {
+	var mentionsCmd func(ast.Node) bool
+	mentionsCmd = func(typ ast.Node) bool {
+		found := false
+		ast.Inspect(typ, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.FuncType:
+				found = found || n.Results != nil && mentionsCmd(n.Results)
+				return false
+			case *ast.Ident:
+				found = found || holders[holderKey(file, n)] || isCmdType(n)
+			case *ast.SelectorExpr:
+				found = found || isCmdType(n)
+			}
+			return !found
+		})
+		return found
+	}
+	var isCommand func(ast.Expr) bool
+	isCommand = func(expr ast.Expr) bool {
+		switch v := unparen(expr).(type) {
+		case *ast.UnaryExpr:
+			return v.Op == token.AND && isCommand(v.X)
+		case *ast.StarExpr:
+			return isCommand(v.X)
+		case *ast.IndexExpr:
+			return isCommand(v.X)
+		case *ast.TypeAssertExpr: // boxed.(*exec.Cmd) is a command; x.(type) has no Type
+			return v.Type != nil && mentionsCmd(v.Type) || isCommand(v.X)
+		case *ast.Ident:
+			return holders[holderKey(file, v)]
+		case *ast.SelectorExpr:
+			return holders[v.Sel.Name]
+		case *ast.CompositeLit:
+			return v.Type != nil && mentionsCmd(v.Type)
+		case *ast.FuncLit:
+			return mentionsCmd(v.Type)
+		case *ast.CallExpr:
+			if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "new" && len(v.Args) == 1 {
+				return mentionsCmd(v.Args[0])
+			}
+			return execCommandName(v.Fun) != "" || isCommand(v.Fun)
+		}
+		return false
+	}
+	return isCommand, mentionsCmd
+}
+
+// holderKey keys a name declared inside a function by the parser's object for its declaration, so it holds a command only in its own scope, and any other name (package level, from another file) by the name itself.
+func holderKey(file *ast.File, id *ast.Ident) any {
+	if id.Obj != nil && file.Scope.Lookup(id.Name) != id.Obj {
+		return id.Obj
+	}
+	return id.Name
+}
+
+// commandHolders lists, to a fixed point across files, the names that can hold a command: aliases, names declared with a type that mentions exec.Cmd, and names assigned or ranged from a command value. Struct fields, read through selectors, match by name alone, which only makes the count stricter.
+func commandHolders(files []*ast.File, aliases map[any]bool) map[any]bool {
+	holders := map[any]bool{}
+	for name := range aliases {
+		holders[name] = true
+	}
+	for added := true; added; {
+		added = false
+		for _, file := range files {
+			execCommandName, isCmdType, _ := execCommandNameIn(file)
+			isCommand, mentionsCmd := commandValueIn(file, execCommandName, isCmdType, holders)
+			markKey := func(key any) {
+				if !holders[key] {
+					holders[key], added = true, true
+				}
+			}
+			mark := func(exprs ...ast.Expr) {
+				for _, expr := range exprs {
+					if id, ok := unparen(expr).(*ast.Ident); ok && id.Name != "_" {
+						markKey(holderKey(file, id))
+					}
+				}
+			}
+			assign := func(names, values []ast.Expr) {
+				if len(values) == 1 && len(names) > 1 && isCommand(values[0]) {
+					mark(names...)
+				}
+				for i, value := range values {
+					if i < len(names) && isCommand(value) {
+						mark(names[i])
+					}
+				}
+			}
+			ast.Inspect(file, func(c ast.Node) bool {
+				switch n := c.(type) {
+				case *ast.AssignStmt:
+					assign(n.Lhs, n.Rhs)
+				case *ast.ValueSpec:
+					names := make([]ast.Expr, len(n.Names))
+					for i, name := range n.Names {
+						names[i] = name
+					}
+					if n.Type != nil && mentionsCmd(n.Type) {
+						mark(names...)
+					}
+					assign(names, n.Values)
+				case *ast.StructType:
+					for _, field := range n.Fields.List {
+						for _, name := range field.Names {
+							if mentionsCmd(field.Type) {
+								markKey(name.Name)
+							}
+						}
+					}
+				case *ast.Field:
+					if mentionsCmd(n.Type) {
+						for _, name := range n.Names {
+							mark(name)
+						}
+					}
+				case *ast.FuncDecl:
+					if n.Type.Results != nil && mentionsCmd(n.Type.Results) {
+						mark(n.Name)
+					}
+				case *ast.TypeSpec:
+					if mentionsCmd(n.Type) {
+						mark(n.Name)
+					}
+				case *ast.RangeStmt:
+					if isCommand(n.X) {
+						mark(n.Key, n.Value)
+					}
+				}
+				return true
+			})
+		}
+	}
+	return holders
+}
+
 // envWriters can rewrite PATH, called through any qualifier or bare, as under a dot import of os.
 var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
 
@@ -379,31 +792,9 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 	savedSetenv, factories = map[string]bool{}, map[string]bool{}
 	params := functionParams(files...)
 	fields := structFields(files)
-	var isSetenv func(value ast.Expr) bool
-	isSetenv = func(value ast.Expr) bool {
-		switch v := unparen(value).(type) {
-		case *ast.SelectorExpr:
-			return envWriters[v.Sel.Name] || savedSetenv[v.Sel.Name]
-		case *ast.Ident:
-			return savedSetenv[v.Name] || envWriters[v.Name]
-		case *ast.CallExpr:
-			// A call of a function that returns a writer, such as writer()("PATH", dir).
-			return factories[calleeName(v.Fun)]
-		}
-		return false
-	}
-	// returnsWriter reports whether a function body returns a writer in any return statement.
-	returnsWriter := func(body *ast.BlockStmt) bool {
-		found := false
-		ast.Inspect(body, func(c ast.Node) bool {
-			if ret, ok := c.(*ast.ReturnStmt); ok {
-				for _, result := range ret.Results {
-					found = found || isSetenv(result)
-				}
-			}
-			return !found
-		})
-		return found
+	isSetenv := func(value ast.Expr) bool { return isPathWriter(value, savedSetenv, factories) }
+	returnsWriter := func(fn *ast.FuncType, body *ast.BlockStmt) bool {
+		return returnsHeld(fn, body, func(name *ast.Ident) bool { return savedSetenv[name.Name] }, isSetenv)
 	}
 	// A name or a field that receives a writer holds it; a field is matched by
 	// name across the package, which only lists more.
@@ -430,7 +821,7 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 				savedSetenv[name] = true
 				added = true
 			}
-			if lit, ok := unparen(value).(*ast.FuncLit); ok && !factories[name] && returnsWriter(lit.Body) {
+			if lit, ok := unparen(value).(*ast.FuncLit); ok && !factories[name] && returnsWriter(lit.Type, lit.Body) {
 				factories[name] = true
 				added = true
 			}
@@ -452,7 +843,7 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 					added = record(names, n.Values) || added
 				case *ast.FuncDecl:
 					// A function or method that returns a writer is a factory, matched by name.
-					if n.Body != nil && !factories[n.Name.Name] && returnsWriter(n.Body) {
+					if n.Body != nil && !factories[n.Name.Name] && returnsWriter(n.Type, n.Body) {
 						factories[n.Name.Name] = true
 						added = true
 					}
@@ -502,6 +893,20 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 	}
 }
 
+// isPathWriter reports whether value is an envWriter, a saved writer, a factory call, or a single-argument call of a writer such as setter(os.Setenv).
+func isPathWriter(value ast.Expr, savedSetenv, factories map[string]bool) bool {
+	switch v := unparen(value).(type) {
+	case *ast.SelectorExpr:
+		return envWriters[v.Sel.Name] || savedSetenv[v.Sel.Name]
+	case *ast.Ident:
+		return savedSetenv[v.Name] || envWriters[v.Name]
+	case *ast.CallExpr:
+		// A call of a function that returns a writer, such as writer()("PATH", dir), or a conversion, matched without types, so any single-argument call of a writer only fails closed.
+		return factories[calleeName(v.Fun)] || len(v.Args) == 1 && isPathWriter(v.Args[0], savedSetenv, factories)
+	}
+	return false
+}
+
 // calleeName names the function a call expression calls, bare or through a
 // selector, under any parentheses and generic instantiations such as
 // (rewrite[int]) or pair[K, V]; "" otherwise.
@@ -520,31 +925,6 @@ func calleeName(fn ast.Expr) string {
 			return ""
 		}
 	}
-}
-
-// structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
-func structFields(files []*ast.File) map[string][][]string {
-	fields := map[string][][]string{}
-	for _, file := range files {
-		ast.Inspect(file, func(c ast.Node) bool {
-			if spec, ok := c.(*ast.TypeSpec); ok {
-				if st, ok := spec.Type.(*ast.StructType); ok {
-					var names []string
-					for _, field := range st.Fields.List {
-						if len(field.Names) == 0 {
-							names = append(names, "")
-						}
-						for _, name := range field.Names {
-							names = append(names, name.Name)
-						}
-					}
-					fields[spec.Name.Name] = append(fields[spec.Name.Name], names)
-				}
-			}
-			return true
-		})
-	}
-	return fields
 }
 
 // literalType names the struct type a composite literal builds, through a pointer, a package qualifier or generic instantiation; "" when the type is elided.
@@ -620,12 +1000,7 @@ func rewritesProcessPath(file *ast.File, savedSetenv, factories map[string]bool)
 		if !ok || len(call.Args) == 0 {
 			return true
 		}
-		if fn, ok := unparen(call.Fun).(*ast.CallExpr); ok {
-			// writer()("PATH", dir): the callee is a call of a writer factory.
-			if !factories[calleeName(fn.Fun)] {
-				return true
-			}
-		} else if name := calleeName(call.Fun); !envWriters[name] && !savedSetenv[name] {
+		if !isPathWriter(call.Fun, savedSetenv, factories) {
 			return true
 		}
 		lit, ok := call.Args[0].(*ast.BasicLit)
@@ -746,12 +1121,34 @@ func s(p string) { execRetryETXTBSY(func() *exec.Cmd { func() *exec.Cmd { return
 func u(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = func() string { c.Run(); return "/" }(); return c }) }
 func v(p string) { run := (exec.Command); run(p); (exec.Command)(p) }
 func w(p string) { var run func(string, ...string) *exec.Cmd; (run) = exec.Command; run(p) }
-func x(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; defer func() { _ = c.Run() }(); c = exec.Command(p); return c }) }
-func y(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; run := func() { _ = c.Run() }; c = exec.Command(p); run(); return c }) }
-func z(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; c = exec.Command(p); return c }) }
+func x(p string) { c := exec.Command("/bin/true"); c.Path = p; c.Run() }
+func y(p string) { (&exec.Cmd{Path: p}).Run() }
+func z(p string) { type command = exec.Cmd; type named exec.Cmd; (&command{Path: p}).Run(); _ = named{Path: p} }
+type request struct{ Path string }
+func aa(p string) { var r request; r.Path = p }
+func ab(p string) { var c exec.Cmd; c.Path = p; c.Run() }
+func ac(c *exec.Cmd, p string) { c.Path = p; c.Run() }
+type suite struct{ cmd *exec.Cmd }
+func ad(s suite, p string) { s.cmd.Path = p; s.cmd.Run() }
+func ae(p string) { c := new(exec.Cmd); c.Path = p; c.Run() }
+func factory() func(string, ...string) *exec.Cmd { return exec.Command }
+func af(p string) { launch := factory(); launch(p); mk := func() func(string, ...string) *exec.Cmd { return launch }; mk()(p) }
+func ag(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; defer func() { _ = c.Run() }(); c = exec.Command(p); return c }) }
+func ah(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; use := func() { _ = c.Run() }; c = exec.Command(p); use(); return c }) }
+func ai(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; c = exec.Command(p); return c }) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 20 {
-		t.Fatalf("rawExecSites = %d, want 20 (every planted func but b, c, h, o and z counts, and v twice; a saved exec.Command value counts where it is saved)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 36 {
+		t.Fatalf("rawExecSites = %d, want 36 (every planted func but b, c, h, o, aa and ai counts; see each line)", got)
+	}
+	const notRaw = `package x
+import "os/exec"
+type request struct{ Path string }
+func a(request *request, value string) { request.Path = value }
+func b(p string) { execRetryETXTBSY(func() *exec.Cmd { return &exec.Cmd{Path: p} }) }
+func c(p string) { execRetryETXTBSY(func() *exec.Cmd { c := &exec.Cmd{Path: p}; c.Dir = "/"; return c }) }
+`
+	if got := rawExecSites(t, "not_raw.go", notRaw); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a Path assignment on a value that holds no command, and Cmd literals a retry helper returns)", got)
 	}
 	// A function that declares its own same-name helper shadows it, so nothing in that file is exempt.
 	const shadowedHelper = `package x
@@ -858,10 +1255,10 @@ func a(t *testing.T) { first := t.Setenv; second := first; second("PATH", "/tmp/
 import "os/exec"
 func a() { exec.Command("git", "init") }
 `
-	if got := rawExecSitesIn(t, "plain.go", plain, true); got != 1 {
+	if got := rawExecSitesIn(t, "plain.go", plain, true, nil); got != 1 {
 		t.Fatalf("rawExecSitesIn = %d, want 1 (git after a PATH rewrite elsewhere in the package)", got)
 	}
-	if got := rawExecSitesIn(t, "plain.go", plain, false); got != 0 {
+	if got := rawExecSitesIn(t, "plain.go", plain, false, nil); got != 0 {
 		t.Fatalf("rawExecSitesIn = %d, want 0 (no PATH rewrite anywhere)", got)
 	}
 	const forwardedSetenv = `package x
@@ -937,6 +1334,122 @@ func a(dir string) { writer()("PATH", dir); exec.Command("git") }
 	if got := rawExecSites(t, "factory_not_setenv.go", factoryNotSetenv); got != 0 {
 		t.Fatalf("rawExecSites = %d, want 0 (a factory that returns no writer is not a PATH rewrite)", got)
 	}
+	const namedResultFactory = `package x
+import ("os"; "os/exec")
+func writer() (set func(string, string) error) { set = os.Setenv; return }
+func a(dir string) { writer()("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "named_result_factory.go", namedResultFactory); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a writer a bare return carries in a named result)", got)
+	}
+	const namedResultNotSetenv = `package x
+import "os/exec"
+func writer() (set func(string, string) error) { set = func(string, string) error { return nil }; return }
+func a(dir string) { writer()("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "named_result_not_setenv.go", namedResultNotSetenv); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a named result that holds no writer is not a PATH rewrite)", got)
+	}
+	const convertedSetenv = `package x
+import ("os"; "os/exec")
+type setter func(string, string) error
+func a(dir string) { setter(os.Setenv)("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "converted_setenv.go", convertedSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a writer converted to a named func type)", got)
+	}
+	const convertedSavedSetenv = `package x
+import ("os"; "os/exec")
+type setter func(string, string) error
+func a(dir string) { s := setter(os.Setenv); s("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "converted_saved_setenv.go", convertedSavedSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a saved conversion of a writer)", got)
+	}
+	const convertedNotSetenv = `package x
+import "os/exec"
+type setter func(string, string) error
+func a(dir string) { setter(func(string, string) error { return nil })("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "converted_not_setenv.go", convertedNotSetenv); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a conversion of a closure that holds no writer is not a PATH rewrite)", got)
+	}
+	// An alias of another file's alias propagates to a fixed point, and a constructor passed to a function, method or func value counts per call through the parameter; a stable closure counts nothing.
+	counts := packageRawExecSites(t, map[string]string{
+		"decl.go":   "package x\nimport \"os/exec\"\nvar first = exec.Command\n",
+		"chain.go":  "package x\nvar second = first\nfunc a(p string) { second(p) }\n",
+		"use.go":    "package x\nimport \"os/exec\"\nfunc b(p string, h helper) { invoke(exec.Command, p); h.once(exec.Command); fv := func(run func(string, ...string) *exec.Cmd) { run(p) }; fv(exec.Command); stable(func(string, ...string) *exec.Cmd { return exec.Command(\"git\") }) }\n",
+		"helper.go": "package x\nimport \"os/exec\"\ntype helper struct{}\nfunc invoke(run func(string, ...string) *exec.Cmd, p string) { run(p).Run(); run(p).Run() }\nfunc (helper) once(run func(string, ...string) *exec.Cmd) { run(\"x\") }\nfunc stable(run func(string, ...string) *exec.Cmd) { run(\"x\").Run() }\n",
+	})
+	if counts["decl.go"] != 1 || counts["chain.go"] != 1 || counts["use.go"] != 4 || counts["helper.go"] != 3 {
+		t.Fatalf("package counts = %v, want decl.go:1 chain.go:1 use.go:4 helper.go:3 (an alias of another file's alias; use.go's three references, fv's call, invoke's two calls, once's call; stable counts nothing)", counts)
+	}
+	// An exec.Cmd type alias and a Cmd variable from one file count their literal and Path write in another.
+	counts = packageRawExecSites(t, map[string]string{
+		"decl.go": "package x\nimport \"os/exec\"\ntype command = exec.Cmd\nvar shared *exec.Cmd\n",
+		"use.go":  "package x\nfunc a(p string) { (&command{Path: p}).Run(); shared.Path = p }\n",
+	})
+	if counts["decl.go"] != 0 || counts["use.go"] != 2 {
+		t.Fatalf("package counts = %v, want use.go:2 (a Cmd type alias and a Cmd variable declared in another file)", counts)
+	}
+	// A holder resolves in its own scope, not as c in another file or block.
+	counts = packageRawExecSites(t, map[string]string{
+		"cmd.go":   "package x\nimport \"os/exec\"\nfunc a(c *exec.Cmd, p string) { c.Path = p; { c := request{}; c.Path = p } }\n",
+		"other.go": "package x\ntype request struct{ Path string }\nfunc b(c request, p string) { c.Path = p }\n",
+	})
+	if counts["cmd.go"] != 1 || counts["other.go"] != 0 {
+		t.Fatalf("package counts = %v, want cmd.go:1 (an unrelated c in another file or an inner scope)", counts)
+	}
+	// Method factories count like function factories; a returned Cmd counts where it is built.
+	const methodFactory = `package x
+import "os/exec"
+type maker struct{}
+func (maker) factory() func(string, ...string) *exec.Cmd { return exec.Command }
+func (maker) build(p string) *exec.Cmd { return exec.Command(p) }
+func (maker) pair() (int, func(string, ...string) *exec.Cmd) { return 0, exec.Command }
+func a(m maker, p string) { m.factory()(p); launch := m.factory(); launch(p); m.build(p).Run(); _, run := m.pair(); run(p) }
+`
+	if got := rawExecSites(t, "method_factory.go", methodFactory); got != 6 {
+		t.Fatalf("rawExecSites = %d, want 6 (factory's saved value, calls through m.factory() directly and saved, build's command, and pair's saved value plus a call through its second result)", got)
+	}
+	const namedResultCommandFactory = `package x
+import "os/exec"
+func factory() (run func(string, ...string) *exec.Cmd) { run = exec.Command; return }
+func a(p string) { factory()(p) }
+`
+	if got := rawExecSites(t, "named_result_command_factory.go", namedResultCommandFactory); got != 2 {
+		t.Fatalf("rawExecSites = %d, want 2 (the saved value and a call through a factory whose bare return carries a constructor in a named result)", got)
+	}
+	const convertedConstructor = `package x
+import "os/exec"
+type runner func(string, ...string) *exec.Cmd
+func a(p string) { r := runner(exec.Command); r(p) }
+`
+	if got := rawExecSites(t, "converted_constructor.go", convertedConstructor); got != 2 {
+		t.Fatalf("rawExecSites = %d, want 2 (the converted value and a call through its alias)", got)
+	}
+	// A constructor stored in a struct field, keyed, positional, assigned or through an alias, counts at each call through the field; a field matches by name in every struct type, so logger's run counts too.
+	const fieldConstructor = `package x
+import "os/exec"
+type runner struct{ run func(string, ...string) *exec.Cmd; name string }
+type logger struct{ run func(string) }
+func a(p string) { r := runner{run: exec.Command}; r.run(p); f := r.run; f(p) }
+func b(p string, r *runner) { r.run = exec.Command; r.run(p).Run() }
+func c(p string) { alias := exec.Command; r := &runner{run: alias}; r.run(p); r.run(p) }
+func d(p string) { r := runner{exec.Command, "x"}; r.run(p) }
+func e(l logger, p string) { l.run(p) }
+`
+	if got := rawExecSites(t, "field_constructor.go", fieldConstructor); got != 11 {
+		t.Fatalf("rawExecSites = %d, want 11 (a: reference, field call and saved field; b: reference and call; c: reference and two calls; d: reference and call; e: same-named field)", got)
+	}
+	const fieldStable = `package x
+import "os/exec"
+type runner struct{ run func(string, ...string) *exec.Cmd }
+func a(p string) { r := runner{run: func(string, ...string) *exec.Cmd { return exec.Command("git") }}; r.run(p).Run() }
+`
+	if got := rawExecSites(t, "field_stable.go", fieldStable); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a field that only holds a stable closure)", got)
+	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
 func a() { c := exec.Command("git", "init"); c.Env = []string{"PATH=/tmp/fixtures:" + os.Getenv("PATH")} }
@@ -975,8 +1488,8 @@ func a(p string) { Command(p) }
 func b()         { Command("git") }
 func c(p string) { run := Command; run(p) }
 `
-	if got := rawExecSites(t, "dot.go", dotImported); got != 2 {
-		t.Fatalf("rawExecSites = %d, want 2 (a, and c's saved value)", got)
+	if got := rawExecSites(t, "dot.go", dotImported); got != 3 {
+		t.Fatalf("rawExecSites = %d, want 3 (a, and c's saved value plus its call)", got)
 	}
 }
 
@@ -1022,7 +1535,7 @@ func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob testkit sources: %v (%d files)", err, len(files))
 	}
-	// A PATH rewrite or Setenv alias in any file reaches every other file.
+	// A PATH rewrite, Setenv alias or exec.Command alias in any file reaches every other file.
 	sources := map[string]string{}
 	for _, f := range files {
 		src, err := os.ReadFile(f)
@@ -1078,6 +1591,36 @@ func a(dir string) { w := writer[int]{os.Setenv}; w.set("PATH", dir); exec.Comma
 	} {
 		if got := rawExecSites(t, name, src); got != 1 {
 			t.Errorf("%s: rawExecSites = %d, want 1 (git after a PATH rewrite through an instantiated generic helper)", name, got)
+		}
+	}
+}
+
+func TestExecRatchetCountsGenericProvenance(t *testing.T) {
+	for name, c := range map[string]struct {
+		src  string
+		want int
+	}{
+		"generic_command_factory.go": {`package x
+import "os/exec"
+func factory[T any]() func(string, ...string) *exec.Cmd { return exec.Command }
+func a(fixture string) { factory[int]()(fixture) }
+`, 2},
+		"generic_command_literal.go": {`package x
+import "os/exec"
+type runner[T any] struct{ run func(string, ...string) *exec.Cmd }
+func a(fixture string) { r := runner[int]{exec.Command}; r.run(fixture) }
+`, 2},
+		"boxed_command_path.go": {`package x
+import "os/exec"
+func a(fixture string) {
+	var boxed any = exec.Command("/bin/true")
+	boxed.(*exec.Cmd).Path = fixture
+	boxed.(*exec.Cmd).Run()
+}
+`, 1},
+	} {
+		if got := rawExecSites(t, name, c.src); got != c.want {
+			t.Errorf("%s: rawExecSites = %d, want %d (the reference, plus the call through the generic or boxed provenance)", name, got, c.want)
 		}
 	}
 }

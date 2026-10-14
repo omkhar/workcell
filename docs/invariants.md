@@ -91,17 +91,40 @@ path without `execRetryETXTBSY`. A raw exec runs into ETXTBSY under load.
 go down. A stale-high count also fails, and so does a row above its value at
 the merge base with `origin/main`.
 
-## 2b. Workflow bodies make bounded gh api calls
+## 2b. Workflow bodies reference real scripts and bounded lists
 
-`scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a `run:` body has a `gh api` call with no `--paginate`. It also fails when an expansion hides a command word, a `gh` subcommand or the text of an `eval`. It also fails on an `alias` definition, which can rename any later command. It reads the program a shell runs from `-c`, a heredoc or a here-string. It fails when it cannot spell that program, as in `cat x | bash`.
+`scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a
+`run:` body calls a `./scripts` path that does not exist or that has a `..`
+component. It fails when a `gh api` call has no `--paginate`. It fails when a
+`gh list` call has no `--limit`.
 
-`policy/workflow-refs-baseline.tsv` records the hits that the tree carries today. A new hit fails. A row with no hit also fails. Remove a row when you fix its hit.
+The check also fails when an expansion hides a command word, a `gh` subcommand
+or the text of an `eval`. It also fails on an `alias` definition, which can
+rename any later command. It reads the program a shell runs from `-c`, a
+heredoc or a here-string. It fails when it cannot spell that program, as in
+`cat x | bash`. It fails when a `with:` key is not an input of the action.
+
+The check fails when a `uses:` pin has no row in
+`tests/fixtures/actions/inputs.tsv`. When a pin changes, replace its row. Write
+the input names from the `action.yml` at the new commit, sorted and
+comma-separated.
+
+A testkit case runs each inline jq program against an empty array. A compile
+error fails the test.
+
+`policy/workflow-refs-baseline.tsv` records the hits that the tree carries
+today. A new hit fails. A row with no hit also fails. Remove a row when you fix
+its hit.
 
 ## 2c. Shell scripts must not hide a failed tool
 
-Some idioms turn a failed tool into an empty answer, so a gate passes on nothing. They are a `<(` or `>(` process substitution, and a `$(...)`, `|| true`, `|| :` or stderr sent to `/dev/null` on `find`, `git`, `gh`, `docker` or `getent`. A `$(...)` that runs a variable, a quoted path or `eval` counts as one of those tools. Bash never propagates the status of a process substitution, so every `<(` or `>(` is a hit until a file the walk wrote replaces it.
+Some idioms turn a failed tool into an empty answer, so a gate passes on nothing. They are a `<(` or `>(` process substitution, and a `$(...)`, `|| true`, `|| :` or stderr sent to `/dev/null` on `find`, `git`, `gh`, `docker` or `getent`. A `$(...)` that runs a variable, a quoted path or `eval` counts as one of those tools.
 
-`scripts/check-shell-portability.sh` rejects each idiom in `scripts/` and `runtime/container/` unless the command, or the command after it, captures the status. `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
+`scripts/check-shell-portability.sh` rejects each idiom in `scripts/` and `runtime/container/` unless the command, or the command after it, captures the status. A `$(...)` that is an argument of a command such as `local` or `[[` cannot be captured that way. A heredoc that the check cannot end fails the check. A command can state its reason with a `# fail-closed: <reason>` comment at its line end or alone on the line before. The comment covers only that command.
+
+Bash never propagates the status of a process substitution, and a `# fail-closed:` comment does not cover one. Only `wait "$!"` after a `done < <(` loop or a `NAME_completed` sentinel captures it. No job in the loop may run in the background before that `wait`. For a sentinel, the producer ends with `&& printf '\0'`. The loop sets the flag to 1 only on that empty record. The next command fails unless the flag is 1.
+
+`policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
 
 ## 2d. Validators anchor to decoded structure
 
@@ -110,8 +133,8 @@ A validator that reads content and then matches it with `strings.Contains`,
 `ShellInvocations` or a closed decoder instead.
 
 `scripts/check-validator-anchoring.sh` lists every function that matches text
-this way. It scans `internal/adapters` and `internal/workcellhardening`, test
-files included. It does not track where the text came from. A helper that
+this way. It scans `internal/adapters`, `internal/metadatautil`,
+`internal/testkit` and `internal/workcellhardening`, test files included. It does not track where the text came from. A helper that
 matches content from its caller is listed too. An import alias or a dot import
 does not hide the package. A call through a function value such as
 `contains := strings.Contains` counts.
@@ -185,6 +208,18 @@ a path under `scripts/`, `internal/` or `.github/workflows/` must exist. The
 check drops a leading `./` first. A path with a `..` or symlink component
 fails, and the check does not look it up. Go probes each path through no-follow
 descriptors.
+
+`validate-repo.sh`, a CI job script or a workflow must run a cited
+`scripts/*.sh` path as a command. Thus a doc cannot cite a gate that nothing
+runs. The check reads every command that a lane can run, so a command after
+`false &&` or after an `exit` counts. A comment, a heredoc or an array member
+does not count. A workflow path starts from the working directory of its step,
+and a `cd` before it moves that directory.
+
+A lane fails the check when it can change what a later command runs. An
+`alias` does this, and so does a source of a path outside `${ROOT_DIR}`. A
+program name that the check cannot read also fails. The check does not follow
+a symlink to a lane file.
 
 The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
 today, one row per hit: path, rule, subject and reason. A new hit fails.

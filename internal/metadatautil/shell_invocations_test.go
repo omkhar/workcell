@@ -466,3 +466,12 @@ func TestShellInvocations(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryShellCommandSkipsWordSpans(t *testing.T) {
+	t.Parallel()
+	const script = "a=(\n  \"x\"\n  y\n)\nb\nk+=(\"l\") m\nif ((1 > 2)); then n; fi\n(( p )) && o\ncase v in\n  \"g\" | \"h\") i ;;\nesac\n"
+	want := [][]string{{"b"}, {"m"}, {"n"}, {"fi"}, {"o"}, {"case", "v", "in"}, {"i"}, {"esac"}}
+	if got := metadatautil.EveryShellCommand(script); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("EveryShellCommand() = %q, want %q", got, want)
+	}
+}

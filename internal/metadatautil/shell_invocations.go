@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"encoding/hex"
+	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -51,12 +52,17 @@ func (h heredoc) endsAt(line string) bool {
 // plain strings cannot tell the two apart, so every caller that asks whether a
 // word is syntax reads text as syntax.
 //
+// syntax is text with each quoted byte replaced by _, so a reader that counts
+// parentheses sees only the ones bash reads as syntax, even in a word that is
+// only partly quoted, as in 'a'$( or printf x')'.
+//
 // decoded records a $'…' span in the word. Bash decodes its escapes before it
 // runs the word, so $'\x73ource' runs source while its text here does not.
 type word struct {
 	text    string
 	quoted  bool
 	decoded bool
+	syntax  string
 }
 
 // texts returns the words' text, for the tests that read a word as a name. A
@@ -114,17 +120,20 @@ func isCommandPrefixWord(text string) bool {
 	return false
 }
 
-// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs as a script, and whether it runs one: the -c body, or stdin with -s or no script operand, which is $_ for a stream the reader cannot see.
-func shellProgram(words []string, stdin string) (string, bool) {
+// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs as a script, and whether it runs one: the -c body, or stdin with -s or no script operand, which is $_ for a stream the reader cannot see. When the shell runs a script file instead, file is that operand.
+func shellProgram(words []string, stdin string) (program string, runs bool, file string) {
 	if len(words) == 0 {
-		return "", false
+		return "", false, ""
 	}
 	switch commandName(words[0]) {
 	case "zsh":
-		return "$_", true // zsh reads .zshenv, under any ZDOTDIR, before -c
+		return "$_", true, "" // zsh reads .zshenv, under any ZDOTDIR, before -c
 	case "sh", "bash", "dash", "ksh":
 	default:
-		return "", false
+		// source runs its file, /dev/stdin included, in the current shell
+		// with the caller's functions and traps, which a child-shell read
+		// does not share, so it stays for a lint to fail closed on.
+		return "", false, ""
 	}
 	// Options come first, and -- may end them. c or s anywhere in a short
 	// cluster, as in -lc or -es, counts. Each o or O in a cluster, and
@@ -139,7 +148,7 @@ func shellProgram(words []string, stdin string) (string, bool) {
 			break
 		}
 		if option == "--rcfile" || option == "--init-file" || option == "--login" || strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "il") {
-			return "$_", true // a startup file, rc or profile, runs before the program
+			return "$_", true, "" // a startup file, rc or profile, runs before the program
 		}
 		if !strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "+") {
 			break // the first operand
@@ -155,15 +164,15 @@ func shellProgram(words []string, stdin string) (string, bool) {
 	}
 	switch {
 	case noExec:
-		return "", false
+		return "", false, ""
 	case body && i < len(words):
-		return words[i], true
+		return words[i], true, ""
 	case body:
-		return "", false // bash -c with no body runs nothing
+		return "", false, "" // bash -c with no body runs nothing
 	case fromStdin || i >= len(words) || slices.Contains([]string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}, words[i]):
-		return stdin, true
+		return stdin, true, ""
 	}
-	return "", false // the operand names a script file
+	return "", false, words[i] // the operand names a script file
 }
 
 func commandBrace(each command) int {
@@ -288,10 +297,7 @@ func carriesParen(first word) bool {
 func parenBalance(args []word) int {
 	balance := 0
 	for _, each := range args {
-		if each.quoted {
-			continue
-		}
-		text, unclosed := withoutExpansions(each.text)
+		text, unclosed := withoutExpansions(each.syntax)
 		// An expansion the word does not close is a substitution the shell is
 		// still reading, as in the foo=$( of a multi-line assignment. Its ) is
 		// a bare word on a later line, so the opener has to count.
@@ -303,8 +309,8 @@ func parenBalance(args []word) int {
 // substitutionDepth returns how many unquoted $( spans are still open after a line's words, given the count open before it. A quoted "$( is the stack shellWords returns; an unquoted one leaves no trace there, so a reader that stops at the line end splits x=$( from the command on the next line. Only a $( starts the count, so a bare subshell ( does not join lines, and the count is the balance of the whole line, so $((a + 1)) split into words closes on the line it opens.
 func substitutionDepth(open int, words []word) int {
 	if open == 0 && !slices.ContainsFunc(words, func(each word) bool {
-		_, unclosed := withoutExpansions(each.text)
-		return !each.quoted && unclosed > 0
+		_, unclosed := withoutExpansions(each.syntax)
+		return unclosed > 0
 	}) {
 		return 0
 	}
@@ -446,6 +452,134 @@ func definedName(words []word) string {
 		return first
 	}
 	return ""
+}
+
+// definitionEnds reports whether a definition read from nesting definedAt has
+// closed, now that the nesting is depth. A body may open on a later line, as in
+// never_called () followed by { on its own, so opened records that it has
+// opened before its end is sought.
+func definitionEnds(depth, definedAt int, opened *bool) bool {
+	if depth > definedAt {
+		*opened = true
+	}
+	return *opened && depth <= definedAt
+}
+
+// definitionHeaders splits each function definition header from the command
+// after its opening brace, as in f() { g() { gh api x, so that command, which
+// may define a nested function, is read on its own.
+func definitionHeaders(commands []command) []command {
+	var out []command
+	for _, each := range commands {
+		for definedName(each.args) != "" {
+			at := slices.IndexFunc(each.args, func(arg word) bool { return !arg.quoted && arg.text == "{" })
+			if strings.HasSuffix(each.args[0].text, "(){") {
+				at = 0
+			}
+			if at < 0 || at == len(each.args)-1 {
+				break
+			}
+			out = append(out, command{args: each.args[:at+1]})
+			each = command{args: each.args[at+1:]}
+		}
+		out = append(out, each)
+	}
+	return out
+}
+
+// functionPart is a run of lines outside every definition, with no name, or
+// one function definition.
+type functionPart struct{ name, text string }
+
+// functionBodies splits text, in order, into the lines outside every function
+// definition and the lines of each definition, for a reader that keeps
+// compound bodies and so must read a body only when the function is called. A
+// later definition replaces an earlier one for the calls after it. A line that
+// mixes a definition with a command outside it is split per command, unless it
+// continues onto the next line; then it stays outside, as does a definition that
+// never closes: both read too much rather than too little. text holds no
+// heredoc body and no line that ends inside a quote.
+func functionBodies(text string) []functionPart {
+	var current strings.Builder
+	parts := []functionPart{{}}
+	emit := func(name, text string) {
+		if last := &parts[len(parts)-1]; name == "" && last.name == "" {
+			last.text += text // keep a continued command in one part
+		} else {
+			parts = append(parts, functionPart{name, text})
+		}
+	}
+	name, depth, definedAt, opened := "", 0, 0, false
+	for line := range strings.Lines(text) {
+		words, _, _, _, continues, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
+		mixed, closed, defining, header := false, "", name != "", false
+		type piece struct { // a command quoted again, and the definition it is in
+			owner, text string
+			closes      bool
+		}
+		var split []piece
+		for _, each := range definitionHeaders(splitCommands(words)) {
+			if len(each.args) == 0 {
+				continue
+			}
+			if name == "" {
+				name, definedAt, opened = definedName(each.args), depth, false
+				mixed = mixed || name == ""
+				if header = name != ""; header {
+					depth += commandBrace(each)
+					split = append(split, piece{owner: name}) // a body holds no header
+					continue
+				}
+			}
+			defining = defining || name != ""
+			var text strings.Builder
+			for _, arg := range each.args {
+				if arg.quoted {
+					arg.text = "'" + strings.ReplaceAll(arg.text, "'", `'\''`) + "'"
+				}
+				text.WriteString(arg.text + " ")
+			}
+			owner := name
+			depth += commandBrace(each)
+			closes := name != "" && definitionEnds(depth, definedAt, &opened)
+			if closes {
+				closed, name = name, ""
+			}
+			split = append(split, piece{owner, text.String() + "\n", closes})
+		}
+		if header && !continues {
+			line = ""
+			for _, each := range split {
+				line += each.text
+			}
+		}
+		switch {
+		case mixed && defining && !continues:
+			for _, each := range split {
+				if each.owner == "" {
+					emit("", each.text)
+					continue
+				}
+				current.WriteString(each.text)
+				if each.closes {
+					emit(each.owner, current.String())
+					current.Reset()
+				}
+			}
+		case mixed:
+			emit("", current.String()+line)
+			current.Reset()
+		case closed != "" && name == "":
+			emit(closed, current.String()+line)
+			current.Reset()
+		case name != "":
+			current.WriteString(line)
+		default:
+			emit("", line)
+		}
+	}
+	emit("", current.String())
+	return parts
 }
 
 // ansiCQuote names an open $'…' span in the one byte the reader carries between
@@ -984,7 +1118,15 @@ func ShellInvocations(script, commandName string) []Invocation {
 func shellWords(line string, stack []byte) (
 	words []word, heredocs []heredoc, open byte, rest []byte, continues bool, comment string,
 ) {
-	var text strings.Builder
+	var text, syntax strings.Builder
+	// emit writes one byte of the word, and _ for it in syntax when it is quoted.
+	emit := func(character byte, literal bool) {
+		text.WriteByte(character)
+		if literal {
+			character = '_'
+		}
+		syntax.WriteByte(character)
+	}
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
 	ansiC, unresolved, decoded := false, false, false
 	arithmetic := 0
@@ -1005,9 +1147,10 @@ func shellWords(line string, stack []byte) (
 			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved, quoted, operatorAt, index})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word{text.String(), quoted, decoded})
+			words = append(words, word{text.String(), quoted, decoded, syntax.String()})
 		}
 		text.Reset()
+		syntax.Reset()
 		inWord, quoted, unresolved, decoded = false, false, false, false
 	}
 	for ; index < len(line); index++ {
@@ -1025,11 +1168,11 @@ func shellWords(line string, stack []byte) (
 				// span therefore keeps the rest of the line as text, where
 				// closing on it would expose a separator bash never reads.
 				unresolved = true
-				text.WriteByte(character)
+				emit(character, true)
 				index++
-				text.WriteByte(line[index])
+				emit(line[index], true)
 			default:
-				text.WriteByte(character)
+				emit(character, true)
 			}
 		case quote == '"':
 			switch {
@@ -1042,7 +1185,7 @@ func shellWords(line string, stack []byte) (
 				// other one it is a literal byte of the word, so a name such
 				// as "or\as" is not the command it resembles.
 				index++
-				text.WriteByte(line[index])
+				emit(line[index], true)
 			case character == '"':
 				quote = 0
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
@@ -1055,9 +1198,9 @@ func shellWords(line string, stack []byte) (
 				substituted = true
 				stack = append(stack, quote)
 				quote = 0
-				text.WriteByte(character)
+				emit(character, false)
 			default:
-				text.WriteByte(character)
+				emit(character, true)
 			}
 		case character == '\\' && index+1 == len(line):
 			// The line ends on a backslash no quote made literal, so bash
@@ -1070,7 +1213,7 @@ func shellWords(line string, stack []byte) (
 			// no longer syntax itself, so \; is an argument rather than a
 			// separator, which is why the escape records provenance.
 			index++
-			text.WriteByte(line[index])
+			emit(line[index], true)
 			inWord, quoted = true, true
 		case character == '\'' || character == '"':
 			quote = character
@@ -1099,11 +1242,13 @@ func shellWords(line string, stack []byte) (
 			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
 			arithmetic++
 			text.WriteString(line[index : index+3])
+			syntax.WriteString(line[index : index+3])
 			index += 2
 			inWord = true
 		case arithmetic > 0 && character == ')' && index+1 < len(line) && line[index+1] == ')':
 			arithmetic--
 			text.WriteString("))")
+			syntax.WriteString("))")
 			index++
 			inWord = true
 		case arithmetic == 0 && character == '<' && index+1 < len(line) && line[index+1] == '<':
@@ -1149,10 +1294,10 @@ func shellWords(line string, stack []byte) (
 			// suspended comes back with it.
 			quote = stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
-			text.WriteByte(character)
+			emit(character, false)
 			inWord = true
 		default:
-			text.WriteByte(character)
+			emit(character, false)
 			inWord = true
 		}
 	}
@@ -1546,18 +1691,37 @@ func rebindsCommand(names []string) bool {
 var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
-	"timeout": {"-k", "-s", "--kill-after", "--signal"},
+	"timeout": {"-k", "-s", "--kill-after", "--signal"}, "setsid": nil,
+	"flock":  {"-w", "-E", "--wait", "--timeout", "--conflict-exit-code"},
+	"ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
+	"stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+	"xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--eof", "--max-lines",
+		"--max-args", "--max-procs", "--max-chars", "--process-slot-var"},
 	"sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "-R", "-a", "-c", "--user", "--group",
 		"--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--command-timeout", "--other-user",
 		"--chroot", "--auth-type", "--login-class"},
 }
 
-// commandName returns the program a command word names, lowered since a Windows runner finds GH as gh; on Linux that over-reports and fails closed.
+// commandName returns the program a command word names: the last path
+// element after a / or a \, without a Windows .exe suffix, so /usr/bin/gh,
+// gh.exe and "C:\tools\GH.EXE" all name gh. A Windows runner finds a name
+// without regard to case, so every name is lowered; on Linux, GH is then
+// read as gh, which over-reports and so fails closed.
 func commandName(word string) string {
-	return strings.ToLower(path.Base(word))
+	name := strings.ToLower(word[strings.LastIndexAny(word, `/\`)+1:])
+	return strings.TrimSuffix(name, ".exe")
 }
 
-// wrappedCommand returns words from the command that a chain of wrappers, such as env A=1 nice -n 5 command -p gh, runs: command -v only names a command, env -S splits its value, timeout reads a DURATION first, and sudo -s or -i keeps the words, which sudo escapes, or runs $SHELL with no command.
+// bashBuiltins names the builtins that run another command, which builtin
+// can run; builtin gh runs nothing, and builtin printf names no command.
+var bashBuiltins = map[string]bool{".": true, "builtin": true, "command": true, "eval": true, "exec": true, "source": true}
+
+// wrappedCommand returns words from the command that a chain of wrappers, such
+// as env A=1 nice -n 5 command -p gh, runs: command -v only names a command,
+// env -S splits its value, timeout reads a DURATION and flock a lock file
+// first, flock -c runs a shell program, xargs runs its command with the words
+// it reads, and sudo -s or -i keeps the words, which sudo escapes, or runs
+// $SHELL with no command.
 func wrappedCommand(words []string) []string {
 	for {
 		name := commandName(words[0])
@@ -1565,9 +1729,12 @@ func wrappedCommand(words []string) []string {
 		if !wraps {
 			return words
 		}
+		if name == "builtin" && (len(words) < 2 || !bashBuiltins[words[1]]) {
+			return words // builtin runs a builtin only; a program after it does not run
+		}
 		i, shell := 1, false
 		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || (name == "env" || name == "sudo") && shellAssignment.MatchString(words[i])); i++ {
-			if name == "command" && strings.ContainsAny(words[i], "vV") {
+			if name == "command" && strings.ContainsAny(words[i], "vV") || name == "sudo" && sudoRunsNothing(words[i]) {
 				return words
 			}
 			shell = shell || name == "sudo" && words[i][0] == '-' && (!strings.HasPrefix(words[i], "--") && strings.ContainsAny(words[i], "si") ||
@@ -1597,8 +1764,11 @@ func wrappedCommand(words []string) []string {
 				}
 			}
 		}
-		if name == "timeout" {
-			i++
+		if name == "timeout" || name == "flock" {
+			i++ // the DURATION, or the lock file, before the command
+		}
+		if name == "flock" && i+1 < len(words) && (words[i] == "-c" || words[i] == "--command") {
+			return append([]string{"sh", "-c"}, words[i+1:]...) // flock FILE -c runs a shell program
 		}
 		if i >= len(words) && shell {
 			return []string{"$SHELL"}
@@ -1621,14 +1791,111 @@ func shadowsByAlias(args []string, name string) bool {
 	return false
 }
 
-// EveryShellCommand returns the words of every command in script that bash may run, the reachability-insensitive counterpart of ShellInvocations. A program it cannot spell stays a command, for a lint to fail closed on.
+// EveryShellCommand returns the words of every command in script that bash may
+// run, from the command word wrappedCommand finds: the reachability-insensitive
+// counterpart of ShellInvocations, so branches, guarded commands, subshells
+// and substitutions are kept. A shell's program and an eval's words are read
+// as a script when the reader can spell them; otherwise the command stays,
+// for a lint to fail closed on. A function body is read after each call, with
+// the last definition before it, and a trap action runs once at the end.
+// PR 804's ShellCommandWords has a similar intent; merge the two when both land.
 func EveryShellCommand(script string) [][]string {
 	return everyShellCommand(script)
 }
 
-// everyShellCommand is EveryShellCommand for a script a child shell runs, such as a sh -c body.
+// everyShellCommand is EveryShellCommand for a script a child shell runs, such
+// as a sh -c body, which has its own definitions and traps.
 func everyShellCommand(script string) [][]string {
-	return flattenedCommands(flattenSubstitutions(heredocsAsHereStrings(script)))
+	traps := trapState{map[string]string{}, map[string]bool{}}
+	bodies := map[string]string{}
+	found := readScript(flattenSubstitutions(heredocsAsHereStrings(script)), bodies, nil, traps)
+	// An action can set another trap, so read until every action is read.
+	for read := map[string]bool{}; ; {
+		for _, action := range traps.set {
+			traps.armed[action] = true
+		}
+		actions := slices.Sorted(maps.Keys(traps.armed))
+		at := slices.IndexFunc(actions, func(action string) bool { return !read[action] })
+		if at < 0 {
+			return found
+		}
+		read[actions[at]] = true
+		found = append(found, expandCalls(flattenedCommands(actions[at]), bodies, nil, traps)...)
+	}
+}
+
+// readScript returns the commands text runs. A function definition in text
+// runs nothing: it binds the name for the calls after it, as bash does.
+func readScript(text string, bodies map[string]string, calling []string, traps trapState) [][]string {
+	var found [][]string
+	for _, part := range functionBodies(text) {
+		if part.name != "" {
+			bodies[part.name] = part.text
+			continue
+		}
+		found = append(found, expandCalls(flattenedCommands(part.text), bodies, calling, traps)...)
+	}
+	return found
+}
+
+// trapState holds the action set for each signal, and every action that was
+// set while a command ran. That command can fail under bash -e, or exit, and
+// run the action, so a later trap does not undo it.
+type trapState struct {
+	set   map[string]string
+	armed map[string]bool
+}
+
+// expandCalls puts each called function's body right after every command that
+// calls it, so a cd in the body moves the commands after the call. calling
+// holds the functions being expanded, so a recursive call is read once. Each
+// trap command updates traps.
+func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps trapState) [][]string {
+	var found [][]string
+	for _, words := range commands {
+		found = append(found, words)
+		if words[0] == "trap" {
+			setTrap(words[1:], traps.set)
+		} else {
+			for _, action := range traps.set {
+				traps.armed[action] = true
+			}
+		}
+		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
+			found = append(found, readScript(body, bodies, append(calling, words[0]), traps)...)
+		}
+	}
+	return found
+}
+
+// setTrap applies the arguments of one trap command to the action set for each
+// signal. A later action for a signal replaces the earlier one, and - or an
+// empty action removes it, as does a signal named alone. trap -p and trap -l
+// print and set nothing.
+func setTrap(args []string, traps map[string]string) {
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	} else if len(args) > 0 && len(args[0]) > 1 && args[0][0] == '-' {
+		return
+	}
+	if len(args) == 0 {
+		return
+	}
+	action, signals := args[0], args[1:]
+	if len(args) == 1 {
+		action, signals = "-", args
+	}
+	for _, signal := range signals {
+		signal = strings.TrimPrefix(strings.ToUpper(signal), "SIG")
+		if signal == "0" {
+			signal = "EXIT"
+		}
+		if action == "-" || action == "" {
+			delete(traps, signal)
+		} else {
+			traps[signal] = action
+		}
+	}
 }
 
 // flattenedCommands returns the words of every command in text, which flattenSubstitutions has rewritten; a here-string is its command's stdin.
@@ -1650,22 +1917,25 @@ func flattenedCommands(text string) [][]string {
 		command, dropTarget, readStdin, stdin = nil, false, false, "$_"
 	}
 	// emit records the command the words run: the program a shell or eval
-	// runs, or the words themselves.
+	// runs, the words themselves, and each command a find -exec runs.
 	var emit func(words []string, stdin string)
 	emit = func(words []string, stdin string) {
 		words = wrappedCommand(words)
-		program, shell := shellProgram(words, stdin)
+		program, shell, _ := shellProgram(words, stdin)
 		script, spelled := spelledProgram(program)
 		if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
 			found = append(found, flattenedCommands(text)...) // eval runs its words as a script
 		} else if shell && spelled {
-			// A shell runs its program as a script in a child shell.
+			// A shell runs its program as a script in a child shell with its
+			// own definitions and traps, so an uncalled function in it runs nothing.
 			found = append(found, everyShellCommand(script)...)
 		} else {
 			found = append(found, words)
 		}
-		if action := slices.DeleteFunc(slices.Clone(words[1:]), func(w string) bool { return w == "--" }); words[0] == "trap" && len(action) > 1 {
-			found = append(found, everyShellCommand(action[0])...) // a trap action runs as a script
+		if commandName(words[0]) == "find" {
+			for _, body := range findExecBodies(words[1:]) {
+				emit(body, "$_")
+			}
 		}
 	}
 	end := func() {
@@ -1682,8 +1952,9 @@ func flattenedCommands(text string) [][]string {
 		}
 		discard()
 	}
-	// A case pattern, the words from in or ;; up to ), names no command.
-	caseDepth, expectIn, pending := 0, false, false
+	// A case pattern, the words from in or ;; up to ), names no command. A )
+	// that closes no ( is one too: its case header may sit in another part.
+	caseDepth, expectIn, pending, parens := 0, false, false, 0
 	addPiece := func(piece string) {
 		// An unquoted < or > starts a redirection anywhere in a
 		// word. Only an fd number or {name} before it belongs to it.
@@ -1708,7 +1979,7 @@ func flattenedCommands(text string) [][]string {
 			dropTarget = shellRedirect.FindString(piece[at:]) == piece[at:]
 		}
 	}
-	joined, test := "", false
+	joined, test, closer := "", false, ""
 	for line := range strings.Lines(text) {
 		words, _, _, _, continues, _ := shellWords(joined+strings.TrimSuffix(line, "\n"), nil)
 		if continues {
@@ -1719,6 +1990,26 @@ func flattenedCommands(text string) [][]string {
 		joined = ""
 		for _, each := range words {
 			each.text = strings.ReplaceAll(each.text, string(quotedNewline), "\n")
+			// An array member, the words from name=( up to ), and an arithmetic
+			// command, the words from (( up to )), name no command, even across
+			// lines. Any closer ends the span, so a quoted one ends it early and
+			// a word in it reads as a command, which fails closed.
+			if open := shellArrayOpen.FindString(each.text); closer == "" && open != "" && !test && !pending {
+				add(strings.TrimSuffix(open, "("))
+				closer, each.text = ")", each.text[len(open):]
+			} else if closer == "" && !each.quoted && !test && !pending && strings.HasPrefix(each.text, "((") {
+				closer, each.text = "))", each.text[2:]
+			}
+			if closer != "" {
+				at := strings.Index(each.text, closer)
+				if at < 0 {
+					continue
+				}
+				each.text, closer = each.text[at+len(closer):], ""
+				if each.text == "" {
+					continue
+				}
+			}
 			switch {
 			case test || !each.quoted && each.text == "[[":
 				// [[ reads its words up to ]] as one expression: an operator,
@@ -1727,6 +2018,9 @@ func flattenedCommands(text string) [][]string {
 				add(each.text)
 			case each.quoted && strings.HasPrefix(each.text, "<<<"):
 				stdin = each.text[3:] // <<<'text' is one word
+			case each.quoted && pending && strings.HasSuffix(each.text, ")"):
+				discard() // a quoted last pattern, as in "a" | "b")
+				pending = false
 			case each.quoted:
 				add(each.text)
 			case each.text == "case":
@@ -1749,11 +2043,19 @@ func flattenedCommands(text string) [][]string {
 				rest := each.text
 				for at := strings.IndexAny(rest, "()"); at >= 0; at = strings.IndexAny(rest, "()") {
 					addPiece(rest[:at])
-					if pending && rest[at] == ')' {
+					switch {
+					case pending && rest[at] == ')':
 						discard() // the pattern ends
 						pending = false
-					} else if !pending {
+					case pending: // a ( opens a pattern
+					case rest[at] == '(':
+						parens++
 						end()
+					case parens > 0:
+						parens--
+						end()
+					default:
+						discard() // a pattern after a split
 					}
 					rest = rest[at+1:]
 				}
@@ -1766,6 +2068,35 @@ func flattenedCommands(text string) [][]string {
 	}
 	end()
 	return found
+}
+
+// shellArrayOpen matches the start of an array assignment, name=( or name+=(.
+var shellArrayOpen = regexp.MustCompile(shellAssignment.String() + `\(`)
+
+// sudoRunsNothing reports a sudo mode that runs no command, as sudo -e or -l.
+func sudoRunsNothing(option string) bool {
+	return !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "elvVK") ||
+		slices.Contains([]string{"--edit", "--list", "--validate", "--version", "--help", "--remove-timestamp"}, option)
+}
+
+// findExecBodies returns each command that find runs for a match: the words
+// after -exec, -execdir, -ok or -okdir up to the ; or + that ends them.
+func findExecBodies(args []string) [][]string {
+	var bodies [][]string
+	for i := 0; i < len(args); i++ {
+		if !slices.Contains([]string{"-exec", "-execdir", "-ok", "-okdir"}, args[i]) {
+			continue
+		}
+		end := i + 1
+		for end < len(args) && args[end] != ";" && args[end] != "+" {
+			end++
+		}
+		if end > i+1 {
+			bodies = append(bodies, args[i+1:end])
+		}
+		i = end
+	}
+	return bodies
 }
 
 // shellRedirect matches a redirection word; a bare operator takes the next word.

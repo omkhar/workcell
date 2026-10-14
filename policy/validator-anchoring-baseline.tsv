@@ -15,6 +15,506 @@ internal/adapters	rustLaunchTargets	6bc79c7a,a6b612f6,d4e4b3ba	unreviewed debt i
 internal/adapters	rustTokens	01438f12,316d61f3,5d3a8db4,926f1e1f,9bd99527,aad01d73,bd4608c8,e5ef7ea1,e5ef7ea1	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	validateFlags	2d22c89e,bdc1c12e,fd6a16a7	unreviewed debt: review the subject, then port or justify
 internal/adapters	validateManifest	245b0a57,258a8901,a88bf6e5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ApplyProviderBumpPlan	24b3ab93,5305b6f7,6d79321a,6ebdc620,742074a1,a5aa29e9,a78c8e9b,db99510a,fc5c811b	the pattern checks a version field of the decoded JSON plan
+internal/metadatautil	CheckProviderBumpPolicy	1f13431f,af3fe681,c21ac8c0,d846cb62	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	CheckRetentionPolicy	d283c5af	the prefix checks a decoded workflow step uses: value
+internal/metadatautil	CheckShellPortability	eab50892	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	CheckUpstreamRefreshScope	03a42954,13de3ebe,19cf00e3,3140ab17,3c71477a,3c71477a,3d34c7b7,5bec43b9,61eb9cc2,6351c261,65156731,67813576,68617029,7173acc9,ab416dac,b08c600f,bf1787ce,c1c5200f,d2041db9,d2041db9,d8e0dee3,dc63b5b6,e15530d0,edc059cd,fa353cdb	the prefix reads the unified-diff line marker of a patch
+internal/metadatautil	CheckV1ContractFreezeGitHistory	955393cb,b52743e3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ControlPlaneParityRows	5c9accb0	the prefix checks a decoded manifest path
+internal/metadatautil	ExtractClaudeSHA	12673cae,434decf4,52c2bb79	debt: regexp over Dockerfile text; read the parsed RUN case arm
+internal/metadatautil	ExtractCopilotSHA	13056216,264e3788,304ff98c	debt: regexp over Dockerfile text; read the parsed RUN case arm
+internal/metadatautil	ExtractDockerfileArg	828b8b57,e7295a85,fb388a05	debt: regexp over Dockerfile text; read the parsed ARG instruction
+internal/metadatautil	HadolintManifestChecksum	40acb559,b65cec14	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	IsSafePullRequestTargetWorkflow	4db683f1,f9acf37a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	LaneScripts	055d0553,333ec69d,5b763629	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ParseHelpCommands	1254e754,14bf0875,a1d90014,c0c9634c,c87d28bb	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
+internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	TestApplyDebianBootstrapPinsAtomicallyUpdatesSharedManifest	d031936d	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestApplyProviderBumpPlanRewritesPinnedVersions	2a197cee,5f273159,8efc2ff8,b5a75a85,c0074026,e5f13811,ff60caf5	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsDuplicateAptBrokerGoPins	34abab31,6c6e4c77	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsMarkdownlintAdvisoryFloorEvasion	3eb385f4	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsMarkdownlintAdvisoryFloorRegression	01744dcf	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsMissingAptBrokerContextInput	6479cae1	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsNonPositiveAppIDPin	2a560549	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsToolPinPolicyDrift	31639267,85969adc,bc1833de	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks	541549b9,dd1f04de	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRequiresRootOwnedCodexArtifacts	c15d78d5	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	7ec6e521	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes	5170f81d	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestGenerateWorkflowLaneManifestExpandsMatrixAndPathFilters	4370e2b0	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestPlanWorkflowLanesRespectsPathsLabelsAndGitHubOnlyModes	49487938,49487938	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestPrepareCodexSubcommandFixtureAdvancesUnchangedNamespace	4d36d4b0,979afa46	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestSelectCodexStableHonorsMaxVersionAndReportsSkippedRelease	c18cb7e1	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestSelectCodexStableSkipsMissingMuslReleaseAssetsAndSelectsNextCompatible	20462f98	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestSelectCopilotStableHonorsMaxVersionAndReportsSkippedRelease	0ad30313	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestSelectCopilotStableIgnoresMalformedPublishTimesForSkippedReleases	65527a77,c1ec661f	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestSelectCopilotStableReportsCoolOffSkippedStableRelease	ae8576b0	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestSelectCopilotStableSkipsPrereleaseAndMissingAssetsThenSelectsCompatible	6a02b904,a656257a	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestStripCommentsRemovesCommentProse	0ec57caa,6c14ba0f,8413caa1,ceb66e88	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestV1ContractHistoryLogArgsAreCompleteAndSignatureFree	84938076	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestValidateEgressProxySidecarRejectsEvasions	6f4ef6ae,72ff511f,db6f293d,e5726c69	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingVerifierAttestations	88ace8a2,c061caba	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestValidateUpstreamRefreshWorkflowRejectsMutations	84f95350	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites	cc0c4208,cc0c4208	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	ValidateCIWorkflowPRShapeFlow	55871b5a	debt: substring over ci.yml text from its caller; decode the workflow
+internal/metadatautil	ValidateCodeQLWorkflow	a92b4ede,e6cb269d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateCodexAdapterLockstep	0e94454a,4ce13af2	debt: substring over the wrapper shell; use ShellInvocations
+internal/metadatautil	ValidateContainerSmokeFlagInventory	151b6a3b,1ae5ecff,68d4fe5d,926bd3d5,95b626c6	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateEgressProxySoleRoute	0d6f4753,377ebc48	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateGeneratorCaller	6bd57911,88971740	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateHostedControlsWorkflow	51a2d692	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateMacOSInstallVerificationFlow	4773b38b,82b65e67	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateOperatorContract	18296c49,c4ef2b47	debt: substring over scripts/workcell and docs; use ShellInvocations
+internal/metadatautil	ValidateReleaseWorkflowCodeQLFlow	4416bd82,bd562bc8	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateReleaseWorkflowControlPlaneFlow	52f19e54,dc0a1af2,def80028	debt: substring and regexp over release.yml text from its caller; decode the workflow
+internal/metadatautil	ValidateReleaseWorkflowGitHubAttestationFlow	48cf7c8e,c5fc18b0,d108a377,d3215bc9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ValidateRequirements	6960f23b	the prefix checks a requirement ID field
+internal/metadatautil	ValidateUpstreamRefreshWorkflow	ab15fa41,f83a4e4c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	afterDeclaration	8e5f5463	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	applyPlanText	429ed54b,9666434d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	assignmentPrefix	28c9a340	the match reads the parsed argv words of one command
+internal/metadatautil	assignmentRun	64f729a5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	assignsInRun	5cfb8c8f	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	assignsWord	db8fa01d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	canonicalImageRef	04006e89,2e34cec2,e738c6c0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	carriesParen	1c5fb76f,76e37fa3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	checkGuardedFunctions	1f7ce1fa,21a76735	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	checkIngVerbs	5ed68d71	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	checkNounClusters	82a56091,a4ee8357	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	checkParagraph	649f492d,854dd8eb,94f79597	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	codexCommandAttributeItems	209bec69,22f5aeea	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	codexVariantCommandNames	4c900721,7ab1096f,83e03340,dbaa0f45	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	commandBrace	48b32f79	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	commandLooksUp	1c3163b8,c9d7dfbd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	commandName	86476538	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	commandWords	89820ff5,a3f98e42,f129b634	the match drops the leading control keywords and a case pattern from the parsed argv words of one command
+internal/metadatautil	countCalls	8a596b86,ca8a38dc	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe11386	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	definedName	0f1edc2e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	docClaimRule	3ac775b1	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.aptBrokerBuilderStage	174cd5ff	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.aptBrokerRuntimeStage	23121551,c4f09ac0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.validateAptBrokerRuntimeInstall	851e5f5b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.validateProviderVersions	2f0141d4	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.validateValidatorDeadcode	4a31dbf9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.validateValidatorHadolint	fa92ca1d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerfileInstructions	33adfa7b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	envOperands	ef3d60e0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	evaluates	08bbcfda,21e7aa8e,c914c99c	the matches read the parsed argv words of one command: the barrier names, and the $, backtick and brace spellings of its command word
+internal/metadatautil	exitCodeEmitted	859244aa,db0686c6,e4cb9292	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	extendFirstOption	8eadceee	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	extractCodexChecksum	054075b9,4c5e1136,9a7245ed,cb9fb94f	debt: regexp over Dockerfile text; read the parsed RUN case arm
+internal/metadatautil	extractInstallBlocks	d104be03	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	fetchCodexSubcommands	ce25dff3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	fileExemptsPortability	6c6641e7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	filterVerificationPaths	3c90a3bd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	flattenSubstitutions	06747006,0931674b,4c46065b,7a000647,7ba95feb,be0aacca	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	flattenedCommands	0639a974,1643c766,22efc51f,3fa18951,571812cf,69ddf134,7da37412,93987f5c,c000ee9c,c246b162,e72fa7b5,e72fa7b5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	forwards	b157cc56	the pattern tests whether one parsed command word is a positional parameter or an array expansion
+internal/metadatautil	functionDefinition	3504f8e9,f3e2f47e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	functionScopedMatches	063efee0,2282fb4d,8151ca87,cb6c1dce	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	generatedArtifactDeclaration	3bbb3be3,9014412e,f0e50061	the prefix reads the generated-artifact header tag line
+internal/metadatautil	ghFlagValues	3add82e6,75f53652	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ghInArguments	19c23e89,59574716	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ghSubcommand	3b0c6e9f,4d48cba3,cb7683d1	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	githubAPIToken	0fa8eac8	the search rejects a line break in a token file
+internal/metadatautil	githubReleaseAssetAPIURL	05654428,8efb2ac8,c5dae623	the patterns check API JSON field values, not repo content
+internal/metadatautil	goLanguageVersionFromToolchain	14ed36af	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	helperGraph.reaches	5aba8db9,fc9cebdc	the digit test tells a first-parameter forwarder word from an all-parameters one among parsed command words
+internal/metadatautil	heredocDelimiter	029b3cac	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	heredocsAsHereStrings	f0ef57f3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	hostedPosixRunner	12852e51	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	isAutomatedEvidencePath	09872e90,bb2d0e7f	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	isCodexCfgAttribute	39a1ea68	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	isHexDigest	00a043e2	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	isListEntry	10421324,f92e0ad1	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	isShellSource	5798c4c9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	joinFirstWords	80fea3c8	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	loadDocLanguageBaseline	5939fd27	the prefix skips a TSV comment line
+internal/metadatautil	loadHardenedFSBaseline	ceadbad1	the prefix skips a TSV comment line
+internal/metadatautil	loadShellFailOpenBaseline	ec489ec0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	loadTextMatchBaseline	4eeca9bb,d6395a28	the prefix skips a TSV comment line, and the pattern checks one TSV field
+internal/metadatautil	mapStringSetKeys	22e4373c,a9ce114c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	matchesText	55cdea10,ad3d3395,e58a4acd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	moveStepBefore	65e9dda2,c92fcbf2,dd7bb1ad	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	moveStepToEnd	93097790,aaffba0a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	mutatedContractCopy	950732e1	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	namesRoot	da78757a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	nextLinkURL	1ce5780e,2e8dac47,6086a5aa,f5ab2fe7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ociConfigDigest	6ba3b673,ff801b55	the prefix checks a decoded digest field
+internal/metadatautil	ociManifestEntries	90d00276	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ociSubjectDigestFromIndex	cbe7d39d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	optionValues	6cde6df2,9cb3e7a8,d30f7566	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	outputLinePrefixEmitted	5776cd8f,64c250d6,7290f4b4,85b18992,9baf3979,baf302b2,d266fa1a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parenBalance	17bfe4f0,7a0f620b	the count reads the unquoted parsed words of one command
+internal/metadatautil	parseCodexSubcommandVariant	0b030a0e,112f2816,16fd2ec4,1bb382e0,b8b71cab	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseCodexSubcommands	679bbb08,679bbb08,69a610e6,737500b7,83943b5d,83943b5d,8a613a58,8a613a58	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseDebianBootstrapManifest	3628cc0e,b0a76141	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseFlagFixture	9313fcd8,bb3556d6,e91b6bff	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseJQInvocation	6214cf24	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseOperatorWorkflow	1cac3ece	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseStableVersion	dabcc20c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.loadCIReproBuildJob	d666d2a3,eb3871b0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateBuildxPins	48c8524d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCIReproEntriesAndTail	9d3f0df3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCIReproStrategy	7e8452b9,c6a9cfca,ccbc910c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCargoRustVersion	be820749	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCodeownersAndHostedPolicy	59e723e9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCosignReleaseBindings	9bbe138a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCosignVersions	32b3e304	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateReleaseArtifactFlows	c3bf63ff	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateReleaseBuildAndSyft	fd5547f7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateReleaseManifestAndRuntimeSources	584f0f40,fc9ae287	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateReleasePublishingInputs	145c5d36	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateReleaseRequiredSteps	fdbfa4fa	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateRuntimeCargoBuild	2bb8b4dc,aeb5439d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateRustupVersion	6324d737	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateSecurityWorkflowDispatch	34f2f101	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateValidatorBuildkit	3b54b641,7e8fd525	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateWorkflowPolicy	20114f66,729ab531,aa1b7dd5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	preloadAssignments	46f1dfca,cd8fdbb9,cd8fdbb9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	preludeSafe	7d62ff7e,85178304,c256efb6,e008b096	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a line break in a token file
+internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	rebindsCommand	419dfc3d	the = test tells an alias definition from an alias listing among parsed command words
+internal/metadatautil	rebindsLane	880960f2,e4f6455a,f6a659e3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	refsRoot	8c451e37	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	rejectInstallScriptAptPackages	30b19070,7ae83b67	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	renderDiscoverabilitySurface	e9d7ffc7	the prefix checks a surface name from the decoded contract
+internal/metadatautil	renderManpageText	ce726f03	the prefix checks that the man page source starts with a macro
+internal/metadatautil	replaceAllMatches	1eef08bc,f7519ebb	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	replaceFirstMatch	82b8e431	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	replacesShell	0c50f9ee,d7679d5f	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireActionRef	52497cf0,87b66d29,a1aa9261	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireArg	426ed9ce,46bedf45,ee219c34	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireCappedReleaseDownload	8fd60578,92d8d072,b52e0cbd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireDelimitedText	6b6990cc,bc570444	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireDockerStageAliasCount	6b125249,796efb98,cc08bf2c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireDownloadBounds	8b4627a3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireEvasions	0ed6284d	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	requireGoDirective	231f780e,a91335ef,d72b74d4	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireNoRegistryBootstrapMCP	52bf575b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireOrderedText	ba2afe75	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requirePinnedBaseImage	171e479c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireRegex	26bdecfe,48e55ec8	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireTOMLString	13dcfc02,30abd784,31804416	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireTextCount	e9ad5856	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireTextRequirements	f61fa3cc	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireToolchainDirective	50b138d9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireUniformWorkflowEnv	1bd24a7f,7dc2b398,baa9c486,cc424436,d22b541c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requireYAMLKey	26888f8a,99b8adc7,fc925d12	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	resolveRequirementPath	77876af9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	restampFlagFixture	75b05b87	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	reviewedLibrarySource	8a4712f0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	rewriteAptBrokerDockerfile	9e5c7dbc	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	rewritesParameters	604a9e2e,72dcf36c	the prefix tests tell an option from an operand of one parsed set command
+internal/metadatautil	runsAPath	791f4239,a5daa4a4,bf909428,db8056d1,ece68d1c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	rustupChecksumRequest	82097558	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	sanitizedScriptEnvironment	1a8ceb50,2fada460	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scanDebianPackageStanzas	6c69f878,f89ede85	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scanDocLanguage	07905f3a,103fdf3f,1ce242b0,33dee461,92ab844e,9c21c578,b4dbdf15,e0bbc22e,f65b939e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scopeGuardFlagStampOf	b2828d84,d41f08d7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scopeGuardLockProblem	a2aec4e9,bb6c3c04,becf82f2,c1db2e6b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scopeGuardLockResolvedRE	4db60d5f	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scopeGuardLockRootDepRE	fa166e49	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scopeGuardLockVersionRE	0d2a7fa2	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scopeGuardSplitLF	4f546323	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scriptRef	96b9da97	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	selectCopilotStable	605dc4a7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	sentenceWords	e91bc492	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shebangInterpreter	92689fd9,9a831542	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellArrayOpen	728ab60a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellCodeOnly	046624a5,2a34b9b5,300d14bf,a6dcde68,b2af9b08,b95527a9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellCommandStart	0f0db7be	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellDevNull	a9facb8a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellEnvSplit	0fab514c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellEnvUnsplit	88084219	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellExecNull	80232bf7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFD	81a505aa	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailClosedRe	03e75059	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenCommands	59b7ac66,eb57de54	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenCompleted	005d0290,084135b3,3f4d48ff,4aa43f19,4d8f88c3,acede2fb,b8474743,e883ef82	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenDetached	6639a08f,c2f94601	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenEnds	3e28c15a,8c7d9c4d,b70364cb	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenExit	24f6defc	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenFirstCall	f27c3831	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenHandled	45115311,77f51290	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenLastSubst	1c0daaa7,a0c9d33a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenNamed	1498e420,9c9af020	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenReadsOwnStatus	5394aec0,ac82f6b1,e65dcc10	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenReadsStatus	df096ef4,e38318ae	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenRunsFirst	55b36551	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellListOperands	7cedd069	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellProgram	01691dfb,0dede830,19b61cf5,3726acb9,3ceb6305,3ceb6305,7caa62b8,916bd6f6,916bd6f6,9b12b4ba,be5c2d65	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellRedirect	969f347e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellStartupEnv	05490f0a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellSubstCall	71a05f21,a834ac89,b3fc7705	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellSubstHidden	4115d3e1,41e05e3e,436aa0e3,5dde0b06,5e2abe62,ba126c56,e03ab2c8	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellSubstMasked	310db2f0,5b80543c,8c500f6d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellSwallowingHandlers	9ef943fa,adbe224f,aee48b4b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellToolCommand	d44965d1	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellToolName	e24ee91d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellToolSubsts	57e83a94	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellUnnamedCommand	d1bb2d49	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellUnwrapped	363b4721,9f7cfd86,fd36e9b8	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellWords	03c76f35,52951b4a,5e1c3157,a0ae5e55,d0dc3f09	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	spelledProgram	d6917967	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	startupFileStep	f69b73c9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	stepCondition	05fe93c8,0cfb9063,1251aa19,60ede516,a8e4f0a4,c9b391af,cc4b3040,ebe07d86	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	stripComments	0327796f,78ef8599,8189b49d,cee7c880	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	structJSONFields	1fb782aa,332ad09a,f7b30984	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	sudoRunsNothing	09069ab7,f5b36190	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	unreadEnvWrite	383da956,58b54700,650e41bd,bb25cde9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	unspelled	17b26b32,2a00f0ec,338b0d27,a42d7189	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	unwrapBuiltins	0a1d8783	the prefix test drops the option words in front of the command word of one parsed argv
+internal/metadatautil	updateCodexSubcommandFixture	49f8c82f,575a0f43,665b67ac,9017f67f,a5ff1cfb,b1f61de5,f97dbf16	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	upstreamRefreshReviewedUses	5dceb713	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validGitHubReleaseAssetRedirectURL	0b2eac02,b17e198d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateAliasProbes	bbcf3583,fc135221	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateCanonicalHostedControlsScript	ea1b3f96	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateCodexSubcommandEnumAttributes	3a032d95,3a99bc17,a2f9c8f6	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateControlPlaneManifestBytes	d5eb83c7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateDebianBootstrapDockerfilePins	6f922d99,ac633754,b0658001,e167d4a1	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateDebianBootstrapPins	6ec441c7,9b91d8f0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateDebianSnapshot	709a350f	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateDiscoverabilitySurface	32233c0f,3701cf9c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateGitHubAPIURL	c8f348a5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateNodeMarkdownlintPinnedInputs	1b747f1f,217884f9,361c845f,4058be84,a00a3081,a342f88f,abf9a4c5,ac86cfb2,bbeacf0e,bed3f7cf,c6e103b2,da153a0e,ec9a6cd1,f4061ed6	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateNodeProviderLock	aa25bc5b,aa25bc5b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateOptionalWorkflowPin	37a42590,810c07df,b33c10f8	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateProviderChecksumUpdate	eafad8d7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateReleaseAttestationSteps	31c493c3,31c493c3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateReleaseAttestationVerifier	ec30c192	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateRuntimeBuildPreload	eca9d606	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateUpstreamRefreshJobs	4a1377ab,832859f5,832859f5,96779f0c,ab5bf77a,f2aad5bd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateValidatorImageIdentityScript	8a9c5859	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateWorkflowAction	985e2c77,ecc9ee9b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validatedCodexRoutingInstructions	c5b42920	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	versionTripleAtLeast	93b57c3c,a406c1d0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	walkRepoFiles	e951824f	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	withoutCasePatternAlternatives	4cbda5fb,517edb33	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	workflowLaneMatchesAnyPath	d4258ee2	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	workflowLanePathPattern	12b057e2,80c898e9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	workflowLaneRequiredLabels	af99a851	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	workflowRefHits	67df4185,a8f1f86a,b5a33b9b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	wrappedCommand	3e44657e,53923640,6a96b240,6c88352a,8949f85e,b0f0a35b,c83453df,cd42118c,ce48222a,e200d8a8	unreviewed debt: review the subject, then port or justify
+internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
+internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
+internal/testkit	RequireEncodedFieldIsInert	31229c8f	unreviewed debt: review the subject, then port or justify
+internal/testkit	TestAppleSiliconOnlyHostGuardsArePinned	12bf8293,1610ce33,d4416723	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestAptWrapperForwardsOnlyEnvironmentTheBrokerAdmits	3a5aa90d,4b6e3eae,c2736a2a	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestBuildAndTestDockerModeUsesSnapshotBackedValidatorRun	1163fce5,40b2fa73,60ff6d56	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestC3CertificationEntrypointSanitizesBuildControl	1e6707af,b2d0873d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCIPlanGitCollectorBindsCanonicalWorktreeAndOverridesLocalConfig	4c932dc3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCIPlanGitCollectorRejectsBaseFiltersBeforeExecution	8ea2b48e,b3a73a78,b487e226,cc6ee982,e72465ba,e91eaf36	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentAllowsOnlyGoStoragePaths	0b92ba9c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentBlocksCacheProgramExecution	14513893	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentDirectEntrypoints	148cfe24,148cfe24,4ffbe05e,6777a00c,8573a745,89b012c3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentFailsClosedWhenFunctionDetectorFails	8d180868	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentModernBashProbeDoesNotReadCallerInput	27c17eab	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentPrivilegedEntrypoint	c064b350,da502707	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentRejectsBuildAndShellInputs	4a0e1efc,4a0e1efc,64322911,c7c7969e,d7690eaa	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentRejectsGitInputs	28d6b7e8,3a7facce	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentRejectsUnsafeIdentifierBeforeExpansion	71a88d20,760e67ab,eda9743e,eda9743e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentScopeAndReachability	27a81f41,50fbaa03,bb1368bb	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCanonicalBuildEnvironmentScrubsPassiveHostedGoAliases	5705e7f5,5f8dcac4,959a4bb4	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCheckPRShapeCountsRenameDestinationArea	9db51f0f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCheckPRShapeIgnoresAmbientGitConfig	f21dd743	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCheckPublicRepoHygieneAllowsPortableExamples	1c1e97a6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCheckPublicRepoHygieneRejectsLeakedHomePaths	73ab8e93,a9e2a42f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCheckRustVendorRejectsTamper	a2ce3ac1	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCodexDeniesTunnelAndMCPServerSubcommands	34d7ef31	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCodexManagedConfigKeepsWorkspaceWriteOutsideBreakglass	4838b561,5e8bd789,a060796c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCommitMsgHookKeepsCommentedBodyWhenNormalizing	4dff92b9	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCommitMsgHookKeepsCommentedBodyWhenSubjectIsFirst	b308fb37	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCommitMsgHookNormalizesRetainedSubjectWithTrailingSpace	8fec244b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCommitMsgHookNormalizesSubjectWithTrailingSpace	baaa4224	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCommitMsgHookRejectsInvalidSubjects	cfc4e2dc	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCommitMsgHookRejectsSubjectWhenCommentCharIsRiskSymbol	413ca48e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestContainerSmokeFailureTrapHonorsErrexitState	6cb2ed52,ad0cb1e1	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCountFlagOccurrencesIgnoresAValueContainingTheFlag	6729b737	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestDebianSnapshotFreshnessDefaultsToSixtyDays	c80aa4b9	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestDevQuickCheckStaysBoundedToFastLocalWork	74632a22,86556805	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestDocClaimsNegativeControls	22845559	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestDocsValidatorPrunesLockedMarkdownlintDependencies	0a910d8f,e40e877d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestExecGuardBenchRefusesAnActivePreload	78e9e73d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushFailsClosedWhenCheckoutFails	02b3720c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushGatesPushedBranchOtherThanHead	17880bf6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushIgnoresUntrackedLinkTarget	48889f36	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushIgnoresWorkingTreeEdits	e4459343	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushMaterializesSparseExcludedFiles	c6bc788d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRejectsBaseTreeSymlink	6ef42c57,a35ceb2e,d83a8f6c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRejectsChangedSymlink	8ac93989,a8f58365,ed43f745	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRejectsDeletedNonMarkdownLinkTarget	cefcf1c3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRejectsPlantedMisspelling	7c8c80cb	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushReportsEveryFailedGate	ac3cfc87,f9b1b3b6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRunsDocLinksOnDeletedMarkdown	77752fdf	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRunsDocLinksOnMarkdownRenamedAway	44c6e62f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRunsGatesOnChangedMarkdown	a54cbfd9,ee2098c8	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRunsNoHookFromPushedCommit	53c4dd46	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRunsOnlyTrustedCheckers	0d741b02,fc61b68d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushRunsTheRealLinkCheckWithoutGo	27122f85	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushSkipsDocGatesWithoutMarkdown	b59bb502	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushSkipsGoGatesWithoutGo	0d8be8c4,61f93494,8580c2d1,d741ef77	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushSpellchecksOnlyCIDocFiles	d6cae77f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestFastPrePushSpellchecksOptionLikePath	b188c11e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestGenerateHomebrewFormulaPinsExplicitVersion	edd9e5ee	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestGitHubWorkflowsVerifyHostedInstallEvidence	31afe176,5d022c72,a577f919,c8be93e3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestGoHostutilCachedBinary	9327b2df,a72ab7bc,e8fd8c52,e8fd8c52,e8fd8c52	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestHostInvariantsRunInTheirOwnRequiredJob	0815ec87,59955713,679463e9,c10b4ca6,f1402d4d,f2c854e0,f7b0ad8d	debt: substring over ci.yml, job-validate.sh and a TOML policy; decode them
+internal/testkit	TestHostedControlsRunnerRequiresNamespacedTokenInGitHubActions	0a1fd044	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestHostedControlsVerifierRejectsAmbientGoBinaryBeforeExecution	f794f067	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestHostedInstallEvidenceDocumentation	4a07f007,b9636e5e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestHostedJobsStageGoBeforeTheResolver	6a57dd67,896fb145	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestHostileAxesKeepTheShapesThatReproducedFindings	22335465,278b8320,43bfa616,54c16ca1,6d7eb6a5	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestHostileAxisRejectsAnUnknownValue	cf94d515	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestInstallDevToolsBootstrapsCommonHostPrereqs	85fa2272,960ad008	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestInstallReleaseFailsClosedOnBadSignature	e9377493	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestInstallReleaseFailsClosedOnDigestMismatch	f3da657b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestInstallReleaseVerifiesThenInstalls	19b89d5e,33115606	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestInstallWorkcellBootstrapsRequiredHostDependencies	a0458eb8,f930549f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestInstallWorkcellDebugWrapperSkipsSessionCommands	2d38e40e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestLaterOverrideProblemsRequiresAWorkingBaseline	8b56b26f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestLatestDebianSnapshotFallsBackWhenNewestBootstrapPlanIsUnsuitable	b02e7c08	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestLiveInvariantsLaneRunsAloneWithItsOwnFixtures	170fe451,2c625924,3bde1870,3bebd867,9d0724cb,b9b6f5a8	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPreMergeChecksPinnedUpstreams	b9917178	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookFailsClosedWhenRangeWalkFails	61cd6969	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookIgnoresReplacementRefs	c138f74f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookRejectsUnsignedBaseBehindStaleTrackingRefs	721ef046	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookRejectsUnsignedBaseOutsidePushedNamespace	e710f7d4	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookRejectsUnsignedBaseSentToAnotherRepository	a55a4349	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookRejectsUnsignedBaseWhenPushURLDiffers	020b7529	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookRejectsUnsignedCommits	400ecee6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrePushHookRejectsUnsignedTailBehindSignedHead	667b9789	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPrepareRuntimeIdentityGrantsNoSudoAuthority	0b6207bd	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPublicContractHistoryGateEstablishesCanonicalGitEnvironment	d2071cb3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPublishProviderBumpPRRequiresCleanWorktree	fd5fefb4	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPublishUpstreamRefreshPRMetadataSupportsTimestampOnlyCandidate	77485d49,d5e54658,eec4bae3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPublishUpstreamRefreshPRRejectsUnknownCandidate	0097feb1	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestPublishUpstreamRefreshPRRequiresCleanWorktree	f5bf42c7,f82bbd99	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestReadTrackedFileRefusesASymlinkedPath	dd833e3a	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestReleaseAssetACLValidationRejectsDynamicToolchainMismatch	46eb26fe	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestReleaseAssetACLValidationToolcacheSelectionCases	01d0560c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestRepoPrePushChainsToFastChecks	ffb6c32a	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestRepoPrePushGatesPushedBranchAfterSignatureWalk	eac43190	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestRunCodespellPrintsOffendingLines	e39abc3c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestRuntimeUserKeepsNoShellBrokerState	b320fcfa	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestSafePathDocDocumentsRepoPublishWrapperBeforeLowerLevelHelper	135686ee,5eba53e0,d9108578	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestStartAptBrokerDelegatesToTheServerBinary	514a97c9	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestStopEgressProxyDenyLogPublish	9941dc0e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient	3d8902ef,5498922e,9f5547ec,a40bd0ec,a6771e85,d3b1f9a1,fffc2f3b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUninstallKeepsTrustedDockerSandboxOfRunningProcess	5a401a06	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUninstallRemovesWorkcellStateWithoutRequiringGo	daddad46,e22b4b4d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes	101eaa3c,675325b2,b4243935	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump	23e0dda8,44dfc196,7bce7e06,8a0a3452,938331d3,ab9cd680,bed2078b,d1c6b473,df17d8ee,ed39895b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	edeb6dc4	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshIncludesRuntimeGoPins	7c2d45f6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshOverlapStep	30ee2c4a,ef7903e0	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshPublishLocalChecks	4fbe5eab,bdc0220f,bdc0220f,fd7decae	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshScopeGuard	5d2dcbca	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,356845cb,4561edc6,809ad8df,84d882d1,84d882d1,875c2600,b8f34d1a,f1d02810	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidateRepoExecutesPublicContractHistoryGate	4e0b3a69	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidateRepoRejectsStaleMarkdownlintInstall	bef5cf72,e6974c0f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidateRepoUsesLockedMarkdownlint	06f3db68,56939475,cccd41de	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidationGatesLintAllScenarioShellScripts	1e4c2a58,2dbedf97,3255fa23,32964462,5323d832,54a2a421,5f0cc534,675df625,85bf4f99,921fd206,a03469ed,ae4808aa,c377d06a,c505d181,c7e507b4,f25d3456	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidationSnapshotFailsWhenTrackedBlobIsUnreadable	56888884	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidationSnapshotRejectsGitlinkEntriesInHeadMode	c3ac7d98	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidationSnapshotRejectsUnsafeTrackedSymlinks	c95330c4	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorCacheMountIsGatedOnHostUID	e53f10dd	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorCachesAreSavedOnlyOnMain	05669094,0917217c,16b39848,1953a4a6,471cefa6,54d86534,db9e28cd,eb3bfc24	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorImageOwnershipPreservesFailureStatus	32862dc7	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorPasswdFailsClosedWhenTheLookupErrors	6a0f0d1d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorPasswdRefusesAColonInTheHomeField	d38fa2c0	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorPasswdRefusesSymlinkedWorkspaceTmp	40890f51,46122120	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorRunnersRequireWorkspaceMountPreflight	02ca0b49,2b82f19c,32d2af0e,6c75d6a8,6e1e2546,752c8310,b2d4f803	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyInvariantsUsesDedicatedSanitizedEntrypoint	1bc188ca	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactAcceptsCorrectlySignedArtifact	06e02a86	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactPinsRequestedIdentities	6f8963fb,6f8963fb	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactRejectsBadSignature	f45f8aca	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactRejectsMissingSigstoreBundle	c0439a33	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactRejectsTamperedArtifact	13910049	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactRejectsWhenCosignAbsent	cbfe11b6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactSkipVerifyNeutralizationLetsTamperedArtifactPass	46555032,5689f76a,8e192f14	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseArtifactSkipVerifyRequiresAcknowledgement	d07ea908	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsIgnoresHostileBashStartup	dc08f2e0	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsAttestationFailure	8b38c1d8,f0724816	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsChecksumMismatch	8ee0d9e0	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsCosignFailure	ac2e8db6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsDifferentSourceAndWorkflowCommits	f7b00d57	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsDisarmedVerification	c4420fd3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsMalformedImageDigestFile	ae61c39d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsMissingSignature	14463cfd,b831d19a	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsMovedCommitImageTag	b37b2c7a,c442aae1	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsMovedNamedImageTag	3020d90a,dc236608	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsOutOfContractImageVerification	be88e48a	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsSymlinkBundle	b434937d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsSymlinkedAssetsDir	11b0e7be,aa7632e3	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsUnboundBuildInputs	777d4e8b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsUnexpectedChecksumEntry	b87019bc	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsUnexpectedReleaseFile	a656b4b6	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsUnlistableAssetsDir	1a23464e,97e37323	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsUnrelatedImageRepository	6d76444c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRejectsUnreviewedTagClass	e4b7e1b4	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyReleaseOutputsRunsFromItsEntryPoint	4cd16096,d0d21c36	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkcellBootstrapResolvesRealHomeBeforeGoHostutil	1a810592,638538e3,68a3eb2e,b6bf8218,dfc29b06	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkcellForwardsColimaStartTimeoutThroughDetachedSessionHandoff	6431177f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkcellRejectsHarnessOnlyCredentialResolverEnvBeforeBundlePreparation	33f0adb9,5b8f3c33,c669d372	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkcellRejectsSensitiveWorkspaceBeforeExistenceCheck	283199e3,2db8f643,43e81079	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkcellResolvesLaunchWorkspaceBeforeBundlePreparation	3e20ca5b,4c51f69f,e93ba8b7	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkcellShadowsCopilotRepoHookControlPlane	299bf094,ffd752e5	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	activeShellLines	1c400327,27098a67	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	assertNoUpdaterFixtureTempResidue	96a65e32,a787d573,c8339f60	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	assertValidatorImagePrefixes	1b35eb41	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	assertValidatorJobImageOwnership	5eb85259,79f0016a,8b17c2c6,cd2827ef,f0798eb9	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	callSubjects	96d4b7b5	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	canonicalBuildEnvVariable	0c152327,8e451779,bcfd7a20,efa4fcb5	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	canonicalEntrypointOrder	00f5806d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	ciPlanFixture.replaceScript	76aafe26	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	commandLines	17133723,17828184	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	containerSmokeLiteralHeredoc	38490834,73de45b5	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	containerSmokeProviderBody	137ed92e,6bb0697f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	countActiveStatements	32221481	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	environmentWithout	388d2a12	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	execRetryETXTBSYOrNestedBusy	3146a307	unreviewed debt: review the subject, then port or justify
+internal/testkit	extractShellFunction	a835da4e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	flagOccurrences	1e05ec08,7a9c435e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	flagValue	2114469b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	goQuoteInShellLiteral	271cdf0f	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	hasGoQuoteDirective	d3dd99bb	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	hasOptionToken	47e039a2	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	hostileDerivation	80903db5,bbc26ded	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	isBashCandidate	2bcde051,9481cc4c,e89605a2	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	jobBlock	81935a5c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	mutateContainerSmokeHarness	67e5a80e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	parseExecBaseline	74c9b8ef	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	prepareHostedControlCommandGraphFixture	1079268e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	recordedIdentityRegexp	b2f033fa	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	requireCIPlanError	6a938e6b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	requireHostedControlGitHubLog	d35dd47e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	runChildStartupProbe	960e99d0	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	runVerifyDriver	b3d9e4a2	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	runtimeStartupPrologue	adcbda5c,c0656117	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	runtimeStateValue	ac5b2334,f36e09eb	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	splitChangedLines	6e24f7c5,d9f813a2,db7238cd,e215ddbd,f398a1ea	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	splitControlScriptModes	2ead54d6,6ecf342f,95d1e6fb,d072d608	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	splitEdit	79c6f592,9bbfdcfa,e6fee40c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	stableProgramLiteral	0b32dcde	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	stagedCanonicalEntrypoint	2d175265	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	unreachedDelegation	17772321,25250625	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	updaterFixtureValues	172af3bd	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	validateContainerSmokeHarness	162d2ca4,1e51ce8c,56b17ac3,76e18943,8643818c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	validateControlScriptModes	66e29302,f159c56a	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	validatorCleanupLines	affcc8fc	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	writeCanonicalMutation	671e8eef	unreviewed debt in a test: review the subject, then port or justify
 internal/workcellhardening	TestCheckSmokeAptBrokerProbeRejectsCommentedOutAssertions	1bd4f673,eb56b0a7	unreviewed debt in a test: review the subject, then port or justify
 internal/workcellhardening	TestExtractGoFunctionBlock	06475d50,ab83bc7c	unreviewed debt in a test: review the subject, then port or justify
 internal/workcellhardening	TestExtractNamedFunctionBlock	2348f5e3	unreviewed debt in a test: review the subject, then port or justify

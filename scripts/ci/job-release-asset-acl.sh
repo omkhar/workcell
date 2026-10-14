@@ -113,7 +113,7 @@ if [[ -z "${go_bin}" && -n "${toolcache_root}" ]]; then
         candidate_index=$((candidate_index + 1))
       done
     fi
-    bootstrap_candidates[${#bootstrap_candidates[@]}]="${candidate}"
+    bootstrap_candidates+=("${candidate}")
     candidate_index=${#bootstrap_candidates[@]}
     candidate_index=$((candidate_index - 1))
     while ((candidate_index > insert_at)); do

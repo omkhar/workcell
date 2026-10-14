@@ -37,7 +37,8 @@ The fixes are below.
 
 - Container smoke now checks the option inventory of each certified provider
   CLI. It fails when the CLI help shows an option or a top-level command that
-  the adapter manifest does not classify.
+  the adapter manifest does not classify. The provider pin updater restamps
+  the fixtures.
 
 ### Fixed
 

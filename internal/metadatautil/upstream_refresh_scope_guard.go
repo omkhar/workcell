@@ -29,6 +29,14 @@ const (
 	scopeGuardLockfilePath    = "runtime/container/providers/package-lock.json"
 )
 
+// scopeGuardFlagFixtureRE matches a flag inventory fixture. A provider bump
+// may change only its one "# <id>-version:" stamp line, as the pin updater's
+// restamp does; the container-smoke check proves the flags.
+var (
+	scopeGuardFlagFixtureRE   = regexp.MustCompile(`^tests/fixtures/flags/([a-z][a-z0-9-]*)\.txt$`)
+	scopeGuardFlagStampLineRE = regexp.MustCompile(`^[-+]# ([a-z][a-z0-9-]*)-version: [0-9]+\.[0-9]+\.[0-9]+$`)
+)
+
 const scopeGuardLockSemver = `[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?`
 
 var (
@@ -45,7 +53,7 @@ var (
 	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+](# codex-version: |#.*openai/codex tag rust-v)[0-9]+\.[0-9]+\.[0-9]+(\D|$)`)
 	scopeGuardSemverRE         = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
 	scopeGuardPathRE           = regexp.MustCompile(
-		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
+		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/codex-subcommands\.txt|tests/fixtures/flags/[a-z][a-z0-9-]*\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
 	// The lockfile may change only the Gemini CLI entry (version, resolved,
@@ -81,7 +89,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 	var oldHeaders, newHeaders, hunks, remOld, remNew int
 	var removedKeys, addedKeys, addedVersions []string
 	var lockBlocks []scopeGuardLockBlock
-	var changedBefore bool
+	var changedBefore, flagFixture bool
 	var prevLine string
 	closeSection := func() {
 		switch {
@@ -96,7 +104,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: %s", file, scopeGuardLockProblem(lockBlocks))
 		case file == scopeGuardCodexFixture && (len(addedVersions) != 2 || addedVersions[0] != addedVersions[1]):
 			fail("%s: the version stamp and source tag must both change to the same version", file)
-		case (file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture || file == scopeGuardPackageJSONPath) && !slices.Equal(removedKeys, addedKeys):
+		case flagFixture && len(addedVersions) != 1:
+			fail("%s: exactly one version stamp line may change", file)
+		case (file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture || flagFixture || file == scopeGuardPackageJSONPath) && !slices.Equal(removedKeys, addedKeys):
 			// Docker and the shell use the last assignment, the updater reads the first.
 			fail("%s: provider assignments must be replaced one for one, not added, removed, or reordered", file)
 		}
@@ -149,15 +159,16 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			if (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) &&
 				(file == scopeGuardDockerfilePath && !scopeGuardDockerfileLineRE.MatchString(line) ||
 					file == scopeGuardPackageJSONPath && !scopeGuardPackageJSONLineRE.MatchString(line) ||
-					file == scopeGuardCodexFixture && !scopeGuardCodexStampLineRE.MatchString(line)) {
+					file == scopeGuardCodexFixture && !scopeGuardCodexStampLineRE.MatchString(line) ||
+					flagFixture && !scopeGuardFlagStampOf(file, line)) {
 				fail("%s: line %s", file, line)
 			}
-			if file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture || file == scopeGuardPackageJSONPath {
+			if file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture || flagFixture || file == scopeGuardPackageJSONPath {
 				key, _, _ := strings.Cut(strings.TrimSpace(line[1:]), "=")
 				if file == scopeGuardPackageJSONPath {
 					key = "gemini pin" // the line regexp admits only that pin
 				}
-				if file == scopeGuardCodexFixture {
+				if file == scopeGuardCodexFixture || flagFixture {
 					key = scopeGuardSemverRE.ReplaceAllString(line[1:], "V")
 					if line[0] == '+' {
 						addedVersions = append(addedVersions, scopeGuardSemverRE.FindString(line))
@@ -181,6 +192,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				continue
 			}
 			file, seen = fields[2][2:], true
+			flagFixture = scopeGuardFlagFixtureRE.MatchString(file)
 			if file != scopeGuardDockerfilePath && !scopeGuardPathRE.MatchString(file) {
 				fail("path %s", file)
 			}
@@ -262,6 +274,13 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		return errors.New(strings.Join(problems, "\n"))
 	}
 	return nil
+}
+
+// scopeGuardFlagStampOf reports whether line is the version stamp of the flag
+// fixture at path, and no other line.
+func scopeGuardFlagStampOf(path, line string) bool {
+	m := scopeGuardFlagStampLineRE.FindStringSubmatch(line)
+	return m != nil && scopeGuardFlagFixtureRE.FindStringSubmatch(path)[1] == m[1]
 }
 
 // scopeGuardLockBlock is one run of changed lines and the line before it.
