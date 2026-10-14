@@ -344,7 +344,7 @@ internal/testkit	TestContainerSmokeFailureTrapHonorsErrexitState	6cb2ed52,ad0cb1
 internal/testkit	TestCountFlagOccurrencesIgnoresAValueContainingTheFlag	6729b737	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDebianSnapshotFreshnessDefaultsToSixtyDays	c80aa4b9	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDevQuickCheckStaysBoundedToFastLocalWork	74632a22,86556805	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestDocClaimsNegativeControls	22845559	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestDocClaimsNegativeControls	22845559,e3845a40	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDocsValidatorPrunesLockedMarkdownlintDependencies	0a910d8f,e40e877d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestExecGuardBenchRefusesAnActivePreload	78e9e73d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestFastPrePushFailsClosedWhenCheckoutFails	02b3720c	unreviewed debt in a test: review the subject, then port or justify
