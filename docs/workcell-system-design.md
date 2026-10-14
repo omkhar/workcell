@@ -293,7 +293,9 @@ Use these sources for detailed claims:
 - Operator launch remains blocked for all these rows.
 - Apple `container` is preview-only and has no operator target value.
 - Workcell has no managed-workstation backend.
-- The session plane has no queue, pause, resume, checkpoint, or fork model.
+- The session plane has no queue, pause, resume, or checkpoint model.
+  `workcell session fork` starts new children from a signed snapshot of a
+  parent session.
 - The supported user interface is the CLI. GUI and IDE paths do not have the
   Tier 1 claim.
 - The built-in resolvers support Codex host-auth reuse. The Claude macOS

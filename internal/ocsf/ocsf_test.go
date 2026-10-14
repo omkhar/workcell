@@ -832,16 +832,16 @@ func TestTornStopRecordNotSuccess(t *testing.T) {
 // export carries mapping_version "2" (was "1" for the single session event).
 // Version "3" added session.parent_session_id and keeps the multi-event stream.
 func TestMappingVersionBumpedForMultiEvent(t *testing.T) {
-	if MappingVersion != "3" {
-		t.Fatalf("mapping must be version 3 after session.parent_session_id, got %q", MappingVersion)
+	if MappingVersion != "4" {
+		t.Fatalf("mapping must be version 4 after the fork and resource attributes, got %q", MappingVersion)
 	}
 	events := mustExport(t, sampleExport(), Options{Now: fixedNow})
 	if len(events) < 2 {
 		t.Fatalf("fixture must produce a multi-event stream, got %d", len(events))
 	}
 	for i, ev := range events {
-		if ev.Metadata.MappingVersion != "3" {
-			t.Errorf("event %d: mapping_version=%q want 3", i, ev.Metadata.MappingVersion)
+		if ev.Metadata.MappingVersion != "4" {
+			t.Errorf("event %d: mapping_version=%q want 4", i, ev.Metadata.MappingVersion)
 		}
 	}
 }
@@ -930,5 +930,44 @@ func TestExportSkipsSpoofedSessionRecord(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "session-send") {
 		t.Fatalf("spoofed session-B record was attributed to session A:\n%s", buf.String())
+	}
+}
+
+// TestExportSessionForkKeepsLinkage proves that a fork record keeps its snapshot,
+// parent, and children in the export instead of the freeform placeholder.
+func TestExportSessionForkKeepsLinkage(t *testing.T) {
+	line := "timestamp=2026-07-05T11:00:00Z session_id=s1 event=session_fork source=host-cli snapshot_id=snap-1 parent=s1 children=c1,c2"
+	exp := sessions.SessionExport{
+		Session:      sessions.SessionRecord{SessionID: "s1", Agent: "claude", Mode: "yolo", Status: "running", StartedAt: "2026-07-05T11:00:00Z"},
+		AuditRecords: []string{line},
+	}
+	events := mustExport(t, exp, Options{Now: fixedNow})
+	got := events[1]
+	if got.Message != "workcell audit session_fork" {
+		t.Fatalf("fork message = %q", got.Message)
+	}
+	for key, want := range map[string]string{"audit.snapshot_id": "snap-1", "audit.parent": "s1", "audit.children": "c1,c2"} {
+		if got.Unmapped[key] != want {
+			t.Errorf("%s = %q, want %q", key, got.Unmapped[key], want)
+		}
+	}
+	if _, ok := got.Unmapped["audit.unexpected_fields"]; ok {
+		t.Errorf("fork fields fell into the unexpected bucket: %v", got.Unmapped)
+	}
+}
+
+// TestExportSessionSnapshotKeepsCapture proves that a snapshot record keeps the
+// captured workspace and head as named audit attributes.
+func TestExportSessionSnapshotKeepsCapture(t *testing.T) {
+	line := "timestamp=2026-07-05T11:00:00Z session_id=s1 event=session_snapshot source=host-cli snapshot_id=snap-1 snapshot_workspace=/tmp/clone snapshot_head=4444444444444444444444444444444444444444"
+	exp := sessions.SessionExport{
+		Session:      sessions.SessionRecord{SessionID: "s1", Agent: "claude", Mode: "yolo", Status: "running", StartedAt: "2026-07-05T11:00:00Z"},
+		AuditRecords: []string{line},
+	}
+	got := mustExport(t, exp, Options{Now: fixedNow})[1]
+	for key, want := range map[string]string{"audit.snapshot_workspace": "/tmp/clone", "audit.snapshot_head": strings.Repeat("4", 40)} {
+		if got.Unmapped[key] != want {
+			t.Errorf("%s = %q, want %q", key, got.Unmapped[key], want)
+		}
 	}
 }
