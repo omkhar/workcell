@@ -1,5 +1,5 @@
 # Option inventory for the PINNED runtime gemini CLI. The stamp must equal the pin.
-# gemini-version: 0.62.0
+# gemini-version: 0.63.0
 # Regenerate: scripts/check-flag-inventory.sh --write. Classify: adapters/gemini/adapter.toml [flags].
 --accept-raw-output-risk
 --acp
