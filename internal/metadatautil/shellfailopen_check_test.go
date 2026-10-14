@@ -43,8 +43,9 @@ func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
 		"git fetch && printf x || true\n":                1, // the handler covers the whole && list
 		"( exec 1>/dev/null; ); git -C /missing fetch 2>&1\n(\nexec 1>/dev/null\ngit fetch 2>&1\n)\ngit gc 2>&1\nexec 1>/dev/null | cat; git gc 2>&1\n{ exec 1>/dev/null; }; git gc 2>&1\n":                             6, // a subshell or a left pipeline stage keeps its exec redirect to itself; a { } group does not
 		"builtin exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\nexec 3>/dev/null; exec 1>&3; git -C /missing fetch 2>&1\nexec 03>/dev/null; exec 01>&03; git -C /missing fetch 02>&01\ngit gc 02>/dev/null\n": 5, // builtin exec keeps no redirect; exec 1>&3 may reach a saved null
-		"out=$(printf '%s' \"$(git ls-files)\")\n":     1, // the nested substitution owns the call
-		"x=$(y=$(git rev-parse HEAD); git ls-files)\n": 2, // each substitution runs its own tool
+		"while read -r f; do :; done < <(false) && cat <(true); wait \"$!\"\n": 2, // a later <( sets $!, so the wait no longer covers the loop
+		"out=$(printf '%s' \"$(git ls-files)\")\n":                             1, // the nested substitution owns the call
+		"x=$(y=$(git rev-parse HEAD); git ls-files)\n":                         2, // each substitution runs its own tool
 		"exec 3>&1; exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\ngit gc 2>&1; echo done\ncommand -- exec 1>/dev/null; git gc 2>&1\n\\exec 2>/dev/null\nexec -- 1>/dev/null; git -C /missing fetch 2>&1; echo done\nFOO=bar exec -a x 2>/dev/null\nexec -afoo 2>/dev/null\nexec -cla x 2>/dev/null\n! exec 2>/dev/null\nif exec 2>/dev/null; then :; fi\ntime -p exec 2>/dev/null\n2>/dev/null exec\n1>/dev/null exec; git gc 2>&1\n": 17, // exec >/dev/null, after an adjacent exec, makes each later 2>&1 a dev-null use; command -- exec and \exec are exec too, and exec options or assignments keep the redirect
 	} {
 		findings, err = metadatautil.ShellFailOpenFindings(script)
@@ -265,6 +266,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"handler on the continued line", "x=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
 		{"if tests the call", "if x=$(gh api /y); then :; fi\n", ""},
 		{"wait after the loop", "while read -r f; do :; done < <(find . -type f)\nwait $!\n", ""},
+		{"one-line wait after the loop", "while read -r f; do :; done < <(false); wait \"$!\"\n", ""},
 		{"wait after a loop with && in it", "while read -r f; do\n  true && :\ndone < <(find . -type f)\nwait \"$!\"\n", ""},
 		{"sentinel", loop + "[[ \"${walk_completed}\" -eq 1 ]] || exit 1\n", ""},
 		{"sentinel tested by an if", "done_completed=0\nwhile read -r -d '' f; do\n  if [[ -z \"$f\" ]]; then\n    done_completed=1\n    continue\n  fi\ndone < <(find . -print0 && printf '\\0')\n\nif [[ \"${done_completed}\" -ne 1 ]]; then\n  echo failed >&2\n  exit 1\nfi\n", ""},

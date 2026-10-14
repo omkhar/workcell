@@ -321,7 +321,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			// stands, so it needs proof: a loop reports its inner status only
 			// through a completion sentinel its body sets or a wait "$!" after it.
 			loopForm := shellLoopSubst.MatchString(command)
-			looped := loopForm && shellFailOpenWaited(raws[at+1]) && !slices.ContainsFunc(append(body, raws[at]), shellFailOpenBackgrounds)
+			looped := loopForm && shellFailOpenWaited(raws[at+1]) && shellFailOpenLastSubst(command) && !slices.ContainsFunc(append(body, raws[at]), shellFailOpenBackgrounds)
 			if !looped && loopForm {
 				codes, following := commands[at+1:len(commands)-1], raws[at+1:len(raws)-1]
 				for _, later := range statements[index+1:] {
@@ -656,6 +656,14 @@ func shellFailOpenWaited(raw string) bool {
 	return slices.ContainsFunc(ShellInvocations(raw, "wait"), func(each Invocation) bool {
 		return each.Position == 1 && slices.Equal(each.Args, []string{"$!"})
 	})
+}
+
+// shellFailOpenLastSubst reports whether the command's last done < <( starts
+// its last process substitution, since each later <( or >( sets $! too and a
+// wait "$!" then waits for that one instead of the loop's producer.
+func shellFailOpenLastSubst(command string) bool {
+	loops := shellLoopSubst.FindAllStringIndex(command, -1)
+	return !shellProcessSubst.MatchString(command[loops[len(loops)-1][1]:])
 }
 
 // shellFailOpenBackgrounds reports whether a command starts a job in the
