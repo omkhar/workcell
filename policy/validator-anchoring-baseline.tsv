@@ -31,7 +31,7 @@ internal/metadatautil	ParseHelpCommands	1254e754,14bf0875,a1d90014,c0c9634c,c87d
 internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
-internal/metadatautil	ShellFailOpenFindings	06134532,0706d7a3,0706d7a3,0743b427,0ddcfb6a,3889c75c,53b10a3d,563070cb,5844e675,5ce51fcb,6d002c67,71bcde34,72135448,7ead5eff,823a8d66,884727e3,89ac62c2,89ac62c2,8b9d53a8,c72c8ad1,de97339e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	TestApplyDebianBootstrapPinsAtomicallyUpdatesSharedManifest	d031936d	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestApplyProviderBumpPlanRewritesPinnedVersions	2a197cee,5f273159,8efc2ff8,b5a75a85,c0074026,e5f13811,ff60caf5	unreviewed debt in a test: review the subject, then port or justify
@@ -103,6 +103,7 @@ internal/metadatautil	dockerPinnedInputValidator.validateProviderVersions	2f0141
 internal/metadatautil	dockerPinnedInputValidator.validateValidatorDeadcode	4a31dbf9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateValidatorHadolint	fa92ca1d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerfileInstructions	33adfa7b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	envOperands	ef3d60e0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	evaluates	08bbcfda,21e7aa8e,c914c99c	the matches read the parsed argv words of one command: the barrier names, and the $, backtick and brace spellings of its command word
 internal/metadatautil	exitCodeEmitted	859244aa,db0686c6,e4cb9292	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	extendFirstOption	8eadceee	unreviewed debt in a test: review the subject, then port or justify
@@ -223,17 +224,24 @@ internal/metadatautil	scopeGuardLockVersionRE	0d2a7fa2	unreviewed debt: review t
 internal/metadatautil	scopeGuardSplitLF	4f546323	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	selectCopilotStable	605dc4a7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sentenceWords	e91bc492	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	shebangInterpreter	4673ccf5,92689fd9,9a831542,c4459c13,def8a006	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shebangInterpreter	92689fd9,9a831542	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellCodeOnly	046624a5,2a34b9b5,300d14bf,a6dcde68,b2af9b08,b95527a9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellCommandStart	0f0db7be	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellDevNull	a9facb8a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellEnvSplit	0fab514c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellEnvUnsplit	88084219	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellExecNull	80232bf7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFD	81a505aa	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailClosedRe	03e75059	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenCommands	59b7ac66,eb57de54	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenCompleted	005d0290,084135b3,3f4d48ff,4aa43f19,4d8f88c3,acede2fb,b8474743,e883ef82	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenDetached	6639a08f,c2f94601	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenEnds	3e28c15a,8c7d9c4d,b70364cb	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenExit	24f6defc	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenFirstCall	f27c3831	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenHandled	45115311,77f51290	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenLastSubst	1c0daaa7,a0c9d33a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenNamed	1498e420,9c9af020	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenReadsOwnStatus	5394aec0,ac82f6b1,e65dcc10	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenReadsStatus	df096ef4,e38318ae	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenRunsFirst	55b36551	unreviewed debt: review the subject, then port or justify
@@ -241,13 +249,15 @@ internal/metadatautil	shellListOperands	7cedd069	unreviewed debt: review the sub
 internal/metadatautil	shellProgram	01691dfb,0dede830,19b61cf5,3726acb9,3ceb6305,3ceb6305,7caa62b8,916bd6f6,916bd6f6,9b12b4ba,be5c2d65	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellRedirect	969f347e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellStartupEnv	05490f0a	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	shellSubstCall	97a6d756,b3fc7705	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellSubstCall	71a05f21,a834ac89,b3fc7705	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellSubstHidden	4115d3e1,41e05e3e,436aa0e3,5dde0b06,5e2abe62,ba126c56,e03ab2c8	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellSubstMasked	310db2f0,5b80543c,8c500f6d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellSwallowingHandlers	9ef943fa,adbe224f,aee48b4b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellToolCommand	d44965d1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellToolName	e24ee91d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellToolSubsts	57e83a94	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellUnnamedCommand	d1bb2d49	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellUnwrapped	363b4721,9f7cfd86,fd36e9b8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellWords	03c76f35,52951b4a,5e1c3157,a0ae5e55,d0dc3f09	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	spelledProgram	d6917967	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	stepCondition	05fe93c8,0cfb9063,1251aa19,60ede516,a8e4f0a4,c9b391af,cc4b3040,ebe07d86	unreviewed debt: review the subject, then port or justify
