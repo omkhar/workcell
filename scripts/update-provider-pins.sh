@@ -47,7 +47,7 @@ usage() {
 Usage: scripts/update-provider-pins.sh [--apply | --check | --json] [--now RFC3339]
 
 Modes:
-  --apply   Update pinned provider versions to the newest stable releases older than the configured cool-off, refresh package-lock.json, and advance an unchanged Codex command inventory.
+  --apply   Update pinned provider versions to the newest stable releases older than the configured cool-off, refresh package-lock.json, advance an unchanged Codex command inventory, and restamp the flag inventory fixtures.
   --check   Exit non-zero when an eligible stable provider update is available.
   --json    Print the resolved provider bump plan as JSON.
 
@@ -271,6 +271,9 @@ if [[ -n "${codex_fixture_candidate}" ]]; then
 fi
 mv -f -- "${dockerfile_candidate}" "${DOCKERFILE_PATH}"
 dockerfile_candidate=""
+# The flag fixtures carry a stamp of each certified provider pin. Container
+# smoke proves the flags themselves against the new CLI.
+(cd "${ROOT_DIR}" && go run ./cmd/workcell-citools flag-inventory restamp "${ROOT_DIR}")
 
 verify_provider_releases
 

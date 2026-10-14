@@ -107,7 +107,7 @@ func writeFlagInventoryRepo(t *testing.T, fixture string) string {
 	return root
 }
 
-func TestFlagInventoryRenderAndCheck(t *testing.T) {
+func TestFlagInventoryRenderCheckAndRestamp(t *testing.T) {
 	t.Parallel()
 
 	root := writeFlagInventoryRepo(t, "")
@@ -150,6 +150,16 @@ func TestFlagInventoryRenderAndCheck(t *testing.T) {
 	if err := CheckFlagInventory(root); err == nil || !strings.Contains(err.Error(), "stamp 1.2.3 does not match the demo pin 1.3.0") {
 		t.Fatalf("CheckFlagInventory() = %v, want stale stamp", err)
 	}
+	if err := RestampFlagFixtures(root); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(FlagFixturePath(root, "demo"))
+	if want := strings.Replace(classified, "1.2.3", "1.3.0", 1); string(got) != want {
+		t.Fatalf("restamped fixture = %q, want %q", got, want)
+	}
+	if err := CheckFlagInventory(root); err != nil {
+		t.Fatalf("CheckFlagInventory() after restamp = %v, want nil", err)
+	}
 }
 
 func TestCheckFlagInventoryRejectsMalformedFixtures(t *testing.T) {
@@ -170,6 +180,11 @@ func TestCheckFlagInventoryRejectsMalformedFixtures(t *testing.T) {
 		root := writeFlagInventoryRepo(t, fixture)
 		if err := CheckFlagInventory(root); err == nil {
 			t.Errorf("%s: CheckFlagInventory() = nil, want error", name)
+		}
+		if fixture != "" {
+			if err := RestampFlagFixtures(root); err == nil {
+				t.Errorf("%s: RestampFlagFixtures() = nil, want error", name)
+			}
 		}
 	}
 	if err := CheckFlagInventory(writeFlagInventoryRepo(t, good)); err != nil {
@@ -197,19 +212,28 @@ func TestWriteFlagFixtureRefusesSymlinkedParent(t *testing.T) {
 	root := writeFlagInventoryRepo(t, "")
 	help := filepath.Join(root, "help.txt")
 	mustWriteText(t, help, "Commands:\n  exec  Run\n  help  Print help\n\nOptions:\n  --model <M>\n")
-	if err := WriteFlagFixture(root, "demo", []string{help}); err != nil {
-		t.Fatalf("WriteFlagFixture() = %v", err)
+	flags := filepath.Dir(FlagFixturePath(root, "demo"))
+	// A missing fixture directory is created, and a second write replaces the file.
+	if err := os.RemoveAll(flags); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := WriteFlagFixture(root, "demo", []string{help}); err != nil {
+			t.Fatalf("WriteFlagFixture() = %v", err)
+		}
 	}
 	info, err := os.Stat(FlagFixturePath(root, "demo"))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("fixture stat = %v; want mode 0600", err)
+	}
+	if entries, _ := os.ReadDir(flags); len(entries) != 1 {
+		t.Fatalf("staged sibling left behind: %v", entries)
 	}
 	if err := CompareFlagFixture(root, "demo", []string{help}); err != nil {
 		t.Fatalf("CompareFlagFixture() after write = %v", err)
 	}
 	// An untrusted checkout can point the fixture directory outside itself.
 	outside := t.TempDir()
-	flags := filepath.Dir(FlagFixturePath(root, "demo"))
 	if err := os.RemoveAll(flags); err != nil {
 		t.Fatal(err)
 	}
@@ -231,5 +255,32 @@ func TestFlagInventoryRealRepo(t *testing.T) {
 
 	if err := CheckFlagInventory(filepath.Join("..", "..")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRestampFlagFixturesRefusesSymlinkedParent(t *testing.T) {
+	t.Parallel()
+
+	const good = "# demo-version: 1.2.3\n--model\n--yolo\n"
+	root := writeFlagInventoryRepo(t, good)
+	mustWriteText(t, filepath.Join(root, "runtime", "container", "Dockerfile"), "FROM scratch\nARG DEMO_VERSION=1.3.0\n")
+	// An untrusted checkout can point tests/fixtures at another directory in
+	// the checkout, which os.Root would follow.
+	fixtures := filepath.Join(root, "tests", "fixtures")
+	outside := filepath.Join(root, "decoy")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(fixtures, filepath.Join(outside, "fixtures")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "decoy", "fixtures"), fixtures); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestampFlagFixtures(root); err == nil {
+		t.Fatal("RestampFlagFixtures() = nil, want a refused symlinked parent")
+	}
+	if got, _ := os.ReadFile(filepath.Join(outside, "fixtures", "flags", "demo.txt")); string(got) != good {
+		t.Fatalf("outside fixture = %q, want it unchanged", got)
 	}
 }

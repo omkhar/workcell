@@ -181,10 +181,20 @@ func RenderFlagFixtureFromHelp(root, id string, helpPaths []string) ([]byte, err
 }
 
 // WriteFlagFixture renders adapter id's fixture and replaces it through a
-// no-follow parent, so a symlinked directory cannot redirect the write.
+// no-follow parent, so a symlinked directory cannot redirect the write. It
+// creates and syncs a missing fixture directory, as the old mkdir -p did.
 func WriteFlagFixture(root, id string, helpPaths []string) error {
 	fixture, err := RenderFlagFixtureFromHelp(root, id, helpPaths)
 	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(FlagFixturePath(root, id))
+	grandparent, _, err := rootio.OpenParentDirectoryNoFollow(dir)
+	if err != nil {
+		return err
+	}
+	defer grandparent.Close()
+	if err := rootio.MkdirAllSyncedAt(grandparent, filepath.Base(dir), 0o755); err != nil {
 		return err
 	}
 	parent, path, err := rootio.OpenParentDirectoryNoFollow(FlagFixturePath(root, id))
@@ -248,12 +258,58 @@ func CheckFlagInventory(root string) error {
 	return nil
 }
 
+// RestampFlagFixtures sets each certified fixture's stamp to the current pin
+// and leaves its flags unchanged. Container smoke then proves the flags. It
+// reads, validates and replaces each fixture through one no-follow parent
+// descriptor, so a swapped symlink cannot redirect the replacement.
+func RestampFlagFixtures(root string) error {
+	manifests, err := certifiedManifests(root)
+	if err != nil {
+		return err
+	}
+	for _, m := range manifests {
+		pin, err := adapterPin(root, m)
+		if err != nil {
+			return err
+		}
+		if err := restampFlagFixture(FlagFixturePath(root, m.ID), m.ID, pin); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restampFlagFixture(path, id, pin string) error {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := filepath.Base(cleaned)
+	data, err := rootio.ReadFileAtNoFollow(parent, name, "flag fixture", 1<<20)
+	if err != nil {
+		return err
+	}
+	if _, _, err := parseFlagFixture(path, id, data); err != nil {
+		return err
+	}
+	updated := flagFixtureStampRE.ReplaceAllString(string(data), "# ${1}-version: "+pin)
+	if updated == string(data) {
+		return nil
+	}
+	return rootio.WriteFileAtomicAtNoFollow(parent, name, []byte(updated), 0o600, ".flag-restamp-")
+}
+
 func readFlagFixture(path, id string) (string, []string, error) {
 	// An untrusted checkout can swap the fixture for a symlink to a host file.
 	data, err := rootio.ReadFileNoFollow(path, "flag fixture", 1<<20)
 	if err != nil {
 		return "", nil, err
 	}
+	return parseFlagFixture(path, id, data)
+}
+
+func parseFlagFixture(path, id string, data []byte) (string, []string, error) {
 	stamps := flagFixtureStampRE.FindAllStringSubmatch(string(data), -1)
 	if len(stamps) != 1 || stamps[0][1] != id {
 		return "", nil, fmt.Errorf("%s: want exactly one \"# %s-version: X.Y.Z\" stamp", path, id)
