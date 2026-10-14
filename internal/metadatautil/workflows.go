@@ -103,7 +103,7 @@ func stepRuns(step workflowStep) string {
 // ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
 // rejects unknown fields, reordered steps, changed commands, changed action inputs,
 // a swapped publisher, a redirected registry, and a weakened shell default.
-const releaseSignerContractSHA256 = "fc05fcaf01de80a2e78889cd04a1e7b861a890f4a1f5ec978420de391c199c81"
+const releaseSignerContractSHA256 = "cbde08a93b9d15e6294978c770ce9fb0b93aa544e54f80ad185df77a0dea33ee"
 
 // CollectWorkflowJobNames lists every job's check name. It reads job names
 // only, so it decodes openly: a valid key such as run-name or a reusable job's
