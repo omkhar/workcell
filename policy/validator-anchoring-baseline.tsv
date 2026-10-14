@@ -27,6 +27,7 @@ internal/metadatautil	ExtractCopilotSHA	13056216,264e3788,304ff98c	debt: regexp 
 internal/metadatautil	ExtractDockerfileArg	828b8b57,e7295a85,fb388a05	debt: regexp over Dockerfile text; read the parsed ARG instruction
 internal/metadatautil	HadolintManifestChecksum	40acb559,b65cec14	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	IsSafePullRequestTargetWorkflow	4db683f1,f9acf37a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	LaneScripts	055d0553,333ec69d,5b763629	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ParseHelpCommands	1254e754,14bf0875,a1d90014,c0c9634c,c87d28bb	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
@@ -96,6 +97,7 @@ internal/metadatautil	commandWords	89820ff5,a3f98e42,f129b634	the match drops th
 internal/metadatautil	countCalls	8a596b86,ca8a38dc	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe11386	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	definedName	0f1edc2e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	docClaimRule	3ac775b1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.aptBrokerBuilderStage	174cd5ff	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.aptBrokerRuntimeStage	23121551,c4f09ac0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateAptBrokerRuntimeInstall	851e5f5b	unreviewed debt: review the subject, then port or justify
@@ -113,7 +115,7 @@ internal/metadatautil	fetchCodexSubcommands	ce25dff3	unreviewed debt: review the
 internal/metadatautil	fileExemptsPortability	6c6641e7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	filterVerificationPaths	3c90a3bd	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	flattenSubstitutions	06747006,0931674b,4c46065b,7a000647,7ba95feb,be0aacca	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	flattenedCommands	1643c766,571812cf,69ddf134,7da37412,93987f5c,c000ee9c,c246b162,e72fa7b5,e72fa7b5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	flattenedCommands	0639a974,1643c766,22efc51f,3fa18951,571812cf,69ddf134,7da37412,93987f5c,c000ee9c,c246b162,e72fa7b5,e72fa7b5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	forwards	b157cc56	the pattern tests whether one parsed command word is a positional parameter or an array expansion
 internal/metadatautil	functionDefinition	3504f8e9,f3e2f47e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	functionScopedMatches	063efee0,2282fb4d,8151ca87,cb6c1dce	unreviewed debt: review the subject, then port or justify
@@ -181,6 +183,7 @@ internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a l
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	rebindsCommand	419dfc3d	the = test tells an alias definition from an alias listing among parsed command words
+internal/metadatautil	rebindsLane	880960f2,e4f6455a,f6a659e3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	refsRoot	8c451e37	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rejectInstallScriptAptPackages	30b19070,7ae83b67	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	renderDiscoverabilitySurface	e9d7ffc7	the prefix checks a surface name from the decoded contract
@@ -225,6 +228,7 @@ internal/metadatautil	scopeGuardSplitLF	4f546323	unreviewed debt: review the sub
 internal/metadatautil	selectCopilotStable	605dc4a7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sentenceWords	e91bc492	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shebangInterpreter	92689fd9,9a831542	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellArrayOpen	728ab60a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellCodeOnly	046624a5,2a34b9b5,300d14bf,a6dcde68,b2af9b08,b95527a9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellCommandStart	0f0db7be	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellDevNull	a9facb8a	unreviewed debt: review the subject, then port or justify
@@ -260,6 +264,7 @@ internal/metadatautil	shellUnnamedCommand	d1bb2d49	unreviewed debt: review the s
 internal/metadatautil	shellUnwrapped	363b4721,9f7cfd86,fd36e9b8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellWords	03c76f35,52951b4a,5e1c3157,a0ae5e55,d0dc3f09	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	spelledProgram	d6917967	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	startupFileStep	f69b73c9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	stepCondition	05fe93c8,0cfb9063,1251aa19,60ede516,a8e4f0a4,c9b391af,cc4b3040,ebe07d86	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	stripComments	0327796f,78ef8599,8189b49d,cee7c880	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	structJSONFields	1fb782aa,332ad09a,f7b30984	unreviewed debt: review the subject, then port or justify
@@ -296,7 +301,6 @@ internal/metadatautil	withoutCasePatternAlternatives	4cbda5fb,517edb33	unreviewe
 internal/metadatautil	workflowLaneMatchesAnyPath	d4258ee2	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowLanePathPattern	12b057e2,80c898e9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowLaneRequiredLabels	af99a851	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	workflowRefHits	6aedb90b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	wrappedCommand	3e44657e,53923640,6a96b240,6c88352a,8949f85e,b0f0a35b,c83453df,cd42118c,ce48222a,e200d8a8	unreviewed debt: review the subject, then port or justify
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
 internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
