@@ -1,0 +1,26 @@
+# Text-matching validator ratchet (scripts/check-validator-anchoring.sh); the
+# rules are in docs/invariants.md section 2d. Rows are
+# PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON; CALLS lists each match call's
+# identity (matchIdentity). Port a "debt" row to ShellInvocations or a closed
+# decoder, then delete it. An "unreviewed debt" row came in when the scan
+# widened to every match; give it a real reason or port it.
+# Seeded from origin/main 14040a17; rebased onto c5fa6469.
+internal/adapters	LoadManifests	c2333b01	the pattern checks a directory entry name, not file content
+internal/adapters	TestManifestsMatchLauncherAgentDispatch	257a40f3,57540d48,57540d48,c71e9e89	unreviewed debt in a test: review the subject, then port or justify
+internal/adapters	TestRenderersFollowManifests	1d06f46e,2e17b808,33369dc3,52136e3f,5aa5ff73,a78322f5,ecdf292f	unreviewed debt in a test: review the subject, then port or justify
+internal/adapters	dockerfilePinnedArgs	0726d6e0,7663cdcd	unreviewed debt in a test: review the subject, then port or justify
+internal/adapters	endpointRowAbsent	bf67ade5	unreviewed debt in a test: review the subject, then port or justify
+internal/adapters	parseManifest	4b830416	unreviewed debt: review the subject, then port or justify
+internal/adapters	rustLaunchTargets	6bc79c7a,a6b612f6,d4e4b3ba	unreviewed debt in a test: review the subject, then port or justify
+internal/adapters	rustTokens	01438f12,316d61f3,5d3a8db4,926f1e1f,9bd99527,aad01d73,bd4608c8,e5ef7ea1,e5ef7ea1	unreviewed debt in a test: review the subject, then port or justify
+internal/adapters	validateFlags	2d22c89e,bdc1c12e,fd6a16a7	unreviewed debt: review the subject, then port or justify
+internal/adapters	validateManifest	245b0a57,258a8901,a88bf6e5	unreviewed debt: review the subject, then port or justify
+internal/workcellhardening	TestCheckSmokeAptBrokerProbeRejectsCommentedOutAssertions	1bd4f673,eb56b0a7	unreviewed debt in a test: review the subject, then port or justify
+internal/workcellhardening	TestExtractGoFunctionBlock	06475d50,ab83bc7c	unreviewed debt in a test: review the subject, then port or justify
+internal/workcellhardening	TestExtractNamedFunctionBlock	2348f5e3	unreviewed debt in a test: review the subject, then port or justify
+internal/workcellhardening	check.holds	0fc60c97,42e7b3da,a7aaf405,abce30b6,abce30b6,abce30b6,c728367a,c728367a,c728367a,de7eec86	debt: line match over a target file that evaluate reads; parse the target
+internal/workcellhardening	extractGoFunctionBlock	53ae3ed9,884d1bf8,b2317150,f334439a,fea0ce45	unreviewed debt: review the subject, then port or justify
+internal/workcellhardening	extractNamedFunctionBlock	079da643,448b9f98	unreviewed debt: review the subject, then port or justify
+internal/workcellhardening	parseJSONPath	227fd4ba	unreviewed debt: review the subject, then port or justify
+internal/workcellhardening	regexMatchesAnyLine	322595ab,4b9db3b8	unreviewed debt: review the subject, then port or justify
+internal/workcellhardening	runtimePathMutation	0dc5861e,e50fdbcd	unreviewed debt in a test: review the subject, then port or justify
