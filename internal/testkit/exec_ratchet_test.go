@@ -440,6 +440,27 @@ func unparen(expr ast.Expr) ast.Expr {
 	}
 }
 
+// returnsHeld reports whether a function returns a held value in any return statement, or holds one in a named result that a bare return carries; the one reader of both PATH writer and command factories.
+func returnsHeld(fn *ast.FuncType, body *ast.BlockStmt, named func(*ast.Ident) bool, holds func(ast.Expr) bool) bool {
+	found := false
+	if fn.Results != nil {
+		for _, field := range fn.Results.List {
+			for _, name := range field.Names {
+				found = found || named(name)
+			}
+		}
+	}
+	ast.Inspect(body, func(c ast.Node) bool {
+		if ret, ok := c.(*ast.ReturnStmt); ok {
+			for _, result := range ret.Results {
+				found = found || holds(result)
+			}
+		}
+		return !found
+	})
+	return found
+}
+
 // commandField keys a struct field given a command constructor by its name alone, since the AST cannot always type the value a call selects the field from; a same-named field of another struct type counts too, which only makes the count stricter.
 type commandField string
 
@@ -524,29 +545,21 @@ func collectCommandAliases(aliases, factories map[any]bool, params map[string][]
 			set[name], added = true, true
 		}
 	}
-	isAlias := func(value ast.Expr) bool {
+	var isAlias func(value ast.Expr) bool
+	isAlias = func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
 		case *ast.Ident:
 			return aliases[v.Name] || aliases[v.Obj] || execCommandName(v) != ""
 		case *ast.SelectorExpr:
 			return aliases[commandField(v.Sel.Name)] || execCommandName(v) != ""
-		case *ast.CallExpr: // a factory's result
+		case *ast.CallExpr: // a factory's result, or a conversion such as runner(exec.Command), matched without types so any single-argument call of a constructor only fails closed
 			id, ok := factoryName(v).(*ast.Ident)
-			return ok && factories[id.Name]
+			return ok && factories[id.Name] || len(v.Args) == 1 && isAlias(v.Args[0])
 		}
 		return execCommandName(value) != ""
 	}
-	returnsAlias := func(body *ast.BlockStmt) bool {
-		found := false
-		ast.Inspect(body, func(c ast.Node) bool {
-			if ret, ok := c.(*ast.ReturnStmt); ok {
-				for _, result := range ret.Results {
-					found = found || isAlias(result)
-				}
-			}
-			return !found
-		})
-		return found
+	returnsAlias := func(fn *ast.FuncType, body *ast.BlockStmt) bool {
+		return returnsHeld(fn, body, func(name *ast.Ident) bool { return aliases[name.Name] || aliases[name.Obj] }, isAlias)
 	}
 	record := func(names []ast.Expr, values []ast.Expr) {
 		if len(values) == 1 && len(names) > 1 { // any result of a tuple call may be the alias
@@ -563,7 +576,7 @@ func collectCommandAliases(aliases, factories map[any]bool, params map[string][]
 			case !ok:
 			case isAlias(values[i]):
 				add(aliases, id.Name)
-			case isLit && returnsAlias(lit.Body), isIdent && factories[from.Name]:
+			case isLit && returnsAlias(lit.Type, lit.Body), isIdent && factories[from.Name]:
 				add(factories, id.Name)
 			}
 		}
@@ -579,7 +592,7 @@ func collectCommandAliases(aliases, factories map[any]bool, params map[string][]
 			}
 			record(names, n.Values)
 		case *ast.FuncDecl:
-			if n.Body != nil && returnsAlias(n.Body) {
+			if n.Body != nil && returnsAlias(n.Type, n.Body) {
 				add(factories, n.Name.Name)
 			}
 		case *ast.CompositeLit: // a struct field given a command constructor, by key or by position
@@ -780,25 +793,8 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 	params := functionParams(files...)
 	fields := structFields(files)
 	isSetenv := func(value ast.Expr) bool { return isPathWriter(value, savedSetenv, factories) }
-	// returnsWriter reports whether a function returns a writer in any return statement, or holds one in a named result that a bare return carries.
 	returnsWriter := func(fn *ast.FuncType, body *ast.BlockStmt) bool {
-		found := false
-		if fn.Results != nil {
-			for _, field := range fn.Results.List {
-				for _, name := range field.Names {
-					found = found || savedSetenv[name.Name]
-				}
-			}
-		}
-		ast.Inspect(body, func(c ast.Node) bool {
-			if ret, ok := c.(*ast.ReturnStmt); ok {
-				for _, result := range ret.Results {
-					found = found || isSetenv(result)
-				}
-			}
-			return !found
-		})
-		return found
+		return returnsHeld(fn, body, func(name *ast.Ident) bool { return savedSetenv[name.Name] }, isSetenv)
 	}
 	// A name or a field that receives a writer holds it; a field is matched by
 	// name across the package, which only lists more.
@@ -1415,6 +1411,22 @@ func a(m maker, p string) { m.factory()(p); launch := m.factory(); launch(p); m.
 `
 	if got := rawExecSites(t, "method_factory.go", methodFactory); got != 6 {
 		t.Fatalf("rawExecSites = %d, want 6 (factory's saved value, calls through m.factory() directly and saved, build's command, and pair's saved value plus a call through its second result)", got)
+	}
+	const namedResultCommandFactory = `package x
+import "os/exec"
+func factory() (run func(string, ...string) *exec.Cmd) { run = exec.Command; return }
+func a(p string) { factory()(p) }
+`
+	if got := rawExecSites(t, "named_result_command_factory.go", namedResultCommandFactory); got != 2 {
+		t.Fatalf("rawExecSites = %d, want 2 (the saved value and a call through a factory whose bare return carries a constructor in a named result)", got)
+	}
+	const convertedConstructor = `package x
+import "os/exec"
+type runner func(string, ...string) *exec.Cmd
+func a(p string) { r := runner(exec.Command); r(p) }
+`
+	if got := rawExecSites(t, "converted_constructor.go", convertedConstructor); got != 2 {
+		t.Fatalf("rawExecSites = %d, want 2 (the converted value and a call through its alias)", got)
 	}
 	// A constructor stored in a struct field, keyed, positional, assigned or through an alias, counts at each call through the field; a field matches by name in every struct type, so logger's run counts too.
 	const fieldConstructor = `package x
