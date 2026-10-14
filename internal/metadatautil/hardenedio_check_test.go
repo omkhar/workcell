@@ -244,3 +244,20 @@ func TestCheckHardenedIOAnchorsTheReviewedCallSite(t *testing.T) {
 		})
 	}
 }
+
+// A range that declares its loop variable and one that assigns an outer one
+// are different control flow, so they must not share a call identity.
+func TestHardenedIOAnchorKeepsTheRangeToken(t *testing.T) {
+	t.Parallel()
+	const header = "package x\n\nimport \"os\"\n\nfunc f(paths []string) {\n\tvar path string\n"
+	identity := func(loop string) string {
+		findings, err := metadatautil.HardenedIOFindings(header + loop + " {\n\t\tos.RemoveAll(path)\n\t}\n}\n")
+		if err != nil || len(findings) != 1 {
+			t.Fatalf("HardenedIOFindings() = %v, %v", findings, err)
+		}
+		return findings[0].Call
+	}
+	if declared, assigned := identity("\tfor _, path := range paths"), identity("\tfor _, path = range paths"); declared == assigned {
+		t.Fatalf("the := and = range loops share the identity %s", declared)
+	}
+}

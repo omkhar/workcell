@@ -368,7 +368,7 @@ func hardenedControlAnchor(stack []ast.Node) string {
 		case *ast.ForStmt:
 			anchor = append(anchor, "for "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Cond)+"; "+hardenedPrint(node.Post))
 		case *ast.RangeStmt:
-			anchor = append(anchor, "range "+hardenedPrint(node.Key)+", "+hardenedPrint(node.Value)+" "+hardenedPrint(node.X))
+			anchor = append(anchor, "range "+hardenedPrint(node.Key)+", "+hardenedPrint(node.Value)+" "+node.Tok.String()+" "+hardenedPrint(node.X))
 		case *ast.SwitchStmt:
 			anchor = append(anchor, "switch "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Tag))
 		case *ast.TypeSwitchStmt:
