@@ -4,6 +4,7 @@
 package metadatautil_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := anchoringRoot(t, "")
 			dir := filepath.Join(root, "internal", "example")
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
@@ -68,5 +69,140 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 				t.Fatalf("CheckValidatorAnchoring() error = %v, want %q", err, testCase.want)
 			}
 		})
+	}
+}
+
+// anchoringRoot builds a repository with the four validator packages and the
+// given baseline rows.
+func anchoringRoot(t *testing.T, baseline string) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"internal/adapters/a.go":                  "package adapters\n",
+		"internal/testkit/a.go":                   "package testkit\n",
+		"internal/workcellhardening/a.go":         "package workcellhardening\n",
+		"internal/metadatautil/a.go":              "package metadatautil\n",
+		"policy/validator-anchoring-baseline.tsv": "# rows\n" + baseline,
+	}
+	for name, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestCheckValidatorAnchoringTextMatchRatchet(t *testing.T) {
+	const validator = "package adapters\n\nfunc (c *checker) wrapper(p string) bool {\n\ttext, _ := readText(p)\n\treturn strings.Contains(text, \"tool run\")\n}\n"
+	// The identity of strings.Contains(text, "tool run") in checker.wrapper.
+	const row = "internal/adapters\tchecker.wrapper\t2fbc5f19\treviewed\n"
+	many := validator
+	for index := range 20 {
+		many += strings.Replace(validator[len("package adapters\n"):], "wrapper", fmt.Sprintf("wrapper%d", index), 1)
+	}
+	cases := []struct {
+		name, file, source, baseline, want string
+	}{
+		{"planted violation", "v.go", validator, "", "checker.wrapper matches text"},
+		{"listed with a reason", "v.go", validator, row, ""},
+		{"stale row", "v.go", "package adapters\n", row, "remove its stale baseline row"},
+		{"row without a reason", "v.go", validator, "internal/adapters\tchecker.wrapper\t2fbc5f19\t \n", "PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON"},
+		{"row with a count", "v.go", validator, "internal/adapters\tchecker.wrapper\t1\treviewed\n", "CALLS must list 8-hex match identities"},
+		{"new match in a listed function", "v.go", strings.Replace(validator, "return ", "_ = strings.HasPrefix(text, \"x\")\n\treturn ", 1), row, "checker.wrapper has match call(s) 1918d5cc,2fbc5f19 but its baseline row says 2fbc5f19"},
+		{"match swapped for another", "v.go", strings.Replace(validator, "Contains", "HasPrefix", 1), row, "checker.wrapper has match call(s) 00d6f3cf but its baseline row says 2fbc5f19"},
+		{"space inside a literal changed", "v.go", strings.Replace(validator, "\"tool run\"", "\"toolrun\"", 1), row, "checker.wrapper has match call(s) "},
+		{"Count match", "v.go", strings.Replace(validator, "return strings.Contains(text, \"tool run\")", "return strings.Count(text, \"tool run\") == 1", 1), "", "checker.wrapper matches text"},
+		{"bytes.Count match", "v.go", strings.Replace(validator, "return strings.Contains(text, \"tool run\")", "return bytes.Count([]byte(text), []byte(\"tool run\")) == 1", 1), "", "checker.wrapper matches text"},
+		{"reformatted match keeps its identity", "v.go", strings.Replace(validator, "(text, ", "(\n\t\ttext,\n\t\t", 1), row, ""},
+		{"repeated row", "v.go", validator, row + row, "repeated row"},
+		{"report is capped", "v.go", many, "", "and 1 more"},
+		{"validator in a test file", "v_test.go", "package adapters\n\nfunc TestWorkflowRunsTool(t *testing.T) {\n\tif !strings.Contains(readText(p), \"tool run\") {\n\t\tt.Fatal(p)\n\t}\n}\n", "", "adapters.TestWorkflowRunsTool matches text"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := anchoringRoot(t, testCase.baseline)
+			for name, body := range map[string]string{
+				testCase.file: testCase.source,
+				"p.go":        "package adapters\n\nfunc ok() { ShellInvocations(script, \"tool\") }\n",
+				"p_test.go":   "package adapters\n\nfunc run() { RequireRejectsAllEvasions(t, a, b, c, d) }\n",
+			} {
+				if err := os.WriteFile(filepath.Join(root, "internal", "adapters", name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := metadatautil.CheckValidatorAnchoring(root)
+			if testCase.want == "" {
+				if err != nil {
+					t.Fatalf("CheckValidatorAnchoring() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("CheckValidatorAnchoring() error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestTextMatchingFunctions(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want []string
+	}{
+		"read then contains":         {"func f() { b, _ := os.ReadFile(p); _ = bytes.Contains(b, x) }", []string{"f"}},
+		"read then has prefix":       {"func f() { s := readText(p); _ = strings.HasPrefix(s, x) }", []string{"f"}},
+		"read then index":            {"func f() { s := readRepoFile(p); _ = strings.Index(s, x) }", []string{"f"}},
+		"read then regexp":           {"func f() { s := readText(p); _ = regexp.MustCompile(x).MatchString(s) }", []string{"f", "f"}},
+		"one name per match":         {"func f() { _ = strings.Contains(a, x); _ = strings.HasPrefix(a, y) }", []string{"f", "f"}},
+		"aliased strings":            {"import str \"strings\"\nfunc f() { _ = str.Contains(a, x) }", []string{"f"}},
+		"aliased regexp":             {"import re \"regexp\"\nfunc f() { _ = re.MustCompile(x) }", []string{"f"}},
+		"dot import":                 {"import . \"strings\"\nfunc f() { _ = Contains(a, x) }", []string{"f"}},
+		"read then compiled re":      {"func f() { s := readText(p); _ = re.FindStringSubmatch(s) }", []string{"f"}},
+		"compiled split":             {"func f() { s := readText(p); _ = regexp.MustCompile(x).Split(s, -1) }", []string{"f", "f"}},
+		"compiled find all submatch": {"func f() { s := readText(p); _ = re.FindAllStringSubmatchIndex(s, -1) }", []string{"f"}},
+		"exec then contains":         {"func f() { o, _ := exec.Command(x).Output(); _ = bytes.Contains(o, y) }", []string{"f"}},
+		"match in a closure":         {"func f() { s := readText(p); g := func() bool { return strings.Contains(s, x) }; _ = g }", []string{"f"}},
+		"generic receiver":           {"func (c *box[T]) f() { s := readText(p); _ = strings.Contains(s, x) }", []string{"box.f"}},
+		"match before read":          {"func f() { _ = strings.Contains(a, x); _ = readText(p) }", []string{"f"}},
+		"read nested in match":       {"func f() bool { return strings.Contains(string(readRepoFile(p)), x) }", []string{"f"}},
+		"helper gets content":        {"func f(workflow string) error { if !strings.Contains(workflow, x) { return e }; return nil }", []string{"f"}},
+		"package-level matcher":      {"var holds = func(text string) bool { return strings.HasPrefix(text, x) }", []string{"holds"}},
+		"literal pattern":            {"var re = regexp.MustCompile(`^a$`)\nfunc f() *regexp.Regexp { return regexp.MustCompile(\"b\") }", nil},
+		"error message":              {"func f() { _ = strings.Contains(err.Error(), x) }", nil},
+		"filepath match":             {"func f() { s := readText(p); _, _ = filepath.Match(s, x) }", nil},
+		"split is not a search":      {"func f() { s := readText(p); _ = strings.Split(s, x) }", nil},
+		"text about the call":        {"func f() { _ = readText(p) // strings.Contains(s, x)\n}", nil},
+		"function value alias":       {"func f() { contains := strings.Contains; _ = contains(a, x) }", []string{"f", "f"}},
+		"alias of an alias":          {"func f() { c := strings.Contains; var d = c; _ = d(a, x) }", []string{"f", "f", "f"}},
+		"method value alias":         {"var match = regexp.MustCompile(`x`).MatchString\nfunc f() { _ = match(s) }", []string{"match", "f"}},
+		"matcher passed to a helper": {"func f() bool { return contains(text, x, strings.Contains) }", []string{"f"}},
+		"method value as argument":   {"func f() { apply(s, re.MatchString) }", []string{"f"}},
+		"matcher in a literal":       {"var matchers = []func(string, string) bool{strings.HasPrefix}", []string{"matchers"}},
+		"matcher returned":           {"func f() func(string, string) bool { return strings.Contains }", []string{"f"}},
+	}
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, _, err := metadatautil.TextMatchingFunctions(map[string]string{"a.go": "package p\n\n" + testCase.body + "\n"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, ",") != strings.Join(testCase.want, ",") {
+				t.Fatalf("TextMatchingFunctions() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestTextMatchingFunctionsResolvesAnAliasFromAnotherFile(t *testing.T) {
+	got, _, err := metadatautil.TextMatchingFunctions(map[string]string{
+		"a.go": "package p\n\nimport \"strings\"\n\nvar has = strings.HasPrefix\n",
+		"b.go": "package p\n\nfunc f(s string) bool { return has(s, x) }\n",
+	})
+	if err != nil || strings.Join(got, ",") != "has,f" {
+		t.Fatalf("TextMatchingFunctions() = %v, %v, want [has f]", got, err)
 	}
 }

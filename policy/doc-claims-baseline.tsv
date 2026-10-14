@@ -45,6 +45,7 @@ docs/examples/enterprise-claude-setup.md	unwired-script	scripts/repo-publish-pr.
 docs/examples/quickstart-claude.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
 docs/examples/quickstart-codex.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
 docs/examples/quickstart-gemini.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
+docs/extending-adapters.md	unwired-script	scripts/check-flag-inventory.sh	operator tool, or called by another script; no lane runs it directly
 docs/extending-adapters.md	unwired-script	scripts/generate-adapters-data.sh	operator tool, or called by another script; no lane runs it directly
 docs/extending-adapters.md	unwired-script	scripts/generate-adapters-launcher-shell.sh	operator tool, or called by another script; no lane runs it directly
 docs/extending-adapters.md	unwired-script	scripts/generate-adapters-providerid.sh	operator tool, or called by another script; no lane runs it directly

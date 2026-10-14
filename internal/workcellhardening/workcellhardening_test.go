@@ -3069,20 +3069,13 @@ func TestCheckCopilotPolicyWrapperRealRepo(t *testing.T) {
 }
 
 // copilotUnsafeFlagsHappyProviderPolicy is a minimal but structurally faithful
-// runtime/container/provider-policy.sh: it contains all sixteen unsafe long
-// flags, all five attached short-flag forms (with the `?*` glob characters as
-// literal text, matched by grep -Fq), and the second bare short-flag snippet
-// `-C | -i | -n | -r | -w)` (the FIRST bare snippet lives in the smoke harness,
-// so the two loop-3 items are deliberately split across the two files to prove
-// the OR across them is real).
+// runtime/container/provider-policy.sh: it contains the second bare short-flag
+// snippet `-C | -i | -n | -r | -w)` (the FIRST bare snippet lives in the smoke
+// harness, so the two bare-snippet items are deliberately split across the two
+// files to prove the OR across them is real).
 const copilotUnsafeFlagsHappyProviderPolicy = `#!/usr/bin/env bash
 copilot_policy() {
   case "${arg}" in
-  --config-dir | --allow-tool | --allow-all-tools | --allow-all-mcp-server-instructions) ;;
-  --available-tools | --secret-env-vars | --no-auto-update | --no-remote | --no-remote-export) ;;
-  --disable-builtin-mcps | --disallow-temp-dir | --dynamic-retrieval | --interactive) ;;
-  --no-bash-env | --plan | --worktree) ;;
-  -c?* | -i?* | -a?* | -A?* | -w?*) ;;
   -C | -i | -n | -r | -w) ;;
   esac
 }
@@ -3177,40 +3170,7 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
 		},
 		{
-			// Loop 1 (kindPresent, provider-policy.sh — first flag).
-			name:               "provider policy missing first unsafe long flag",
-			providerPolicy:     strings.Replace(copilotUnsafeFlagsHappyProviderPolicy, "--config-dir", "--other", 1),
-			smoke:              copilotUnsafeFlagsHappySmoke,
-			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
-			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
-			rustLib:            copilotUnsafeFlagsHappyRustLib,
-			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
-			wantErr:            "Expected provider policy to reject Copilot unsafe flag: --config-dir",
-		},
-		{
-			// Loop 1 (kindPresent, provider-policy.sh — last flag).
-			name:               "provider policy missing last unsafe long flag",
-			providerPolicy:     strings.Replace(copilotUnsafeFlagsHappyProviderPolicy, "--worktree", "--other", 1),
-			smoke:              copilotUnsafeFlagsHappySmoke,
-			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
-			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
-			rustLib:            copilotUnsafeFlagsHappyRustLib,
-			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
-			wantErr:            "Expected provider policy to reject Copilot unsafe flag: --worktree",
-		},
-		{
-			// Loop 2 (kindPresent, provider-policy.sh — literal `?*` short form).
-			name:               "provider policy missing attached short form",
-			providerPolicy:     strings.Replace(copilotUnsafeFlagsHappyProviderPolicy, "-a?*", "-a", 1),
-			smoke:              copilotUnsafeFlagsHappySmoke,
-			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
-			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
-			rustLib:            copilotUnsafeFlagsHappyRustLib,
-			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
-			wantErr:            "Expected provider policy to reject Copilot attached unsafe short flag: -a?*",
-		},
-		{
-			// Loop 3 (kindPresentInAnyFile): the first bare snippet lives only in the
+			// Bare snippet (kindPresentInAnyFile): the first bare snippet lives only in the
 			// smoke harness, so removing it there (it is absent from the policy) makes
 			// it absent from BOTH files → violation.
 			name:               "bare short flag absent from both files",
@@ -3302,8 +3262,8 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			wantErr:            "Expected launcher and smoke coverage to reject forged Copilot auth env",
 		},
 		{
-			// A missing provider-policy.sh is empty content: the first loop-1 probe
-			// fails (the --config-dir flag).
+			// A missing provider-policy.sh is empty content: the second bare
+			// snippet, which lives only in the policy, fails first.
 			name:               "missing provider policy",
 			providerPolicy:     "",
 			smoke:              copilotUnsafeFlagsHappySmoke,
@@ -3311,7 +3271,7 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
 			rustLib:            copilotUnsafeFlagsHappyRustLib,
 			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
-			wantErr:            "Expected provider policy to reject Copilot unsafe flag: --config-dir",
+			wantErr:            "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: -C | -i | -n | -r | -w)",
 		},
 	}
 
@@ -3336,18 +3296,18 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 }
 
 // TestCheckCopilotUnsafeFlagsBareShortFormOrSemantics exercises the new
-// kindPresentInAnyFile OR semantics directly against the loop-3 first bare
+// kindPresentInAnyFile OR semantics directly against the first bare
 // short-flag snippet: it must hold when the snippet is present in the smoke
 // harness only, when present in the provider policy only, and must fail only
 // when absent from BOTH files — mirroring `grep -Fq -- NEEDLE f1 f2`.
 func TestCheckCopilotUnsafeFlagsBareShortFormOrSemantics(t *testing.T) {
 	const snippet = "copilot_short_flag in -C -i -n -r -w"
-	// A policy body that still satisfies every non-loop-3 policy probe but does
+	// A policy body that still satisfies every non-bare-snippet policy probe but does
 	// NOT contain the first bare snippet by default (the happy policy already
-	// omits it; the second bare snippet stays present so loop-3 item 2 holds).
+	// omits it; the second bare snippet stays present so bare-snippet item 2 holds).
 	policyWithout := copilotUnsafeFlagsHappyProviderPolicy
 	policyWith := copilotUnsafeFlagsHappyProviderPolicy + "\n  # " + snippet + "\n"
-	// A smoke body that satisfies every non-loop-3 smoke probe but omits the
+	// A smoke body that satisfies every non-bare-snippet smoke probe but omits the
 	// first bare snippet.
 	smokeWithout := strings.Replace(copilotUnsafeFlagsHappySmoke, snippet, "placeholder", 1)
 	smokeWith := copilotUnsafeFlagsHappySmoke
@@ -3384,11 +3344,11 @@ func TestCheckCopilotUnsafeFlagsBareShortFormOrSemantics(t *testing.T) {
 }
 
 // TestCheckCopilotUnsafeFlagsCount asserts the check list contains exactly
-// thirty-one invariants, guarding against an accidentally truncated or
+// ten invariants, guarding against an accidentally truncated or
 // duplicated migration of the shell block.
 func TestCheckCopilotUnsafeFlagsCount(t *testing.T) {
 	got := len(copilotUnsafeFlagsChecks())
-	const want = 31
+	const want = 10
 	if got != want {
 		t.Fatalf("copilotUnsafeFlagsChecks() has %d checks, want %d", got, want)
 	}
@@ -3396,7 +3356,7 @@ func TestCheckCopilotUnsafeFlagsCount(t *testing.T) {
 
 // TestCheckCopilotUnsafeFlagsRealRepo asserts that the real provider-policy.sh,
 // container-smoke.sh, provider-wrapper.sh, development-wrapper.sh, lib.rs, and
-// launcher_common.rs in this repository satisfy all thirty-one
+// launcher_common.rs in this repository satisfy all ten
 // Copilot-unsafe-flag invariants.  This is the key guard against a
 // mis-transcribed needle or a wrong target file: if any Go pattern is not a
 // byte-exact substring of the actual file (or the wrong file), this test fails

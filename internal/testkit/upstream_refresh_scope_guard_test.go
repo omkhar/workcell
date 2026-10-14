@@ -61,6 +61,25 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 	}{
 		{name: "in-scope bump", patch: inScope},
 		{
+			name:  "in-scope bump with flag fixture restamp",
+			patch: inScope + scopeGuardFilePatch("tests/fixtures/flags/codex.txt", "# codex-version: 0.153.2", "# codex-version: 0.154.0"),
+		},
+		{
+			name:    "flag fixture flag added",
+			patch:   inScope + scopeGuardFilePatch("tests/fixtures/flags/codex.txt", "--model", "--yolo"),
+			wantErr: "line +--yolo",
+		},
+		{
+			name:    "flag fixture stamp of another provider",
+			patch:   inScope + scopeGuardFilePatch("tests/fixtures/flags/codex.txt", "# codex-version: 0.153.2", "# gemini-version: 0.154.0"),
+			wantErr: "line +# gemini-version: 0.154.0",
+		},
+		{
+			name:    "flag fixture flag removed with the stamp",
+			patch:   inScope + scopeGuardFilePatch("tests/fixtures/flags/codex.txt", "--model", "# codex-version: 0.154.0"),
+			wantErr: "line ---model",
+		},
+		{
 			name:    "out-of-scope path",
 			patch:   inScope + scopeGuardFilePatch("scripts/workcell", "old", "new"),
 			wantErr: "path scripts/workcell",

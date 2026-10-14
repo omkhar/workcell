@@ -2430,43 +2430,6 @@ func CheckCopilotPolicyWrapper(rootDir string) error {
 	return evaluate(rootDir, copilotPolicyWrapperChecks)
 }
 
-// copilotUnsafeLongFlags lists the sixteen fixed Copilot flags the shell's
-// `for unsafe_copilot_flag in ...` loop asserted the provider policy rejects.
-// Order matches the shell verbatim so the generated checks reproduce the
-// shell's first-failure stderr exactly.  Every flag is a fixed single-quoted
-// shell literal, matched by `grep -Fq`.
-var copilotUnsafeLongFlags = []string{
-	"--config-dir",
-	"--allow-tool",
-	"--allow-all-tools",
-	"--allow-all-mcp-server-instructions",
-	"--available-tools",
-	"--secret-env-vars",
-	"--no-auto-update",
-	"--no-remote",
-	"--no-remote-export",
-	"--disable-builtin-mcps",
-	"--disallow-temp-dir",
-	"--dynamic-retrieval",
-	"--interactive",
-	"--no-bash-env",
-	"--plan",
-	"--worktree",
-}
-
-// copilotUnsafeAttachedShortForms lists the five Copilot attached short-flag
-// forms the shell's `for unsafe_copilot_short_form in ...` loop asserted the
-// provider policy rejects.  `grep -Fq` treats the `?` and `*` glob characters
-// as LITERAL, so each is a fixed string (e.g. the literal `-c?*`), not a glob;
-// order matches the shell verbatim.
-var copilotUnsafeAttachedShortForms = []string{
-	"-c?*",
-	"-i?*",
-	"-a?*",
-	"-A?*",
-	"-w?*",
-}
-
 // copilotUnsafeBareShortForms lists the two Copilot bare short-flag case
 // snippets the shell's `for unsafe_copilot_bare_short in ...` loop asserted are
 // rejected and smoke-tested.  Each is a fixed single-quoted shell literal
@@ -2479,12 +2442,14 @@ var copilotUnsafeBareShortForms = []string{
 	"-C | -i | -n | -r | -w)",
 }
 
-// copilotUnsafeFlagsChecks returns the thirty-one Copilot-unsafe-flag
-// invariants in the same order as the former inline block in
-// scripts/verify-invariants.sh (the block between the copilot-policy-wrapper
-// `go_verify_citools` call and the Copilot upstream-release-verifier
-// `# shellcheck disable=SC2016` group), so a reviewer can diff the two
-// one-to-one.
+// copilotUnsafeFlagsChecks returns the ten Copilot unsafe-flag invariants
+// that remain text probes, in the order of the former inline block in
+// scripts/verify-invariants.sh.  The sixteen unsafe long flags and five
+// attached short forms that the block once grepped for in provider-policy.sh
+// are now [flags] deny entries in adapters/copilot/adapter.toml, and
+// TestFlagInventoryEntriesMatchProviderPolicy runs each one (and each glued
+// short form) through reject_unsafe_copilot_args, so the manifest is their one
+// owner.
 //
 // The block reads six files via the per-check targetFile / targetFiles fields:
 // the runtime provider policy (runtime/container/provider-policy.sh), the
@@ -2495,14 +2460,7 @@ var copilotUnsafeBareShortForms = []string{
 // helper.
 //
 // Matching semantics mirror the shell exactly:
-//   - The three `for` loops each ran `grep -Fq -- NEEDLE ...`.  The first two
-//     loops probe a single file (provider-policy.sh), so each item is a
-//     kindPresent check whose message interpolates the loop variable exactly as
-//     the shell's `echo "... ${unsafe_copilot_flag}"` /
-//     `${unsafe_copilot_short_form}` did.  Every needle is fixed-string
-//     containment: `grep -Fq` treats the `?`/`*` glob characters in the short
-//     forms as literal.
-//   - The third loop ran `grep -Fq -- NEEDLE container-smoke.sh
+//   - The bare short-flag loop ran `grep -Fq -- NEEDLE container-smoke.sh
 //     provider-policy.sh` — a multi-file grep whose `! grep` guard fails only
 //     when the needle is absent from BOTH files.  Each item is therefore a
 //     kindPresentInAnyFile check over those two files, sharing the loop's
@@ -2516,25 +2474,7 @@ var copilotUnsafeBareShortForms = []string{
 //     identical (the first missing probe yields the same stderr and exit 1).
 func copilotUnsafeFlagsChecks() []check {
 	var cs []check
-	// Loop 1: sixteen fixed unsafe long flags rejected by provider-policy.sh.
-	for _, flag := range copilotUnsafeLongFlags {
-		cs = append(cs, check{
-			kind:       kindPresent,
-			pattern:    flag,
-			message:    "Expected provider policy to reject Copilot unsafe flag: " + flag,
-			targetFile: providerPolicyRelPath,
-		})
-	}
-	// Loop 2: five attached short-flag forms rejected by provider-policy.sh.
-	for _, form := range copilotUnsafeAttachedShortForms {
-		cs = append(cs, check{
-			kind:       kindPresent,
-			pattern:    form,
-			message:    "Expected provider policy to reject Copilot attached unsafe short flag: " + form,
-			targetFile: providerPolicyRelPath,
-		})
-	}
-	// Loop 3: two bare short-flag snippets present in container-smoke.sh OR
+	// Two bare short-flag snippets present in container-smoke.sh OR
 	// provider-policy.sh (multi-file grep OR).
 	for _, form := range copilotUnsafeBareShortForms {
 		cs = append(cs, check{
@@ -2601,7 +2541,7 @@ func copilotUnsafeFlagsChecks() []check {
 	return cs
 }
 
-// CheckCopilotUnsafeFlags runs the thirty-one Copilot-unsafe-flag invariants
+// CheckCopilotUnsafeFlags runs the ten Copilot-unsafe-flag invariants
 // against the repo rooted at rootDir, in the shell's original order.  It returns
 // nil when every invariant holds (the shell's exit 0), or an error whose message
 // equals the shell's stderr for the first violated invariant (the shell's exit

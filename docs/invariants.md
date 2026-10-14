@@ -92,6 +92,26 @@ Some idioms turn a failed tool into an empty answer, so a gate passes on nothing
 
 `scripts/check-shell-portability.sh` rejects each idiom in `scripts/` and `runtime/container/` unless the command, or the command after it, captures the status. `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
 
+## 2d. Validators anchor to decoded structure
+
+A validator that reads content and then matches it with `strings.Contains`,
+`bytes.Index` or `regexp` can match text in a comment or a string. Use
+`ShellInvocations` or a closed decoder instead.
+
+`scripts/check-validator-anchoring.sh` lists every function that matches text
+this way. It scans `internal/adapters` and `internal/workcellhardening`, test
+files included. It does not track where the text came from. A helper that
+matches content from its caller is listed too. An import alias or a dot import
+does not hide the package. A call through a function value such as
+`contains := strings.Contains` counts.
+
+`policy/validator-anchoring-baseline.tsv` holds one row per function: package,
+function, an identity per match call, and the reason that the match is safe or
+still debt. A function with no row fails. A row whose identities differ fails,
+so a new or a swapped match in a listed function fails too. A row whose function
+no longer matches this way fails. Port a debt row, then delete it in the same
+change.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only

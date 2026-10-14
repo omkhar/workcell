@@ -404,7 +404,9 @@ func RequireRejectsAllEvasions(t *testing.T, artifact, anchor, want string, vali
 	requireEvasions(t, artifact, anchor, want, nil, validate)
 }
 
-// gatedEvasions names the rows that leave the anchored command a command behind a branch, a guard, a group, an exit, an exec or an uncalled function definition. The rewrite does not turn it into text, so a reader that ignores reachability still finds it.
+// gatedEvasions names the rows that leave the anchored command a command behind
+// a branch, a guard, a group, an exit or an exec. The rewrite does not turn it
+// into text, so a reader that ignores reachability still finds it.
 var gatedEvasions = map[string]bool{
 	"unreachable branch": true, "conditional right-hand side": true, "conditional across a line break": true,
 	"exit before the command": true, "exec before the command": true, "quoted compound-command closer": true,
@@ -414,14 +416,12 @@ var gatedEvasions = map[string]bool{
 	"substitution inside a subshell opener": true, "quoted fragment in a subshell opener": true,
 	"parameter expansion in a subshell opener": true, "subshell behind a reserved prefix": true,
 	"subshell behind a named coproc": true, "paired closers in a subshell opener": true,
-	"uncalled function definition": true, "definition brace on the next line": true,
-	"quoted brace in a definition": true, "argument brace in a definition body": true,
 	// These rows put a barrier, an exit or a rebinding before the command. A
 	// reader that ignores reachability still reads the command after it.
 	"assigned eval definition": true, "assigned exiting helper call": true, "assigned hash in a called helper": true,
-	"debug trap before the anchor": true, "debug trap in a called helper": true, "duplicate function definition, last wins": true,
+	"debug trap before the anchor": true, "debug trap in a called helper": true,
 	"eval in an if condition": true, "eval-assembled definition": true, "exiting helper before the anchor": true,
-	"function keyword and a tab": true, "hash in a while condition": true, "later-defined exiting helper": true,
+	"hash in a while condition": true, "later-defined exiting helper": true,
 	"one-line helper that evals": true, "recursion that grows its words": true, "recursion that repeats its words": true,
 	"time-wrapped eval": true, "wrapped eval definition": true, "wrapped hash in a called helper": true,
 	// A step condition skips the whole step; the run body still holds the command.

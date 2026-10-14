@@ -85,7 +85,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"continued argument is not wiring", "See `scripts/orphan.sh` here.\n", "shellcheck \\\n  scripts/orphan.sh\n", "", "", "unwired-script"},
 		{"heredoc body is not wiring", "See `scripts/orphan.sh` here.\n", "cat <<EOF\nscripts/orphan.sh\nEOF\n", "", "", "unwired-script"},
 		{"quoted separator is not wiring", "See `scripts/orphan.sh` here.\n", "echo \"a; scripts/orphan.sh\"\n", "", "", "unwired-script"},
-		{"uncalled function is wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\n", "", "", ""},
+		{"uncalled function is not wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\n", "", "", "unwired-script"},
 		{"called function is wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\nf\n", "", "", ""},
 		{"wired after an exit in an if", "See `scripts/orphan.sh` here.\n", "if [ -n \"$x\" ]; then\n  exit 1\nfi\nscripts/orphan.sh\n", "", "", ""},
 		{"a guarded command is wiring", "See `scripts/orphan.sh` here.\n", "false && scripts/orphan.sh\n", "", "", ""},

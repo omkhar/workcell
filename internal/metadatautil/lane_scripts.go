@@ -34,8 +34,8 @@ var (
 // nothing, and a relative path in a step that may first source a BASH_ENV or
 // ENV startup file, or in a later step of its job, resolves to no repository
 // script. EveryShellCommand reads each body, so a
-// comment, a heredoc body or quoted text wires nothing, while a command behind
-// a guard, after an exit or in an uncalled function still wires its script.
+// comment, a heredoc body, quoted text or an uncalled function wires nothing,
+// while a command behind a guard or after an exit still wires its script.
 func LaneScripts(rootDir string) ([]string, error) {
 	root, err := os.Open(rootDir)
 	if err != nil {

@@ -1763,6 +1763,10 @@ func TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump(t
 	publishCodexFixture := strings.Index(script, `mv -f -- "${codex_fixture_candidate}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}"`)
 	lockfile := strings.Index(script, `"${NPM_BIN}" install --package-lock-only`)
 	verify := strings.LastIndex(script, "\nverify_provider_releases\n")
+	restamp := strings.Index(script, `workcell-citools flag-inventory restamp "${ROOT_DIR}"`)
+	if restamp < 0 || restamp < publishDockerfile || restamp < publishPackageJSON || restamp > verify {
+		t.Fatalf("%s must restamp the flag fixtures after it publishes the pins and before it verifies releases", path)
+	}
 	if prepare < 0 || apply < 0 || publishDockerfile < 0 || publishPackageJSON < 0 || publishPackageLock < 0 || publishCodexFixture < 0 || lockfile < 0 || verify < 0 {
 		t.Fatalf("%s must prepare, apply, publish, refresh the lockfile, and verify the Codex fixture update", path)
 	}
