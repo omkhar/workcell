@@ -75,6 +75,18 @@ func stepShell(document workflowDocument, job workflowJob, step workflowStep) st
 	return document.Def.Run["shell"]
 }
 
+// unreadShellStep reports a step whose run body is in a language this package does not read, as pwsh or python: a shell other than a plain sh or bash, or no shell on a runner not surely bash.
+func unreadShellStep(document workflowDocument, job workflowJob, step workflowStep) bool {
+	shell := stepShell(document, job, step)
+	return step.Run != "" && !readShell(shell) && (shell != "" || !hostedPosixRunner(job.RunsOn))
+}
+
+// startupFileStep reports a step whose shell may source a BASH_ENV or ENV file before its run body, set by the workflow, job or step env or by the body itself, or whose body writes one to GITHUB_ENV for a later step.
+func startupFileStep(document workflowDocument, job workflowJob, step workflowStep) bool {
+	return slices.ContainsFunc([]map[string]string{document.Env, job.Env, step.Env}, setsStartupFile) ||
+		unreadEnvWrite(step.Run) || shellStartupEnv.MatchString(strings.NewReplacer("\\\n", "", `"`, "", `'`, "", `\`, "").Replace(step.Run))
+}
+
 // ghInArguments reports a gh api call in another command's words, as any
 // wrapper or quoted program would hand it on unseen; echo, printf, command -v,
 // and find, trap, builtin, a sudo left standing, which runs nothing, and a
@@ -219,12 +231,11 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
-				if shell := stepShell(documents[file], definition, step); step.Run != "" && !readShell(shell) && (shell != "" || !hostedPosixRunner(definition.RunsOn)) {
+				if unreadShellStep(documents[file], definition, step) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
 				}
-				if slices.ContainsFunc([]map[string]string{documents[file].Env, definition.Env, step.Env}, setsStartupFile) ||
-					unreadEnvWrite(step.Run) || shellStartupEnv.MatchString(strings.NewReplacer("\\\n", "", `"`, "", `'`, "", `\`, "").Replace(step.Run)) {
+				if startupFileStep(documents[file], definition, step) {
 					add("command-unresolved") // bash sources BASH_ENV, or sh ENV, before the run body
 				}
 				for _, words := range EveryShellCommand(step.Run) {
@@ -233,7 +244,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
 						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] || ghInArguments(words) {
 						add("command-unresolved") // a file, or a program, the lint does not see
-					} else if _, ok := shellProgram(words, "$_"); ok {
+					} else if _, ok, _ := shellProgram(words, "$_"); ok {
 						add("command-unresolved") // EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
 					}
 				}

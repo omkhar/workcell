@@ -179,6 +179,18 @@ check drops a leading `./` first. A path with a `..` or symlink component
 fails, and the check does not look it up. Go probes each path through no-follow
 descriptors.
 
+`validate-repo.sh`, a CI job script or a workflow must run a cited
+`scripts/*.sh` path as a command. Thus a doc cannot cite a gate that nothing
+runs. The check reads every command that a lane can run, so a command after
+`false &&` or after an `exit` counts. A comment, a heredoc or an array member
+does not count. A workflow path starts from the working directory of its step,
+and a `cd` before it moves that directory.
+
+A lane fails the check when it can change what a later command runs. An
+`alias` does this, and so does a source of a path outside `${ROOT_DIR}`. A
+program name that the check cannot read also fails. The check does not follow
+a symlink to a lane file.
+
 The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
 today, one row per hit: path, rule, subject and reason. A new hit fails.
 A row with no hit fails. `scripts/check-doc-links.sh` also fails on a row
