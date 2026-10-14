@@ -30,7 +30,10 @@ var (
 // script, and neither does an absolute path. A workflow path resolves from the
 // step's working directory, and a relative path after a cd, a pushd or a
 // source in any lane, or under an expression or absolute directory, resolves
-// to no repository script. EveryShellCommand reads each body, so a
+// to no repository script. A step in a shell this package does not read wires
+// nothing, and a relative path in a step that may first source a BASH_ENV or
+// ENV startup file, or in a later step of its job, resolves to no repository
+// script. EveryShellCommand reads each body, so a
 // comment, a heredoc body or quoted text wires nothing, while a command behind
 // a guard, after an exit or in an uncalled function still wires its script.
 func LaneScripts(rootDir string) ([]string, error) {
@@ -41,6 +44,7 @@ func LaneScripts(rootDir string) ([]string, error) {
 	defer root.Close()
 	type laneRun struct {
 		dir, body string
+		moved     bool
 	}
 	var runs []laneRun
 	var scripts []string
@@ -63,18 +67,23 @@ func LaneScripts(rootDir string) ([]string, error) {
 				return nil, fmt.Errorf("parse %s: %w", rel, err)
 			}
 			for name, job := range document.Jobs {
+				startup := false // a startup file set in this job's GITHUB_ENV holds for its later steps
 				for _, step := range job.Steps {
+					if unreadShellStep(document, job, step) {
+						continue
+					}
 					dir, err := stepWorkDir(document, job, step)
 					if err != nil {
 						return nil, fmt.Errorf("%s job %s: %w", rel, name, err)
 					}
-					runs = append(runs, laneRun{dir, step.Run})
+					startup = startup || startupFileStep(document, job, step)
+					runs = append(runs, laneRun{dir, step.Run, startup})
 				}
 			}
 		}
 	}
 	for _, run := range runs {
-		moved := strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
+		moved := run.moved || strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
 		for _, words := range EveryShellCommand(run.body) {
 			if rebindsLane(words) {
 				return nil, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which may rebind the scripts it runs", strings.Join(words, " "))

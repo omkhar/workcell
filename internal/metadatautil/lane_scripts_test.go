@@ -21,11 +21,14 @@ func TestLaneScripts(t *testing.T) {
 		"scripts/ci/job-x.sh":      "./scripts/c.sh\n",
 		"scripts/ci/job-cd.sh":     "cd /tmp\nscripts/p.sh\n",
 		"scripts/ci/job-src.sh":    "source \"${ROOT_DIR}/scripts/lib/x.sh\"\nscripts/r.sh\n",
-		".github/workflows/x.yml": "jobs:\n  x:\n    steps:\n      - run: ./scripts/d.sh --flag\n      - run: echo scripts/e.sh\n" +
+		".github/workflows/x.yml": "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./scripts/d.sh --flag\n      - run: echo scripts/e.sh\n" +
 			"      - run: scripts/j.sh\n        working-directory: other\n      - run: |\n          cd other\n          scripts/l.sh\n" +
-			"  w:\n    defaults:\n      run:\n        working-directory: other\n    steps:\n      - run: scripts/k.sh\n",
-		".github/workflows/z.yaml": "defaults:\n  run:\n    working-directory: sub\njobs:\n  z:\n    steps:\n      - run: ../scripts/m.sh\n" +
+			"  w:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: other\n    steps:\n      - run: scripts/k.sh\n",
+		".github/workflows/z.yaml": "defaults:\n  run:\n    working-directory: sub\njobs:\n  z:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ../scripts/m.sh\n" +
 			"      - run: scripts/n.sh\n        working-directory: .\n      - run: /scripts/q.sh\n        working-directory: .\n",
+		".github/workflows/py.yml": "jobs:\n  p:\n    runs-on: ubuntu-latest\n    steps:\n      - run: scripts/s.sh\n        shell: python\n",
+		".github/workflows/env.yml": "jobs:\n  e:\n    runs-on: ubuntu-latest\n    steps:\n      - run: scripts/t.sh\n        env:\n          BASH_ENV: x\n" +
+			"      - run: echo BASH_ENV=x >> \"$GITHUB_ENV\"\n      - run: scripts/u.sh\n",
 		".github/workflows/notes.md": "./scripts/f.sh\n",
 	} {
 		path := filepath.Join(root, rel)
