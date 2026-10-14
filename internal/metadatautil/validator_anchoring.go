@@ -57,7 +57,7 @@ const (
 
 // textMatchPackages hold the validators. Some packages keep validators in test
 // files, so test sources are scanned too.
-var textMatchPackages = []string{"internal/adapters", "internal/workcellhardening"}
+var textMatchPackages = []string{"internal/adapters", "internal/metadatautil", "internal/testkit", "internal/workcellhardening"}
 
 // checkTextMatchBaseline is a ratchet. Every function in textMatchPackages that
 // matches text needs a baseline row with each match call's identity and a

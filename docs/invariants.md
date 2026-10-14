@@ -122,8 +122,8 @@ A validator that reads content and then matches it with `strings.Contains`,
 `ShellInvocations` or a closed decoder instead.
 
 `scripts/check-validator-anchoring.sh` lists every function that matches text
-this way. It scans `internal/adapters` and `internal/workcellhardening`, test
-files included. It does not track where the text came from. A helper that
+this way. It scans `internal/adapters`, `internal/metadatautil`,
+`internal/testkit` and `internal/workcellhardening`, test files included. It does not track where the text came from. A helper that
 matches content from its caller is listed too. An import alias or a dot import
 does not hide the package. A call through a function value such as
 `contains := strings.Contains` counts.
