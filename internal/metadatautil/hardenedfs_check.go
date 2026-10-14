@@ -47,7 +47,9 @@ import (
 func CheckHardenedFS(rootDir string) error {
 	found := map[hardenedFSKey][]HardenedFSFinding{}
 	for _, pkg := range hardenedFSPackages {
-		err := scanHardenedGoSources(rootDir, pkg, false, func(rel string, content []byte) error {
+		// Go builds a testdata package that non-test code imports by path, so
+		// this check reads testdata too.
+		err := scanHardenedGoSources(rootDir, pkg, false, true, func(rel string, content []byte) error {
 			fileFindings, scanErr := HardenedFSFindings(string(content))
 			if scanErr != nil {
 				return fmt.Errorf("%s: %w", rel, scanErr)
@@ -77,8 +79,8 @@ func CheckHardenedFS(rootDir string) error {
 
 // scanHardenedGoSources hands visit each Go source under pkg, named relative
 // to the repository. Test sources are visited only when withTests is set. A
-// testdata directory is skipped.
-func scanHardenedGoSources(rootDir, pkg string, withTests bool, visit func(rel string, content []byte) error) error {
+// testdata directory is skipped unless withTestdata is set.
+func scanHardenedGoSources(rootDir, pkg string, withTests, withTestdata bool, visit func(rel string, content []byte) error) error {
 	// Reach the package root through descriptors opened one component at a
 	// time from "/" with O_NOFOLLOW. A pathname open follows a symlinked
 	// ancestor such as <repo>/internal, so the scan would read a tree outside
@@ -96,7 +98,7 @@ func scanHardenedGoSources(rootDir, pkg string, withTests bool, visit func(rel s
 	// The walk lists and reads through descriptors opened from this one, so
 	// no name is resolved again by path.
 	scanned := 0
-	err = walkHardenedGoSources(top, pkg, withTests, func(rel string, content []byte) error {
+	err = walkHardenedGoSources(top, pkg, withTests, withTestdata, func(rel string, content []byte) error {
 		scanned++
 		return visit(rel, content)
 	})
@@ -234,8 +236,9 @@ type hardenedFSKey struct {
 }
 
 // HardenedFSFinding is one reference to a raw os pathname call. Call is the
-// identity a baseline row lists for it: a hash of the enclosing function name
-// and the call's source text, so an edit elsewhere in the file leaves it alone.
+// identity a baseline row lists for it: a hash of the enclosing function name,
+// the enclosing control flow and the call's source text, so an edit elsewhere
+// in the file leaves it alone.
 type HardenedFSFinding struct {
 	Line   int
 	Column int
@@ -321,11 +324,14 @@ func hardenedFindings(fileSet *token.FileSet, file *ast.File, source string, sym
 	return findings
 }
 
-// hardenedCallIdentity hashes the enclosing function name and the source text
-// of the call that selector heads, or of selector itself when it is a value.
-// The text is reprinted from the syntax tree with no positions, so a reflow
-// keeps the identity while a changed literal breaks it. A line number is not
-// part of it, because an unrelated edit above the call would move it.
+// hardenedCallIdentity hashes the enclosing function name, the control flow
+// that encloses the call, and the source text of the call that selector heads,
+// or of selector itself when it is a value. The text is reprinted from the
+// syntax tree with no positions, so a reflow keeps the identity while a
+// changed literal breaks it. The control-flow anchor binds the identity to the
+// reviewed call site, so moving the same call out of a guarded branch breaks
+// it. A line number is not part of it, because an unrelated edit above the
+// call would move it.
 func hardenedCallIdentity(_ *token.FileSet, _, scope string, selector *ast.SelectorExpr, stack []ast.Node) string {
 	var expr ast.Node = selector
 	parent := len(stack) - 2
@@ -340,10 +346,59 @@ func hardenedCallIdentity(_ *token.FileSet, _, scope string, selector *ast.Selec
 			expr = call
 		}
 	}
-	var text strings.Builder
-	_ = printer.Fprint(&text, token.NewFileSet(), expr) // a parsed expression always prints
-	sum := sha256.Sum256([]byte(scope + "\x00" + text.String()))
+	sum := sha256.Sum256([]byte(scope + "\x00" + hardenedControlAnchor(stack) + "\x00" + hardenedPrint(expr)))
 	return hex.EncodeToString(sum[:4])
+}
+
+// hardenedControlAnchor prints the header of each if, for, range, switch,
+// select, case and function literal that encloses the last node of stack,
+// outermost first, and marks an else branch. Statements beside the call are
+// not part of it, so an edit elsewhere in the function keeps the anchor.
+func hardenedControlAnchor(stack []ast.Node) string {
+	var anchor []string
+	for index, node := range stack[:len(stack)-1] {
+		child := stack[index+1]
+		switch node := node.(type) {
+		case *ast.IfStmt:
+			header := "if " + hardenedPrint(node.Init) + "; " + hardenedPrint(node.Cond)
+			if node.Else != nil && child == node.Else {
+				header += " else"
+			}
+			anchor = append(anchor, header)
+		case *ast.ForStmt:
+			anchor = append(anchor, "for "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Cond)+"; "+hardenedPrint(node.Post))
+		case *ast.RangeStmt:
+			anchor = append(anchor, "range "+hardenedPrint(node.Key)+", "+hardenedPrint(node.Value)+" "+node.Tok.String()+" "+hardenedPrint(node.X))
+		case *ast.SwitchStmt:
+			anchor = append(anchor, "switch "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Tag))
+		case *ast.TypeSwitchStmt:
+			anchor = append(anchor, "switch "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Assign))
+		case *ast.CaseClause:
+			cases := make([]string, len(node.List))
+			for i, expr := range node.List {
+				cases[i] = hardenedPrint(expr)
+			}
+			anchor = append(anchor, "case "+strings.Join(cases, ", "))
+		case *ast.SelectStmt:
+			anchor = append(anchor, "select")
+		case *ast.CommClause:
+			anchor = append(anchor, "case "+hardenedPrint(node.Comm))
+		case *ast.FuncLit:
+			anchor = append(anchor, "func")
+		}
+	}
+	return strings.Join(anchor, "\x00")
+}
+
+// hardenedPrint reprints node with no positions, or returns the empty string
+// for an absent one.
+func hardenedPrint(node ast.Node) string {
+	if node == nil {
+		return ""
+	}
+	var text strings.Builder
+	_ = printer.Fprint(&text, token.NewFileSet(), node) // a parsed node always prints
+	return text.String()
 }
 
 // applyHardenedFSExemptions clears the reference each exemption sits beside.
@@ -461,16 +516,16 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int][]int
 }
 
 // walkHardenedGoSources hands visit each non-test Go source below dir, in
-// name order, skipping testdata. Each entry is classified by fstatat on dir's
-// descriptor without following a symlink. The type that ReadDir reports is not
-// trusted: on a filesystem that returns DT_UNKNOWN, such as NFS, ReadDir
+// name order, skipping testdata unless withTestdata is set. Each entry is
+// classified by fstatat on dir's descriptor without following a symlink. The
+// type that ReadDir reports is not trusted: on a filesystem that returns DT_UNKNOWN, such as NFS, ReadDir
 // resolves it by path, and a swapped path would classify a decoy. Each child
 // directory is opened relative to dir without following a symlink, and each
 // source is read relative to dir with rootio's no-follow leaf read, so no name
 // is resolved twice. A symlink entry fails the walk whatever its name:
 // skipping one would hide a symlinked package directory, whose sources Go
 // still builds through the link.
-func walkHardenedGoSources(dir *os.File, rel string, withTests bool, visit func(rel string, content []byte) error) error {
+func walkHardenedGoSources(dir *os.File, rel string, withTests, withTestdata bool, visit func(rel string, content []byte) error) error {
 	names, err := dir.Readdirnames(-1)
 	if err != nil {
 		return err
@@ -487,14 +542,14 @@ func walkHardenedGoSources(dir *os.File, rel string, withTests bool, visit func(
 			return fmt.Errorf("%s is a symlink; the hardened filesystem rule cannot scan behind it", name)
 		}
 		if kind == unix.S_IFDIR {
-			if base == "testdata" {
+			if base == "testdata" && !withTestdata {
 				continue
 			}
 			child, openErr := rootio.OpenDirectoryAtNoFollow(dir, base)
 			if openErr != nil {
 				return fmt.Errorf("open %s: %w", name, openErr)
 			}
-			walkErr := walkHardenedGoSources(child, name, withTests, visit)
+			walkErr := walkHardenedGoSources(child, name, withTests, withTestdata, visit)
 			_ = child.Close()
 			if walkErr != nil {
 				return walkErr

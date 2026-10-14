@@ -64,7 +64,7 @@ check and the open. `internal/rootio` opens through a verified parent handle
 and refuses to follow a symlink.
 
 `scripts/check-hardened-fs.sh` rejects a reference to a raw `os` pathname call
-in a trust-boundary package. A function value counts, because it carries the
+in a trust-boundary package, `testdata` included. A function value counts, because it carries the
 same authority as the direct call. `os.Lstat` stays permitted, because it does
 not follow the final symlink.
 
@@ -76,15 +76,18 @@ change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
 The same script also rejects a narrower set of calls in all non-test Go under
-`cmd/` and `internal/`. The set is `os.ReadFile`, `os.WriteFile`, `os.Open`,
+`cmd/` and `internal/`, `testdata` included. Go builds a `testdata` package that
+other code imports by path. The set is `os.ReadFile`, `os.WriteFile`, `os.Open`,
 `os.OpenFile`, `os.Create`, `os.Stat`, `os.RemoveAll` and `filepath.Glob`.
 Only `internal/rootio` is exempt. Each failure names the `internal/rootio`
 replacement.
 
 `policy/hardened-io-baseline.tsv` records the calls that the tree carries
 today, with one reason per row. Each row lists one identity per call.
-The identity hashes the enclosing function and the call text. A new call needs
-a reviewed entry, even when it replaces another call in the same file.
+The identity hashes the enclosing function, the headers of the enclosing `if`,
+`for`, `switch`, `select` and `case` statements, and the call text. A new call
+needs a reviewed entry, even when it replaces another call in the same file or
+moves out of a guarded branch.
 
 `policy/testkit-exec-baseline.tsv` lists the test sites that run a script by
 path without `execRetryETXTBSY`. A raw exec runs into ETXTBSY under load.

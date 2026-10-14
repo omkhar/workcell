@@ -275,6 +275,21 @@ func TestCheckHardenedFSRatchet(t *testing.T) {
 	}
 }
 
+// Go builds a testdata package that non-test code imports by path, so a wide
+// rule call there runs in production and must be reported.
+func TestCheckHardenedFSScansTestdata(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeHardenedFSFixture(t, filepath.Join(root, "internal", "host", "testdata", "fixture", "fixture.go"),
+		"package fixture\n\nimport \"os\"\n\nfunc f() { os.Rename(a, b) }\n")
+	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
+	writeHardenedFSPackageFixtures(t, root)
+	err := metadatautil.CheckHardenedFS(root)
+	if err == nil || !strings.Contains(err.Error(), "internal/host/testdata/fixture/fixture.go") {
+		t.Fatalf("expected the testdata os.Rename to be reported, found %v", err)
+	}
+}
+
 // A package name that no directory matches must fail: a list that outlives its
 // subject reports a clean result over source it never read.
 func TestCheckHardenedFSRejectsAMissingPackage(t *testing.T) {

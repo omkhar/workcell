@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
-	"go/printer"
 	"go/token"
 	"io/fs"
 	"maps"
@@ -67,7 +66,7 @@ func checkTextMatchBaseline(rootDir string) error {
 	for _, pkg := range textMatchPackages {
 		// An alias in one file is called in another, so read whole packages.
 		packages := map[string]map[string]string{}
-		err := scanHardenedGoSources(rootDir, pkg, true, func(rel string, content []byte) error {
+		err := scanHardenedGoSources(rootDir, pkg, true, false, func(rel string, content []byte) error {
 			dir := path.Dir(rel)
 			if packages[dir] == nil {
 				packages[dir] = map[string]string{}
@@ -154,9 +153,7 @@ func loadTextMatchBaseline(baselinePath string) (map[string][]string, error) {
 // keeps it while a changed literal, whitespace included, breaks it. It is the
 // hardened-io rule from PR 799; hardenedCallIdentity replaces it once both merge.
 func matchIdentity(function string, call ast.Node) string {
-	var text strings.Builder
-	_ = printer.Fprint(&text, token.NewFileSet(), call) // a parsed expression always prints
-	return sha256HexString(function + "\x00" + text.String())[:8]
+	return sha256HexString(function + "\x00" + hardenedPrint(call))[:8]
 }
 
 // TextMatchingFunctions returns the function, as Name or Type.Name, and the
