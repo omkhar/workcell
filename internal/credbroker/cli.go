@@ -54,6 +54,13 @@ func Main(args []string) error {
 		sources[key] = source
 		return nil
 	})
+	// flag keeps the last of repeated values, so a second --socket would
+	// silently win; every option but --credential may appear once.
+	flags.VisitAll(func(f *flag.Flag) {
+		if f.Name != "credential" {
+			f.Value = &onceValue{Value: f.Value}
+		}
+	})
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || len(sources) == 0 ||
 		*tokenFD < 0 || *sshConfig == "" || *logPath == "" ||
 		!filepath.IsAbs(*socket) || !filepath.IsAbs(*guestSocket) ||
@@ -90,6 +97,20 @@ func Main(args []string) error {
 	})
 }
 
+// onceValue refuses a second Set, whatever spelling of the option set it.
+type onceValue struct {
+	flag.Value
+	set bool
+}
+
+func (v *onceValue) Set(value string) error {
+	if v.set {
+		return errors.New("option repeated")
+	}
+	v.set = true
+	return v.Value.Set(value)
+}
+
 // openLog appends to path without following a symlink anywhere in it.
 func openLog(path string) (*os.File, error) {
 	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
@@ -97,6 +118,11 @@ func openLog(path string) (*os.File, error) {
 		return nil, err
 	}
 	defer parent.Close()
+	// A parent another uid can write lets that uid unlink or replace the log
+	// name after startup, so it passes the same rule as the socket directory.
+	if err := requireAncestryWritableOnlyBy(filepath.Dir(cleaned), uint32(os.Getuid())); err != nil {
+		return nil, err
+	}
 	// O_NONBLOCK keeps a FIFO at the path from blocking the open; a regular
 	// file ignores it.
 	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(cleaned), unix.O_WRONLY|unix.O_APPEND|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)

@@ -151,6 +151,11 @@ func TestMainRejectsBadArguments(t *testing.T) {
 		"credential no =":    replace("--credential", "claude_api_key"),
 		"duplicate key":      append(append([]string(nil), valid...), "--credential", "claude_api_key=keychain:other"),
 		"extra argument":     append(append([]string(nil), valid...), "stray"),
+		"repeated socket":    append(append([]string(nil), valid...), "--socket", "/tmp/other.sock"),
+		"repeated -socket":   append(append([]string(nil), valid...), "-socket", "/tmp/other.sock"),
+		"repeated --log=":    append(append([]string(nil), valid...), "--log=/tmp/other"),
+		"repeated token-fd":  append(append([]string(nil), valid...), "-token-fd=98"),
+		"repeated ssh-host":  append(append([]string(nil), valid...), "--ssh-host", "other"),
 	} {
 		var exit *cliexit.ExitCodeError
 		if err := Main(args); !errors.As(err, &exit) || exit.Code != 2 {
@@ -260,5 +265,53 @@ func TestOpenLogRefusesAnExtendedACL(t *testing.T) {
 	}
 	if !errors.Is(err, rootio.ErrExtendedACL) {
 		t.Fatalf("openLog with an extended ACL = %v, want ErrExtendedACL", err)
+	}
+}
+
+func TestOpenLogRefusesAParentAnotherUIDCanWrite(t *testing.T) {
+	// Another uid that can write the parent could unlink or replace the log
+	// name after startup, so the parent must pass the socket ancestry rule.
+	shared := filepath.Join(t.TempDir(), "shared")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openLog(filepath.Join(shared, "log")); err == nil {
+		_ = file.Close()
+		t.Fatal("openLog accepted a log under a world-writable non-sticky parent")
+	}
+	if err := os.Chmod(shared, 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openLog(filepath.Join(shared, "log"))
+	if err != nil {
+		t.Fatalf("openLog under a sticky parent = %v", err)
+	}
+	_ = file.Close()
+}
+
+func TestOpenLogRefusesAParentWithAnExtendedACL(t *testing.T) {
+	addACL := []string{"/bin/chmod", "+a", "everyone allow add_file,delete_child"}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("setfacl"); err != nil {
+			t.Skip("setfacl is not installed")
+		}
+		addACL = []string{"setfacl", "-n", "-m", "u:" + strconv.Itoa(os.Getuid()+1) + ":rwx"}
+	}
+	dir := filepath.Join(t.TempDir(), "acl")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(addACL[0], append(addACL[1:], dir)...).CombinedOutput(); err != nil {
+		t.Fatalf("add ACL: %v: %s", err, out)
+	}
+	file, err := openLog(filepath.Join(dir, "log"))
+	if err == nil {
+		_ = file.Close()
+	}
+	if !errors.Is(err, rootio.ErrExtendedACL) {
+		t.Fatalf("openLog under a parent with an extended ACL = %v, want ErrExtendedACL", err)
 	}
 }
