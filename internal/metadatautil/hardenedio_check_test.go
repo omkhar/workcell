@@ -39,6 +39,11 @@ func TestHardenedIOFindings(t *testing.T) {
 			source: "package x\n\nimport (\n\tstdos \"os\"\n\tfp \"path/filepath\"\n)\n\nfunc f() { stdos.ReadFile(a); fp.Glob(a) }\n",
 			want:   []string{"os.ReadFile", "filepath.Glob"},
 		},
+		{
+			name:   "a second alias of the same package is read too",
+			source: "package x\n\nimport (\n\t\"os\"\n\traw \"os\"\n)\n\nfunc f() { raw.ReadFile(a) }\n",
+			want:   []string{"os.ReadFile"},
+		},
 		{name: "a function value is a reference", source: header + "var read = os.ReadFile\n", want: []string{"os.ReadFile"}},
 		{name: "a comment is not a call", source: header + "// os.ReadFile(a)\nfunc f() {}\n"},
 		{name: "a string is not a call", source: header + "var s = \"filepath.Glob(a)\"\n"},

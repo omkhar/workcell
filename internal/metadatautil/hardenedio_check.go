@@ -87,28 +87,28 @@ func HardenedIOFindings(source string) ([]HardenedFSFinding, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse the Go source: %w", err)
 	}
-	osName, err := hardenedFSImportName(file, "os")
+	osName, err := hardenedFSImportNames(file, "os")
 	if err != nil {
 		return nil, err
 	}
-	filepathName, err := hardenedFSImportName(file, "path/filepath")
+	filepathName, err := hardenedFSImportNames(file, "path/filepath")
 	if err != nil {
 		return nil, err
 	}
 	return hardenedFindings(fileSet, file, source, func(qualifier, symbol string) string {
-		banned := (qualifier == osName && symbol != "Glob" && hardenedIOReplacements[symbol] != "") ||
-			(qualifier == filepathName && symbol == "Glob")
+		banned := (osName[qualifier] && symbol != "Glob" && hardenedIOReplacements[symbol] != "") ||
+			(filepathName[qualifier] && symbol == "Glob")
 		if !banned {
 			return ""
 		}
-		return hardenedIOCanonical(qualifier, osName, symbol)
+		return hardenedIOCanonical(osName[qualifier], symbol)
 	}), nil
 }
 
 // hardenedIOCanonical names a finding by package, not by local alias, so a
 // baseline row survives an import rename.
-func hardenedIOCanonical(qualifier, osName, symbol string) string {
-	if qualifier == osName {
+func hardenedIOCanonical(isOS bool, symbol string) string {
+	if isOS {
 		return "os." + symbol
 	}
 	return "filepath." + symbol

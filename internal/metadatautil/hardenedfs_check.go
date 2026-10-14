@@ -259,19 +259,19 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse the Go source: %w", err)
 	}
-	name, err := hardenedFSImportName(file, "os")
+	names, err := hardenedFSImportNames(file, "os")
 	if err != nil {
 		return nil, err
 	}
-	if name == "" {
+	if len(names) == 0 {
 		return nil, nil // the file does not import os
 	}
 	exempt := hardenedFSExemptLines(fileSet, file)
 	findings := hardenedFindings(fileSet, file, source, func(qualifier, symbol string) string {
-		if qualifier != name || !hardenedFSSymbols[symbol] {
+		if !names[qualifier] || !hardenedFSSymbols[symbol] {
 			return ""
 		}
-		return name + "." + symbol
+		return qualifier + "." + symbol
 	})
 	return applyHardenedFSExemptions(findings, exempt), nil
 }
@@ -400,12 +400,14 @@ func hardenedImportQualifier(selector *ast.SelectorExpr) (*ast.Ident, bool) {
 	return qualifier, ok && qualifier.Obj == nil
 }
 
-// hardenedFSImportName returns the name that qualifies a call of the package
-// at importPath in this file, or the empty string when the file does not
-// import it.
+// hardenedFSImportNames returns every name that qualifies a call of the
+// package at importPath in this file, or an empty set when the file does not
+// import it. Go accepts the same package under several aliases, and each one
+// reaches the same functions, so the scan must read them all.
 // A dot import is refused: it removes the qualifier that the scan reads, so
 // the rule would silently stop applying to the file.
-func hardenedFSImportName(file *ast.File, importPath string) (string, error) {
+func hardenedFSImportNames(file *ast.File, importPath string) (map[string]bool, error) {
+	names := map[string]bool{}
 	for _, spec := range file.Imports {
 		if spec.Path == nil {
 			continue
@@ -417,14 +419,15 @@ func hardenedFSImportName(file *ast.File, importPath string) (string, error) {
 			continue
 		}
 		if spec.Name == nil {
-			return importPath[strings.LastIndex(importPath, "/")+1:], nil
+			names[importPath[strings.LastIndex(importPath, "/")+1:]] = true
+			continue
 		}
 		if spec.Name.Name == "." || spec.Name.Name == "_" {
-			return "", fmt.Errorf("the %s import uses the %q form; write it as a plain import or an alias so the hardened filesystem rule can read its calls", importPath, spec.Name.Name)
+			return nil, fmt.Errorf("the %s import uses the %q form; write it as a plain import or an alias so the hardened filesystem rule can read its calls", importPath, spec.Name.Name)
 		}
-		return spec.Name.Name, nil
+		names[spec.Name.Name] = true
 	}
-	return "", nil
+	return names, nil
 }
 
 // hardenedFSExemptLines returns the column of each reasoned exemption comment,
