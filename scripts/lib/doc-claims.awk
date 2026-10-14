@@ -103,6 +103,29 @@ function flush(upto, rest, start, len, k, first, last, s) {
   }
   text = ""
 }
+# An HTML comment is hidden from readers, so it can neither anchor a claim nor
+# make one. It is cut here, in this scanner only, because md-unfenced.awk also
+# feeds the link check, which keeps checking links inside comments. Each line
+# stays, so line numbers hold; a comment that never closes hides the rest.
+{
+  out = ""
+  while ($0 != "") {
+    if (hidden) {
+      i = index($0, "-->")
+      if (i == 0) break
+      $0 = substr($0, i + 3)
+      hidden = 0
+    } else if ((i = index($0, "<!--")) > 0) {
+      out = out substr($0, 1, i - 1)
+      $0 = substr($0, i + 4)
+      hidden = 1
+    } else {
+      out = out $0
+      break
+    }
+  }
+  $0 = out
+}
 { line[NR] = $0 }
 /^[[:space:]]*$/ { scan(para); para = ""; next }
 {
