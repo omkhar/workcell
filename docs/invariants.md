@@ -82,8 +82,10 @@ replacement.
 
 `policy/hardened-io-baseline.tsv` records the calls that the tree carries
 today, with one reason per row. Each row lists one identity per call.
-The identity hashes the enclosing function and the call text. A new call needs
-a reviewed entry, even when it replaces another call in the same file.
+The identity hashes the enclosing function, the headers of the enclosing `if`,
+`for`, `switch`, `select` and `case` statements, and the call text. A new call
+needs a reviewed entry, even when it replaces another call in the same file or
+moves out of a guarded branch.
 
 `policy/testkit-exec-baseline.tsv` lists the test sites that run a script by
 path without `execRetryETXTBSY`. A raw exec runs into ETXTBSY under load.

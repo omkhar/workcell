@@ -202,3 +202,44 @@ func TestCheckHardenedIORejectsASymlinkedAncestor(t *testing.T) {
 		t.Fatalf("expected the symlinked ancestor to be refused, found %v", err)
 	}
 }
+
+// A reviewed call is bound to its control flow. Moving it out of the branch
+// that guards it is a new call site and needs a new entry, while an edit
+// elsewhere in the function keeps the identity.
+func TestCheckHardenedIOAnchorsTheReviewedCallSite(t *testing.T) {
+	t.Parallel()
+	const header = "package x\n\nimport \"os\"\n\nfunc f(p string, ok bool) {\n"
+	guarded := header + "\tif ok {\n\t\tos.RemoveAll(p)\n\t}\n}\n"
+	findings, err := metadatautil.HardenedIOFindings(guarded)
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("HardenedIOFindings() = %v, %v", findings, err)
+	}
+	row := "internal/x/x.go\tos.RemoveAll\t" + findings[0].Call + "\tonly when ok\n"
+	cases := []struct {
+		name   string
+		source string
+		pass   bool
+	}{
+		{name: "the reviewed call passes", source: guarded, pass: true},
+		{name: "an edit elsewhere in the function keeps the identity", source: header + "\tp += \"/x\"\n\tif ok {\n\t\tos.RemoveAll(p)\n\t}\n}\n", pass: true},
+		{name: "a call moved out of its if fails", source: header + "\tif ok {\n\t}\n\tos.RemoveAll(p)\n}\n"},
+		{name: "a call moved to the else branch fails", source: header + "\tif ok {\n\t} else {\n\t\tos.RemoveAll(p)\n\t}\n}\n"},
+		{name: "a changed guard fails", source: header + "\tif !ok {\n\t\tos.RemoveAll(p)\n\t}\n}\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHardenedFSFixture(t, filepath.Join(root, "cmd", "doc.go"), "package cmd\n")
+			writeHardenedFSFixture(t, filepath.Join(root, "internal", "x", "x.go"), testCase.source)
+			writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-io-baseline.tsv"), row)
+			err := metadatautil.CheckHardenedIO(root)
+			if testCase.pass && err != nil {
+				t.Fatalf("expected a clean result, found %v", err)
+			}
+			if !testCase.pass && (err == nil || !strings.Contains(err.Error(), "call not in the baseline row")) {
+				t.Fatalf("expected the moved call to fail the gate, found %v", err)
+			}
+		})
+	}
+}

@@ -1,124 +1,125 @@
 # Hardened I/O ratchet baseline (scripts/check-hardened-fs.sh, check-hardened-io).
 #
 # One row per source file and raw call: PATH<TAB>SYMBOL<TAB>CALLS<TAB>REASON.
-# CALLS lists one identity per call: a hash of the enclosing function name and
-# the call's source text. The check covers non-test Go under cmd/ and internal/,
-# except internal/rootio. It fails on an unlisted call and on a stale identity.
+# CALLS lists one identity per call: a hash of the enclosing function name, the
+# headers of the enclosing control flow and the call's source text. The check
+# covers non-test Go under cmd/ and internal/, except internal/rootio. It
+# fails on an unlisted call and on a stale identity.
 # Replace a call with the internal/rootio primitive that the failure names,
 # drop its identity, and delete the row when the list is empty. A new call
 # needs its identity in a row with a reason, and review of that entry.
 #
 # Seeded from origin/main on 2026-10-03.
-cmd/workcell-apt-broker-server/startup_linux.go	os.OpenFile	c1f87c5b	broker-owned path inside the broker container; leaf O_NOFOLLOW only; migrate to rootio.OpenParentDirectoryNoFollow
-internal/applecontainer/target.go	os.WriteFile	3ac15e7b	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/aptbroker/server.go	os.Stat	ad6982dc	broker-owned socket parent inside the broker container; migrate to a handle-based check
-internal/authpolicy/auth_main.go	os.Stat	1ed1f76d	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/authpolicy/manage_mutate.go	os.Stat	fecd2611	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/authpolicy/manage_status.go	os.Stat	dfef89a4	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/authpolicy/policy.go	os.Stat	a8575be8,15908f90	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/authpolicy/staging.go	os.Stat	3e043522	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/authresolve/resolve_path_security.go	os.Stat	a8575be8	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/authresolve/resolve_policy_load.go	os.Stat	15908f90	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/authresolve/resolve_provider_credentials.go	os.Stat	a912d533	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/colimautil/colima.go	os.ReadFile	dd40cfa1	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/credbroker/server.go	os.OpenFile	616f93fc	O_NOFOLLOW|O_DIRECTORY probe of each socket ancestor for an extended ACL; move to rootio.OpenParentDirectoryNoFollow (issue 824)
-internal/gitconfigblocklist/gitconfigblocklist.go	os.ReadFile	983e0f5f,229f8373	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/hardeningprofile/hardeningprofile.go	os.ReadFile	af77ca56,0e116b2e	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/host/auditseal/sealio.go	os.OpenFile	3f14fe95	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/auditseal/sealio.go	os.ReadFile	299b0608	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/c3certify/certify.go	os.ReadFile	c387de27	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/c3certify/certify.go	os.RemoveAll	64944f49,e0ce71d2,64944f49,e0ce71d2,0c0320d1,2f360839,faab8b9c	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/c3certify/certify.go	os.Stat	a347d33a,04af3f8a,1ca1f371	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/hoststate/hoststate.go	os.ReadFile	21726c47,9ba8bc4b	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/hoststate/hoststate.go	os.RemoveAll	be68bdc5,58422204,58422204,58422204,c8f9ec92	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/hoststate/hoststate.go	os.Stat	1af95f44,299426b2,2fc48f8b,9f69c433,9f69c433,9f69c433	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/hoststate/profilepaths.go	os.Stat	c7c8b8e3	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/keystore/keystore.go	os.OpenFile	68c2228a	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/launcher/colima.go	os.Stat	bfc0a352	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/launcher/launcher.go	os.ReadFile	256916e2	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/launcher/launcher.go	os.RemoveAll	52117e62,3adb56b9,a78bc056	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/launcher/launcher.go	os.Stat	a0cb9e29	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/launcher/launcher.go	os.WriteFile	2eccf53f	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/launcher/process_generation_linux.go	os.ReadFile	e4b9f4aa	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/launcher/runtime.go	os.ReadFile	4bc07bbb	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/release/release.go	os.WriteFile	5fc8238a	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/runtimebuilder/runtimebuilder.go	os.OpenFile	ec5959b1	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/sessions/sessions.go	os.Stat	151c3363,009be2c0	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/supportmatrix/supportmatrix.go	os.Open	6319cf7e	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/host/validatorbind/validatorbind.go	os.Stat	9ad8c12c,080d8e3c,ec6e38da	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/input_limits.go	os.Open	81a70c04	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/input_limits.go	os.Stat	3a08c43e	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/path.go	os.Stat	d772196d	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/prepare_bundle.go	os.Stat	4ab494a3,383ad792,66cb31d3	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/prepare_bundle.go	os.WriteFile	8838c8e5	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/render_injection_bundle.go	os.Open	e1f96e56,51b37da7	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/render_ssh.go	os.Stat	40fa812f	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/render_validation.go	os.Stat	febd7186,153cf47c,5610dda4,1a0b3fcc	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/stage_direct_mounts.go	os.OpenFile	2962e6ca	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/injection/stage_direct_mounts.go	os.Stat	9db37ee0	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/metadatautil/codex_config.go	os.ReadFile	aafb5cf1	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/codex_subcommands.go	os.OpenFile	8aaef706	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/codex_subcommands.go	os.ReadFile	1384c296	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/core.go	os.ReadFile	4c589fc1,6bfa6b01,4f602ab7,0af08bad	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/core.go	os.Stat	81637766	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/core.go	os.WriteFile	7cadfccd	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/coverage.go	os.Open	00525257	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/doclanguage_check.go	filepath.Glob	c6c9f0b2	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/doclanguage_check.go	os.Open	e2d3bcfa	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/doclanguage_check.go	os.ReadFile	9a38b3ef	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/flag_inventory.go	os.ReadFile	fb58d840	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/generated_artifacts_check.go	filepath.Glob	62ab34e0	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/generated_artifacts_check.go	os.ReadFile	04fa30c0,aed8ac79,130243e5,f97e1def	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/generated_artifacts_check.go	os.RemoveAll	91c51409	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/github_release_asset.go	os.Open	6ba76a9b	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/hostedcontrols.go	os.ReadFile	1e33471f	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/hostedcontrols_rulesets.go	os.Open	813115f5	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/hostedcontrols_rulesets.go	os.ReadFile	5dba6b3d	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/hostedcontrols_verify.go	os.ReadFile	7c4898fe	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/pinnedinputs_workflows.go	filepath.Glob	b6913612	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/portability_check.go	os.ReadFile	1ae985f2	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/provider_bumps.go	os.ReadFile	b44edff8,3a7c6573	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/provider_bumps.go	os.WriteFile	ab082d75,aeae5b05	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/release_image_handoff.go	os.Open	e9e61843	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/release_image_handoff.go	os.WriteFile	678c01ce	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/retention.go	filepath.Glob	9b906713	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/validation_tools.go	os.ReadFile	e6610c61,9c5dc8c7	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/validation_tools.go	os.Stat	b2c5deba	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/validator_anchoring.go	os.ReadFile	eeb49030	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/workflow_lanes.go	filepath.Glob	929b6788	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/workflow_lanes.go	os.ReadFile	282dbc43	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/workflows.go	filepath.Glob	f2ae3d43,592378f8	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/metadatautil/workflows.go	os.ReadFile	3dd87104	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/mutation/runner.go	os.ReadFile	cdaf661e,9417cf6e,813a3d6d	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/mutation/runner.go	os.RemoveAll	cd2a6b93,89e16d4e	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/mutation/runner.go	os.Stat	82419500	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/mutation/runner.go	os.WriteFile	f3635532,34bce231,ebbae65a	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/mutation/score.go	os.ReadFile	0720018f	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/paritytree/tree.go	os.Open	130de59e	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/publishpr/host_exec.go	os.Stat	15c0d496,71e50490,71a0475d,c6b39cc5	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/publishpr/publish_pr_main.go	os.ReadFile	bd000c47	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/remotevm/conformance.go	os.RemoveAll	55954e85	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/conformance.go	os.Stat	1690b515	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/contract.go	os.ReadFile	84fb2459	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.OpenFile	e77616e0	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.ReadFile	c4fbb148	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.RemoveAll	0801e636	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.Stat	84047f42,b7cec7c6	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.WriteFile	38400bc6,3ac15e7b	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/scenarios/scenario_manifest.go	os.ReadFile	c36ba4c4	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/scenarios/scenario_manifest.go	os.Stat	5685087d	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/sessionctl/monitor.go	os.Open	0c473dd3	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/sessionctl/monitor.go	os.Stat	e7839161	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/sessionctl/snapshot_capture.go	os.RemoveAll	4094a8ef	reviewed at the call: this removes the directory created above, and RemoveAll does not follow symlinks
-internal/sessionctl/snapshot_capture.go	os.Stat	cc7e1906	reviewed at the call: this stats the path by name on purpose, to prove it still names the directory the descriptor holds
-internal/startupbench/run.go	os.WriteFile	0c9d0e65	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/supportbundle/collect.go	os.ReadFile	ddbcb9c5	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/supportbundle/collect.go	os.Stat	677bbcd7,0d795337,3a7247ec	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/testkit/exec_fixture_dir.go	os.RemoveAll	736b73a9,736b73a9,736b73a9,736b73a9	test helper over a temporary tree that the test owns
-internal/testkit/exec_fixture_dir.go	os.Stat	1a62a7d1	test helper over a temporary tree that the test owns
-internal/testkit/exec_fixture_dir.go	os.WriteFile	12a306be	test helper over a temporary tree that the test owns
-internal/transcript/pty_darwin.go	os.OpenFile	d800684f	opens the pty device name that the kernel returned; not an operator path
-internal/transcript/pty_linux.go	os.OpenFile	d800684f	opens the pty device name that the kernel returned; not an operator path
-internal/transcript/transcript.go	os.OpenFile	a1bb44ba	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/workcellhardening/workcellhardening.go	os.ReadFile	085bc522,6d38a605,fc40efe7,604e5c67	CI tooling over the checked-out repository tree; no operator-controlled path
-internal/workcellhardening/workcellhardening.go	os.Stat	b401cdfe,b401cdfe	CI tooling over the checked-out repository tree; no operator-controlled path
+cmd/workcell-apt-broker-server/startup_linux.go	os.OpenFile	14912d29	broker-owned path inside the broker container; leaf O_NOFOLLOW only; migrate to rootio.OpenParentDirectoryNoFollow
+internal/applecontainer/target.go	os.WriteFile	167a6334	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/aptbroker/server.go	os.Stat	e391e798	broker-owned socket parent inside the broker container; migrate to a handle-based check
+internal/authpolicy/auth_main.go	os.Stat	d4e852cb	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/authpolicy/manage_mutate.go	os.Stat	a6fd1307	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/authpolicy/manage_status.go	os.Stat	938c6694	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/authpolicy/policy.go	os.Stat	cbc1e58c,9e0fdd3f	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/authpolicy/staging.go	os.Stat	658471df	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/authresolve/resolve_path_security.go	os.Stat	cbc1e58c	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/authresolve/resolve_policy_load.go	os.Stat	a57835f0	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/authresolve/resolve_provider_credentials.go	os.Stat	1bd63234	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/colimautil/colima.go	os.ReadFile	df1bb796	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/credbroker/server.go	os.OpenFile	1b7a2224	O_NOFOLLOW|O_DIRECTORY probe of each socket ancestor for an extended ACL; move to rootio.OpenParentDirectoryNoFollow (issue 824)
+internal/gitconfigblocklist/gitconfigblocklist.go	os.ReadFile	6196f529,d46b7c24	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/hardeningprofile/hardeningprofile.go	os.ReadFile	bef74cd3,a7e64865	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/host/auditseal/sealio.go	os.OpenFile	b7e7575d	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/auditseal/sealio.go	os.ReadFile	82ec318b	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/c3certify/certify.go	os.ReadFile	d654d3ac	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/c3certify/certify.go	os.RemoveAll	f7ef415d,5ac7e892,a25d8957,75b31139,3a577e75,54fd2296,92c7fbe8	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/c3certify/certify.go	os.Stat	1edee956,da71d857,8575aaa5	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/hoststate/hoststate.go	os.ReadFile	907edfc3,fb052ebf	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/hoststate/hoststate.go	os.RemoveAll	b9b84386,444ca598,bd0e3f59,4fd8d2fe,b1f88d98	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/hoststate/hoststate.go	os.Stat	e214351f,07b863e7,7a4d5747,9c482660,c406c9c3,9c482660	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/hoststate/profilepaths.go	os.Stat	1b4a4441	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/keystore/keystore.go	os.OpenFile	b04fb10a	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/launcher/colima.go	os.Stat	403359a6	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/launcher/launcher.go	os.ReadFile	cf816abd	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/launcher/launcher.go	os.RemoveAll	93ddea06,31006bf4,d33b7d56	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/launcher/launcher.go	os.Stat	97e5fe08	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/launcher/launcher.go	os.WriteFile	939f0fb8	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/launcher/process_generation_linux.go	os.ReadFile	2557ff74	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/launcher/runtime.go	os.ReadFile	d3d3676e	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/release/release.go	os.WriteFile	f436d12c	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/runtimebuilder/runtimebuilder.go	os.OpenFile	ad1b1db7	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/sessions/sessions.go	os.Stat	a2ba7492,53996164	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/supportmatrix/supportmatrix.go	os.Open	966ed0c6	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/host/validatorbind/validatorbind.go	os.Stat	033ee19b,1e0454d6,1261487d	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/input_limits.go	os.Open	0627358e	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/input_limits.go	os.Stat	1e231477	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/path.go	os.Stat	dac739c7	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/prepare_bundle.go	os.Stat	cd81a7b4,4daa6197,3432437d	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/prepare_bundle.go	os.WriteFile	0ca09376	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/render_injection_bundle.go	os.Open	1abe122b,fd640c8c	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/render_ssh.go	os.Stat	a170bfff	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/render_validation.go	os.Stat	5bc56122,91b9a389,4a152fc1,f11cbe57	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/stage_direct_mounts.go	os.OpenFile	7f359c49	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/injection/stage_direct_mounts.go	os.Stat	8318dd74	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/metadatautil/codex_config.go	os.ReadFile	a8bbc54c	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/codex_subcommands.go	os.OpenFile	bdc515fe	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/codex_subcommands.go	os.ReadFile	60a88b42	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/core.go	os.ReadFile	059c6c1c,d1c2ee90,59bb8306,97d8c19d	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/core.go	os.Stat	71bfc6b6	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/core.go	os.WriteFile	61173844	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/coverage.go	os.Open	9d6d698a	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/doclanguage_check.go	filepath.Glob	92e7d640	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/doclanguage_check.go	os.Open	d525c4f5	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/doclanguage_check.go	os.ReadFile	941f92bd	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/flag_inventory.go	os.ReadFile	164ad5b5	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/generated_artifacts_check.go	filepath.Glob	e3814d63	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/generated_artifacts_check.go	os.ReadFile	25222d9f,85ef6697,658758bc,387001ca	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/generated_artifacts_check.go	os.RemoveAll	030421dd	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/github_release_asset.go	os.Open	a83eaed3	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/hostedcontrols.go	os.ReadFile	3bb295de	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/hostedcontrols_rulesets.go	os.Open	46a0a2c6	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/hostedcontrols_rulesets.go	os.ReadFile	72774686	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/hostedcontrols_verify.go	os.ReadFile	c6810000	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/pinnedinputs_workflows.go	filepath.Glob	408bd234	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/portability_check.go	os.ReadFile	143e3e95	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/provider_bumps.go	os.ReadFile	2bdf16e0,8fe191a5	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/provider_bumps.go	os.WriteFile	bf7478a6,4c1dc2da	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/release_image_handoff.go	os.Open	c74d8068	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/release_image_handoff.go	os.WriteFile	99199088	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/retention.go	filepath.Glob	6abc22c5	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/validation_tools.go	os.ReadFile	bd38254f,18ee8d38	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/validation_tools.go	os.Stat	5880fcde	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/validator_anchoring.go	os.ReadFile	7b887355	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/workflow_lanes.go	filepath.Glob	d9a0994e	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/workflow_lanes.go	os.ReadFile	91a29063	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/workflows.go	filepath.Glob	0b1a6e60,07c0a85d	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/metadatautil/workflows.go	os.ReadFile	345937fd	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/mutation/runner.go	os.ReadFile	653d705a,42448f55,124e3775	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/mutation/runner.go	os.RemoveAll	a67466ea,05b58db6	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/mutation/runner.go	os.Stat	f4ae59ca	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/mutation/runner.go	os.WriteFile	d1f2608f,5f27a8ac,18d4422a	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/mutation/score.go	os.ReadFile	a3d1b3b6	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/paritytree/tree.go	os.Open	b17fc51b	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/publishpr/host_exec.go	os.Stat	95892de4,2f6fdcfc,37e0a3c0,6edd7f83	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/publishpr/publish_pr_main.go	os.ReadFile	7382abf1	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/remotevm/conformance.go	os.RemoveAll	948e9d7f	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/conformance.go	os.Stat	538339a6	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/contract.go	os.ReadFile	75a20133	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/fake_target.go	os.OpenFile	fbf3ee94	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/fake_target.go	os.ReadFile	e1972186	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/fake_target.go	os.RemoveAll	0fe0fb29	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/fake_target.go	os.Stat	6ed6cd03,04a89384	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/fake_target.go	os.WriteFile	c88deaf2,167a6334	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/scenarios/scenario_manifest.go	os.ReadFile	c695bb02	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/scenarios/scenario_manifest.go	os.Stat	aee45cbc	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/sessionctl/monitor.go	os.Open	a3435e48	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/sessionctl/monitor.go	os.Stat	6c015cde	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/sessionctl/snapshot_capture.go	os.RemoveAll	a54bd737	reviewed at the call: this removes the directory created above, and RemoveAll does not follow symlinks
+internal/sessionctl/snapshot_capture.go	os.Stat	46157e56	reviewed at the call: this stats the path by name on purpose, to prove it still names the directory the descriptor holds
+internal/startupbench/run.go	os.WriteFile	68f00f30	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/supportbundle/collect.go	os.ReadFile	c06a46ef	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/supportbundle/collect.go	os.Stat	8ecff368,f9a1937f,a168d18e	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/testkit/exec_fixture_dir.go	os.RemoveAll	0486aa2c,024c2a6e,add6ace1,7f13fe97	test helper over a temporary tree that the test owns
+internal/testkit/exec_fixture_dir.go	os.Stat	606e797e	test helper over a temporary tree that the test owns
+internal/testkit/exec_fixture_dir.go	os.WriteFile	29556a5a	test helper over a temporary tree that the test owns
+internal/transcript/pty_darwin.go	os.OpenFile	37823186	opens the pty device name that the kernel returned; not an operator path
+internal/transcript/pty_linux.go	os.OpenFile	37823186	opens the pty device name that the kernel returned; not an operator path
+internal/transcript/transcript.go	os.OpenFile	5a19be60	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
+internal/workcellhardening/workcellhardening.go	os.ReadFile	e788a481,ce8f334f,acf227f9,278e18e0	CI tooling over the checked-out repository tree; no operator-controlled path
+internal/workcellhardening/workcellhardening.go	os.Stat	dba7524d,be57efa0	CI tooling over the checked-out repository tree; no operator-controlled path

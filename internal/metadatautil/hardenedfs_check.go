@@ -234,8 +234,9 @@ type hardenedFSKey struct {
 }
 
 // HardenedFSFinding is one reference to a raw os pathname call. Call is the
-// identity a baseline row lists for it: a hash of the enclosing function name
-// and the call's source text, so an edit elsewhere in the file leaves it alone.
+// identity a baseline row lists for it: a hash of the enclosing function name,
+// the enclosing control flow and the call's source text, so an edit elsewhere
+// in the file leaves it alone.
 type HardenedFSFinding struct {
 	Line   int
 	Column int
@@ -321,11 +322,14 @@ func hardenedFindings(fileSet *token.FileSet, file *ast.File, source string, sym
 	return findings
 }
 
-// hardenedCallIdentity hashes the enclosing function name and the source text
-// of the call that selector heads, or of selector itself when it is a value.
-// The text is reprinted from the syntax tree with no positions, so a reflow
-// keeps the identity while a changed literal breaks it. A line number is not
-// part of it, because an unrelated edit above the call would move it.
+// hardenedCallIdentity hashes the enclosing function name, the control flow
+// that encloses the call, and the source text of the call that selector heads,
+// or of selector itself when it is a value. The text is reprinted from the
+// syntax tree with no positions, so a reflow keeps the identity while a
+// changed literal breaks it. The control-flow anchor binds the identity to the
+// reviewed call site, so moving the same call out of a guarded branch breaks
+// it. A line number is not part of it, because an unrelated edit above the
+// call would move it.
 func hardenedCallIdentity(_ *token.FileSet, _, scope string, selector *ast.SelectorExpr, stack []ast.Node) string {
 	var expr ast.Node = selector
 	parent := len(stack) - 2
@@ -340,8 +344,48 @@ func hardenedCallIdentity(_ *token.FileSet, _, scope string, selector *ast.Selec
 			expr = call
 		}
 	}
-	sum := sha256.Sum256([]byte(scope + "\x00" + hardenedPrint(expr)))
+	sum := sha256.Sum256([]byte(scope + "\x00" + hardenedControlAnchor(stack) + "\x00" + hardenedPrint(expr)))
 	return hex.EncodeToString(sum[:4])
+}
+
+// hardenedControlAnchor prints the header of each if, for, range, switch,
+// select, case and function literal that encloses the last node of stack,
+// outermost first, and marks an else branch. Statements beside the call are
+// not part of it, so an edit elsewhere in the function keeps the anchor.
+func hardenedControlAnchor(stack []ast.Node) string {
+	var anchor []string
+	for index, node := range stack[:len(stack)-1] {
+		child := stack[index+1]
+		switch node := node.(type) {
+		case *ast.IfStmt:
+			header := "if " + hardenedPrint(node.Init) + "; " + hardenedPrint(node.Cond)
+			if node.Else != nil && child == node.Else {
+				header += " else"
+			}
+			anchor = append(anchor, header)
+		case *ast.ForStmt:
+			anchor = append(anchor, "for "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Cond)+"; "+hardenedPrint(node.Post))
+		case *ast.RangeStmt:
+			anchor = append(anchor, "range "+hardenedPrint(node.Key)+", "+hardenedPrint(node.Value)+" "+hardenedPrint(node.X))
+		case *ast.SwitchStmt:
+			anchor = append(anchor, "switch "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Tag))
+		case *ast.TypeSwitchStmt:
+			anchor = append(anchor, "switch "+hardenedPrint(node.Init)+"; "+hardenedPrint(node.Assign))
+		case *ast.CaseClause:
+			cases := make([]string, len(node.List))
+			for i, expr := range node.List {
+				cases[i] = hardenedPrint(expr)
+			}
+			anchor = append(anchor, "case "+strings.Join(cases, ", "))
+		case *ast.SelectStmt:
+			anchor = append(anchor, "select")
+		case *ast.CommClause:
+			anchor = append(anchor, "case "+hardenedPrint(node.Comm))
+		case *ast.FuncLit:
+			anchor = append(anchor, "func")
+		}
+	}
+	return strings.Join(anchor, "\x00")
 }
 
 // hardenedPrint reprints node with no positions, or returns the empty string
