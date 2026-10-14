@@ -122,7 +122,8 @@ expands beyond this list.
 The shipped session plane does not provide:
 
 - A queue or warm pool.
-- Pause, resume, checkpoint, or fork operations.
+- Pause, resume, or checkpoint operations. `workcell session fork` starts
+  new children from a signed snapshot of a parent session.
 - Central multi-host inventory or analytics.
 - A GUI or IDE client with the Tier 1 boundary claim.
 - A remote worker fleet.
