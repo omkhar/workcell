@@ -14,6 +14,9 @@ import (
 	"github.com/omkhar/workcell/internal/metadatautil"
 )
 
+const refsActionsTSV = "actions/checkout@" + refsSHA + "\tpath,ref\n"
+const refsSHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+
 func refsRoot(t *testing.T, step, baseline string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -24,6 +27,9 @@ func refsRoot(t *testing.T, step, baseline string) string {
 	files := map[string]string{
 		".github/workflows/w.yml":           document,
 		"policy/workflow-refs-baseline.tsv": baseline,
+		"tests/fixtures/actions/inputs.tsv": refsActionsTSV,
+		"scripts/present.sh":                "#!/bin/sh\n",
+		"sub/README":                        "",
 	}
 	for name, body := range files {
 		path := filepath.Join(root, name)
@@ -45,26 +51,66 @@ func TestCheckWorkflowRefs(t *testing.T) {
 	cases := []struct {
 		name, step, baseline, want string
 	}{
-		{"bounded gh calls; gh in a comment is not run", runStep("gh api --paginate repos/x/y/pulls\n# gh api repos/x\ntrue"), "", ""},
+		{"existing script", runStep("./scripts/present.sh"), "", ""},
+		{"dynamic script name is skipped", runStep(`bash ./scripts/ci/job-${X}.sh`), "", ""},
+		{"missing script", runStep("./scripts/absent.sh"), "", "missing-script ./scripts/absent.sh"},
+		{"whole word names the script", runStep("./scripts/present.sh+missing"), "", "missing-script ./scripts/present.sh+missing"},
+		{"test operand is not a script", runStep("[[ ! -e ./scripts/generated.sh ]]\ntest -f ./scripts/generated.sh"), "", ""},
+		{"shell operand is a script", runStep("bash -e ./scripts/absent.sh arg"), "", "missing-script ./scripts/absent.sh"},
+		{"script in a comment is not probed", runStep("true # ./scripts/absent.sh\n# bash ./scripts/absent.sh"), "", ""},
+		{"script in a heredoc body is not probed", runStep("cat <<'EOF'\n./scripts/absent.sh\nEOF"), "", ""},
+		{"script after a heredoc is probed", runStep("cat <<EOF\nx\nEOF\nbash ./scripts/absent.sh"), "", "missing-script ./scripts/absent.sh"},
+		{"script path leaving the root", runStep("./scripts/../../../../../../bin/sh"), "", "script-path-escapes"},
+		{"bounded gh calls", runStep("gh api --paginate repos/x/y/pulls\ngh pr list --base main --limit 5\ngh -R o/r pr list -B main -L 5\ngh pr list --draft -Bmain --limit=5"), "", ""},
 		{"gh api without bound", runStep(`x="$(gh api repos/x/y/pulls)"`), "", "gh-api-unbounded"},
 		{"gh api has no --limit", runStep("gh api repos/x --limit 1"), "", "gh-api-unbounded"},
+		{"gh list behind a repo flag", runStep("gh --repo o/r issue list"), "", "gh-issue-list-unbounded"},
+		{"gh pr list behind -R", runStep("gh -R o/r pr list --limit 5"), "", "gh-pr-list-no-base"},
+		{"gh list in a loop body", runStep("for k in a; do\n  gh issue list --state all\ndone"), "", "gh-issue-list-unbounded"},
+		{"gh list in a condition substitution", runStep(`if [[ "$(gh label list --json name)" == "0" ]]; then echo; fi`), "", "gh-label-list-unbounded"},
+		{"gh pr list without base", runStep("gh pr list --limit 9"), "", "gh-pr-list-no-base"},
+		{"gh in a comment is not run", runStep("# gh api repos/x\ntrue"), "", ""},
 		{"gh in a quoted jq program is not run", runStep(`jq -n '"gh api x"'`), "", ""},
 		{"second unbounded call in a baselined step", runStep("gh api a\ngh api b"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", "gh-api-unbounded#2"},
 		{"baselined call passes", runStep("gh api a"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", ""},
 		{"stale baseline row", runStep("true"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", "stale baseline row"},
 		{"baseline row needs a reason", runStep("true"), "gh-api-unbounded\tw.yml\tj\ts\t\n", "want kind, file, job, step, reason"},
+		{"known input", "      - uses: actions/checkout@" + refsSHA + "\n        with:\n          Path: x\n", "", ""},
+		{"unknown input", "      - uses: actions/checkout@" + refsSHA + "\n        with:\n          app-id: x\n", "", "with-unknown-input actions/checkout@" + refsSHA + " app-id"},
+		{"uncached action", "      - uses: actions/other@" + refsSHA + "\n", "", "uses-not-cached"},
+		{"gh list in a brace group", runStep("{ gh pr list --base main; }"), "", "gh-pr-list-unbounded"},
+		{"gh ls alias", runStep("gh pr ls --base main"), "", "gh-pr-list-unbounded"},
+		{"gh group and ls aliases", runStep("gh rs ls"), "", "gh-rs-list-unbounded"},
 		{"gh api pagination disabled", runStep("gh api --paginate=false repos/x"), "", "gh-api-unbounded"},
 		{"gh api pagination overridden", runStep("gh api --paginate repos/x --paginate=false"), "", "gh-api-unbounded"},
 		{"gh api behind sudo -k", runStep("sudo -k gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"gh api behind sudo --reset-timestamp", runStep("sudo --reset-timestamp gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"gh list without a limit flag", runStep("gh secret list --limit 1"), "", "gh-secret-list-unbounded"},
+		{"script under the step working directory", "      - name: s\n        working-directory: sub\n        run: ./scripts/present.sh\n", "", "missing-script ./scripts/present.sh"},
+		{"script under a directory made at run time", "      - name: s\n        working-directory: gen\n        run: ./scripts/present.sh\n", "", "script-cwd-unresolved ./scripts/present.sh"},
+		{"script after a cd", runStep("cd sub\n./scripts/present.sh"), "", "script-cwd-unresolved ./scripts/present.sh"},
+		{"gh discussion list without a limit", runStep("gh discussion list"), "", "gh-discussion-list-unbounded"},
+		{"gh org list with a limit", runStep("gh org list --limit 5\ngh agent-task list -L 5"), "", ""},
+		{"gh list of an unknown group", runStep("gh skill list --limit 5"), "", "gh-skill-list-unbounded"},
 		{"gh api behind --hostname", runStep("gh --hostname github.com api repos/x"), "", "gh-api-unbounded"},
 		{"gh api behind a short global flag", runStep("gh -X GET api repos/x"), "", "gh-api-unbounded"},
+		{"gh pr list with an empty base", runStep("gh pr list --base= --limit 1"), "", "gh-pr-list-no-base"},
+		{"gh pr list with an empty quoted base", runStep(`gh pr list --base "" --limit 1`), "", "gh-pr-list-no-base"},
+		{"gh pr list base overridden", runStep("gh pr list -B main --base= --limit 1"), "", "gh-pr-list-no-base"},
 		{"called function body is read", runStep("f() {\n  gh api repos/x\n}\ntrap f EXIT"), "", "gh-api-unbounded"},
 		{"one-line called function body is read", runStep("f() { gh api repos/x; }\nf"), "", "gh-api-unbounded"},
 		{"uncalled one-line function with a command after it", runStep("f() { true; }\ngh api repos/x"), "", "gh-api-unbounded"},
+		{"gh list behind a flag after the group", runStep("gh pr -R o/r list --base main"), "", "gh-pr-list-unbounded"},
+		{"gh pr base in another option's value", runStep("gh pr list --search -Bfoo --limit 1"), "", "gh-pr-list-no-base"},
 		{"gh api in backticks", runStep("r=`gh api repos/x`"), "", "gh-api-unbounded"},
+		{"called function body runs at the call", runStep("f() {\n  cd sub\n}\nf\n./scripts/present.sh"), "", "script-cwd-unresolved ./scripts/present.sh"},
+		{"gh list with a zero limit", runStep("gh issue list --limit 0"), "", "gh-issue-list-unbounded"},
+		{"gh list with a word limit", runStep("gh issue list --limit=abc"), "", "gh-issue-list-unbounded"},
+		{"gh list with a negative limit", runStep("gh issue list -L -1"), "", "gh-issue-list-unbounded"},
+		{"gh list limit overridden", runStep("gh issue list -L 5 --limit 0"), "", "gh-issue-list-unbounded"},
 		{"gh behind wrappers", runStep("command gh api a\ncommand -p gh api b\nenv -u X A=1 nice -n 5 gh api c\nexec gh api d"), "", "gh-api-unbounded#4"},
 		{"command -v only names gh; gh help runs nothing", runStep("command -v gh api a\ngh api --help\ngh pr list -h\ngh api repos/x --help=true"), "", ""},
+		{"duplicate limit behind a value-less flag", runStep("gh discussion list --limit 5 --answered --limit abc"), "", "gh-discussion-list-unbounded"},
 		{"every call of a function is expanded", runStep("g() { gh api x; }\nf() { g; g; }\nf\ny=$(g)"), "gh-api-unbounded\tw.yml\tj\ts\treason\ngh-api-unbounded#2\tw.yml\tj\ts\treason\n", "gh-api-unbounded#3"},
 		{"recursive function is expanded once per call", runStep("f() { gh api x; f; }\nf"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", ""},
 		{"gh behind long wrapper options", runStep("env --unset X gh api a\nenv --unset=X gh api b\nnice --adjustment 5 gh api c\nnice --adj 5 gh api d"), "", "gh-api-unbounded#4"},
@@ -92,7 +138,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"a GITHUB_ENV write whose name is built at run time is unresolved", runStep("p=BASH_; s=E; s+=NV; printf '%s%s=init\\n' \"$p\" \"$s\" >> \"$GITHUB_ENV\"\nf=$GITHUB_ENV; echo \"X=1\" >> \"$f\""), "", "command-unresolved"},
 		{"a write to an indirect or computed target is unresolved", runStep("a=BASH_; b=E; b+=NV; target=GITHUB_; target+=E; target+=NV; printf '%s%s=init\\n' \"$a\" \"$b\" >> \"${!target}\""), "", "command-unresolved"},
 		{"a nameref is unresolved", runStep("t=GITHUB_; t+=E; t+=NV; declare -n target=$t; printf 'X=1\\n' >> \"$target\""), "", "command-unresolved"},
-		{"a commented GITHUB_ENV write and an indirect read are clean; gh's built-in short names are read", runStep("# echo 'X=1' >> \"$GITHUB_ENV\"\nv=A; echo \"${!v}\" > out.txt\ngh at verify x\ngh cs list\ngh rs list"), "", ""},
+		{"a commented GITHUB_ENV write and an indirect read are clean; gh's built-in short names are read", runStep("# echo 'X=1' >> \"$GITHUB_ENV\"\nv=A; echo \"${!v}\" > out.txt\ngh at verify x\ngh cs list --limit 5\ngh rs list --limit 5"), "", ""},
 		{"a gh subcommand that is not built in may be a config alias", runStep("GH_CONFIG_DIR=cfg gh fetch"), "", "command-unresolved"},
 		{"ubuntu 26.04 runners run bash", "name: w\njobs:\n  j:\n    runs-on: ubuntu-26.04-arm\n    steps:\n      - run: gh api --paginate repos/o/r/issues\n", "", ""},
 		{"an interpreter running a script file is clean; time as an argument is not a prefix", runStep("python3 tools/x.py\nperl tools/x.pl\necho time -p gh api repos/o/r/issues"), "", ""},
@@ -101,6 +147,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"bash reads its stdin script operand", runStep("bash /dev/stdin <<'EOF'\ngh api repos/o/r/issues\nEOF"), "", "gh-api-unbounded"},
 		{"literal trap action is read", runStep("trap 'gh api repos/o/r/issues' EXIT\ntrap -- 'rm -f x' INT"), "", "gh-api-unbounded"},
 		{"trap action after --", runStep("trap -- f EXIT\nf() { gh api repos/x; }"), "", "gh-api-unbounded"},
+		{"gh list with a value-less flag before its limit", runStep("gh discussion list --answered --limit 5\ngh repo list --archived -L 5\ngh release list --exclude-drafts --limit 5"), "", ""},
 		{"gh api behind timeout", runStep("timeout 30 gh api a"), "", "gh-api-unbounded"},
 		{"gh api behind timeout -k", runStep("timeout -k 5 30 gh api a"), "", "gh-api-unbounded"},
 		{"gh api behind timeout --signal=", runStep("timeout --signal=TERM 30 gh api a"), "", "gh-api-unbounded"},
@@ -112,7 +159,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh api behind eval", runStep("eval gh api repos/o/r/issues\neval \"gh api repos/o/r/issues\""), "", "gh-api-unbounded#2"},
 		{"eval of an expansion is unresolved", runStep(`eval "$CMD"`), "", "eval-unresolved"},
 		{"command word with a substitution is unresolved", runStep("g$(printf h) api repos/o/r/issues"), "", "command-unresolved"},
-		{"substitution in a command word still runs", runStep("x$(gh api repos/x) y"), "command-unresolved\tw.yml\tj\ts\treason\n", "gh-api-unbounded"},
+		{"substitution in a command word still runs", runStep("x$(./scripts/absent.sh) y"), "command-unresolved\tw.yml\tj\ts\treason\n", "missing-script ./scripts/absent.sh"},
 		{"substitution in a gh argument is unresolved", runStep(`gh api --paginate "$(cat x)"`), "", "command-unresolved"},
 		{"nested definition in a called body is not run", runStep("f() { g() { gh api repos/x; }; :; }; f\nh() {\n  k() { gh api repos/x; }\n  :\n}\nh"), "", ""},
 		{"nested definition called in its body", runStep("f() { g() { gh api repos/x; }; g; }; f"), "", "gh-api-unbounded"},
@@ -208,6 +255,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"case arm after a definition in an earlier arm", runStep("case $x in\n  a)\n    f() { :; }\n    ;;\n  *)\n    gh api repos/o/r/issues\n    ;;\nesac"), "", "gh-api-unbounded"},
 		{"subshell after a case pattern is read", runStep("( case $x in a) :;; esac; gh api repos/o/r/issues )"), "", "gh-api-unbounded"},
+		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -243,12 +291,52 @@ func TestEveryShellCommandEndsOnCommandlessEnvSplit(t *testing.T) {
 
 func TestCheckWorkflowRefsReadsYAMLExtension(t *testing.T) {
 	root := refsRoot(t, runStep("true"), "")
-	body := "name: v\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + runStep("gh api repos/x")
+	body := "name: v\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + runStep("./scripts/absent.sh")
 	if err := os.WriteFile(filepath.Join(root, ".github/workflows/v.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "v.yaml") {
 		t.Fatalf("CheckWorkflowRefs() error = %v, want a v.yaml hit", err)
+	}
+}
+
+func TestCheckWorkflowRefsReadsJobWorkingDirectory(t *testing.T) {
+	root := refsRoot(t, runStep("true"), "")
+	body := "name: v\njobs:\n  j:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: sub\n    steps:\n" + runStep("./scripts/present.sh")
+	if err := os.WriteFile(filepath.Join(root, ".github/workflows/v.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "missing-script ./scripts/present.sh") {
+		t.Fatalf("CheckWorkflowRefs() error = %v, want a missing-script hit under sub", err)
+	}
+}
+
+func TestWorkflowInlineJQProgramsSkipOptionValues(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("jq --indent 2 --bogus -r '.a'"), ""))
+	if err != nil || len(programs) != 1 || programs[0].Program != ".a" || !slices.Equal(programs[0].Flags, []string{"--indent", "2", "--bogus", "-r"}) {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want program .a with every option passed to jq", programs, err)
+	}
+}
+
+func TestWorkflowInlineJQProgramsReadAttachedGHFilters(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("gh pr list --json n -q'.a'\ngh api x --jq=.b\ngh api y -q=.c"), ""))
+	if err != nil || len(programs) != 3 || programs[0].Program != ".a" || programs[1].Program != ".b" || programs[2].Program != ".c" {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want programs .a, .b and .c", programs, err)
+	}
+}
+
+func TestWorkflowInlineJQProgramsReadPastArgumentModes(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("jq --args '.a' x\njq -n --jsonargs '.b' 1\njq -n -- '-1' x"), ""))
+	if err != nil || len(programs) != 3 || programs[0].Program != ".a" || programs[1].Program != ".b" || programs[2].Program != "-1" ||
+		!slices.Equal(programs[1].Flags, []string{"-n", "--jsonargs"}) || !slices.Equal(programs[2].Flags, []string{"-n", "--"}) {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want programs .a, .b and -1 after the argument modes and --", programs, err)
+	}
+}
+
+func TestWorkflowInlineJQProgramsSkipOtherFlagValues(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("gh pr list --search --jq --base main --limit 1\ngh api --paginate repos/x --jq '.a'"), ""))
+	if err != nil || len(programs) != 1 || programs[0].Program != ".a" {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want only program .a", programs, err)
 	}
 }
 
@@ -258,7 +346,10 @@ func TestCheckWorkflowRefsPassesOnRepository(t *testing.T) {
 	}
 }
 
-// TestCheckWorkflowRefsRejectsEvasions runs the shared corpus against a baselined gh api hit and a baselined unresolved eval. A row that turns the command into text must leave the baseline row stale, and a gated row must keep the hit.
+// TestCheckWorkflowRefsRejectsEvasions runs the shared corpus against a
+// baselined gh api hit and a baselined missing script. A row that turns the
+// command into text must leave the baseline row stale, and a gated row must
+// keep the hit.
 func TestCheckWorkflowRefsRejectsEvasions(t *testing.T) {
 	validate := func(baseline string) func(string) error {
 		return func(workflow string) error {
@@ -278,12 +369,12 @@ func TestCheckWorkflowRefsRejectsEvasions(t *testing.T) {
 		RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "stale baseline row",
 			validate("gh-api-unbounded\tw.yml\tj\ts\treason\n"))
 	})
-	t.Run("eval", func(t *testing.T) {
-		const anchor = "          eval \"$CMD\""
-		if err := validate("eval-unresolved\tw.yml\tj\ts\treason\n")(head + anchor + "\n"); err != nil {
+	t.Run("script", func(t *testing.T) {
+		const anchor = "          ./scripts/absent.sh"
+		if err := validate("missing-script ./scripts/absent.sh\tw.yml\tj\ts\treason\n")(head + anchor + "\n"); err != nil {
 			t.Fatalf("CheckWorkflowRefs() error = %v, want the baselined hit", err)
 		}
 		RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "stale baseline row",
-			validate("eval-unresolved\tw.yml\tj\ts\treason\n"))
+			validate("missing-script ./scripts/absent.sh\tw.yml\tj\ts\treason\n"))
 	})
 }
