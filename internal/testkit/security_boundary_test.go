@@ -690,6 +690,7 @@ source() {
   builtin source "$@"
 }
 builtin source "${PROBE_SCRIPT}"
+WORKCELL_SESSION_INJECTION_MANIFEST="${SESSION_MANIFEST-}"
 unset NODE_EXTRA_CA_CERTS
 workcell_export_egress_ca_cert
 printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
@@ -698,6 +699,7 @@ printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
 		name, metadata string
 		file, link     bool
 		manifest       bool
+		agent          bool // the agent named a manifest outside the bundle mount
 		wantCode       int
 		want           string
 	}{
@@ -707,6 +709,7 @@ printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
 		{name: "CA missing", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, wantCode: 1, want: "died: Workcell expected the session CA that the injection manifest lists: BUNDLE/egress-ca.pem\n"},
 		{name: "CA symlink", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, link: true, wantCode: 1, want: "died: Workcell expected the session CA that the injection manifest lists: BUNDLE/egress-ca.pem\n"},
 		{name: "CA outside bundle", manifest: true, metadata: `{"egress_ca_cert":"../egress-ca.pem"}`, wantCode: 1, want: "died: Invalid Workcell injection source path: ../egress-ca.pem\n"},
+		{name: "agent manifest", manifest: true, agent: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, file: true, wantCode: 1, want: "died: Workcell refused an injection manifest that is not the session bundle: BUNDLE/manifest.json\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -722,6 +725,10 @@ printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
 					t.Fatal(err)
 				}
 				env["WORKCELL_INJECTION_MANIFEST"] = manifest
+				env["SESSION_MANIFEST"] = manifest
+				if tc.agent {
+					env["SESSION_MANIFEST"] = "/opt/workcell/host-injections/manifest.json"
+				}
 			}
 			ca := filepath.Join(bundle, "egress-ca.pem")
 			if tc.file {

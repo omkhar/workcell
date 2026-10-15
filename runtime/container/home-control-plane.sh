@@ -469,6 +469,10 @@ workcell_current_effective_codex_rules_mutability() {
     "$(workcell_session_assurance)"
 }
 
+# The launcher mounts the session bundle read-only here. Set in this file, not
+# from the environment, so an agent cannot move it.
+WORKCELL_SESSION_INJECTION_MANIFEST="/opt/workcell/host-injections/manifest.json"
+
 workcell_manifest_active() {
   [[ -n "${WORKCELL_INJECTION_MANIFEST:-}" ]]
 }
@@ -597,11 +601,17 @@ workcell_manifest_source_path() {
 # manifest lists, and nothing when it lists none. The launcher writes the CA
 # into the bundle when the session brokers a credential. A listed CA that is
 # missing stops the launch, because the brokered provider cannot connect.
+# The agent can set WORKCELL_INJECTION_MANIFEST for a provider it starts, so
+# only the read-only bundle mount counts; any other path stops, or an
+# agent-written manifest could name an agent-written trust root.
 workcell_egress_ca_cert_path() {
   local relative_path=""
   local ca_path=""
 
   workcell_manifest_active || return 0
+  if [[ "$(workcell_manifest_path)" != "${WORKCELL_SESSION_INJECTION_MANIFEST}" ]]; then
+    workcell_die "Workcell refused an injection manifest that is not the session bundle: $(workcell_manifest_path)"
+  fi
   relative_path="$(workcell_manifest_string '.metadata.egress_ca_cert // empty')" || return 1
   [[ -n "${relative_path}" ]] || return 0
   ca_path="$(workcell_manifest_source_path "${relative_path}")" || return 1
