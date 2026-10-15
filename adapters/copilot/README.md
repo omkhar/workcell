@@ -44,8 +44,10 @@ directories. In-container reserved session targets: `~/.copilot`,
   `.github/instructions/**`, `.github/mcp.json`, `.github/copilot/settings*.json`,
   repo-local skill/hook dirs) are masked on the safe path (`docs/invariants.md`
   §3).
-- `reject_unsafe_copilot_args` blocks `init`, `login`, `logout`, MCP, plugin,
-  skill, update, and other control-plane subcommands.
+- `reject_unsafe_copilot_args` in `runtime/container/provider-policy.sh` blocks
+  `config`, `init`, `login`, `logout`, MCP, plugin, `sandbox`, skill, update,
+  and other control-plane subcommands
+  (`internal/testkit/flag_inventory_policy_test.go`).
 - It also blocks unsafe tool, URL, directory, instruction, remote, share,
   worktree, and autonomy flags.
 - These rules apply in all modes, including `breakglass`. Breakglass changes

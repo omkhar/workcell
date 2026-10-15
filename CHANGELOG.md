@@ -47,6 +47,11 @@ The fixes are below.
 ### Fixed
 
 - The Claude policy now rejects the `upgrade` alias of `update`.
+- The provider policy now rejects more commands and flags of the refreshed
+  CLIs. `internal/testkit/flag_inventory_policy_test.go` checks each one.
+  Claude `purge` deletes Claude Code state. Copilot `config` changes settings
+  such as `allowedUrls`. Copilot `sandbox` changes its command sandbox.
+  Copilot `--mcp-github-auth` sends the GitHub credential to an MCP server.
 - The Copilot policy now rejects `--assisted-approval`.
 - The Codex policy now rejects `--approve-for-me`, its hidden alias
   `--not-so-yolo`, and `--ignore-rules`. It also rejects an
