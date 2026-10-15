@@ -148,9 +148,22 @@ The supported resolvers are:
 
 - `codex-home-auth-file` for `codex_auth`
 - `claude-macos-keychain` for `claude_auth`
+- `keychain-broker` for `claude_api_key` and `gemini_env`
 
 The Claude resolver records the intended source. It stops the launch because
 Workcell does not provide a supported export path.
+
+The `keychain-broker` resolver is for `--egress-proxy` sessions. The agent gets
+only a `wcph-<32 hex>` placeholder at the usual credential path. For
+`gemini_env`, the staged file holds only `GEMINI_API_KEY=<placeholder>`. The
+host credential broker reads the real key from the macOS Keychain. The egress
+proxy puts the key into the request in place of the placeholder.
+
+A launch without a placeholder stops
+(`internal/authresolve/resolve_provider_credentials.go`). When a session
+brokers credentials, a `claude_api_key` or a Gemini API key from `source`
+stops the render (`internal/injection/render_credentials.go`). Gemini OAuth
+and Vertex settings stay direct.
 
 ### Rendered credential entry keys
 

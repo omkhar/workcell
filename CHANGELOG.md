@@ -21,6 +21,13 @@ The GitHub Releases page contains old details that are not in this file.
 - `--egress-proxy` sessions append their denied connections to the audit
   chain of the session as `egress_deny` and `egress_summary` records. The proxy
   stops before the session is sealed, so `session verify` covers them.
+- The `keychain-broker` credential resolver stages a `wcph-` placeholder for
+  `claude_api_key` and `gemini_env` in place of the key. The injection
+  manifest lists the session CA file `egress-ca.pem` for a session that brokers
+  a key. The egress proxy now asks the host credential broker for each
+  brokered value with the session token from `WORKCELL_BROKER_TOKEN`. The
+  launcher wiring for `--egress-proxy` comes in a later change, so a launch
+  with this resolver stops until then.
 
 ### Security hardening
 

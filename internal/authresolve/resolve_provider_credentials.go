@@ -8,14 +8,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/omkhar/workcell/internal/credbroker"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/secretfile"
 )
 
 const testClaudeExportEnv = "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE"
 
-func resolveCredential(key, resolverName string, outputRoot *os.Root, relativeDestination, resolutionMode string) (string, error) {
+// BrokerResolver names the resolver for an API key that the host credential
+// broker serves from the macOS Keychain under --egress-proxy.
+const BrokerResolver = "keychain-broker"
+
+func resolveCredential(key, resolverName string, outputRoot *os.Root, relativeDestination, resolutionMode, placeholder string) (string, error) {
+	if resolverName == BrokerResolver {
+		return resolveBrokerPlaceholder(key, outputRoot, relativeDestination, resolutionMode, placeholder)
+	}
 	if key == "codex_auth" && resolverName == "codex-home-auth-file" {
 		return resolveCodexHomeAuthFile(outputRoot, relativeDestination, resolutionMode)
 	}
@@ -27,6 +36,9 @@ func resolveCredential(key, resolverName string, outputRoot *os.Root, relativeDe
 
 // ResolverSupported reports whether a credential key supports the named built-in resolver.
 func ResolverSupported(key, resolverName string) bool {
+	if resolverName == BrokerResolver {
+		return credbroker.Brokers(key)
+	}
 	resolverSet, ok := allowedResolvers[key]
 	if !ok {
 		return false
@@ -42,6 +54,10 @@ func ProbeResolverReadiness(key, resolverName string) (string, error) {
 		return probeCodexHomeAuthFile()
 	case key == "claude_auth" && resolverName == "claude-macos-keychain":
 		return "configured-only", nil
+	case resolverName == BrokerResolver && ResolverSupported(key, resolverName):
+		// The broker reads the Keychain at launch; probing here could raise
+		// a Keychain prompt during a status command.
+		return "host-source", nil
 	default:
 		return "", fmt.Errorf("unsupported credential resolver: %s", resolverName)
 	}
@@ -139,6 +155,29 @@ func resolveClaudeMacosKeychain(outputRoot *os.Root, relativeDestination, resolu
 		return "configured-only", nil
 	}
 	return "", errors.New("claude macOS login reuse is configured but no supported export path is available; use claude_api_key or remove credentials.claude_auth")
+}
+
+// resolveBrokerPlaceholder stages the placeholder that the agent gets in
+// place of a brokered API key, at the key's usual credential path. The real
+// key never reaches the bundle: the broker reads it from the Keychain and
+// the egress proxy swaps the placeholder for it. Without a placeholder the
+// session brokers nothing, so a launch fails closed; a metadata run stages
+// an all-zero placeholder.
+func resolveBrokerPlaceholder(key string, outputRoot *os.Root, relativeDestination, resolutionMode, placeholder string) (string, error) {
+	if placeholder == "" {
+		if resolutionMode != "metadata" {
+			return "", fmt.Errorf("credentials.%s resolver %s needs --egress-proxy: the credential broker serves the key and the agent gets only a placeholder", key, BrokerResolver)
+		}
+		placeholder = "wcph-" + strings.Repeat("0", 32)
+	}
+	content := placeholder + "\n"
+	if key == "gemini_env" {
+		content = "GEMINI_API_KEY=" + content
+	}
+	if err := rootio.WriteFileAtomic(outputRoot, relativeDestination, []byte(content), 0o600, ".workcell-write-"); err != nil {
+		return "", err
+	}
+	return "resolved", nil
 }
 
 func materializeFileUnderRoot(source, label string, outputRoot *os.Root, relativeDestination string) error {

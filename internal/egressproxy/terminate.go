@@ -12,6 +12,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -39,6 +40,17 @@ var (
 	// placeholderAnywhere matches any placeholder in case-folded text.
 	placeholderAnywhere = regexp.MustCompile(`wcph-[0-9a-f]{32}`)
 )
+
+// NewPlaceholder returns a fresh random placeholder. The agent holds it in
+// place of a brokered credential; the proxy swaps it on the way out.
+func NewPlaceholder() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b) // crypto/rand.Read never fails
+	return "wcph-" + hex.EncodeToString(b)
+}
+
+// IsPlaceholder reports whether text is exactly one placeholder.
+func IsPlaceholder(text string) bool { return placeholderPattern.MatchString(text) }
 
 // Broker returns the real value of a brokered header. The credential broker
 // client implements it; the proxy never holds a real value between requests.

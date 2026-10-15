@@ -59,6 +59,12 @@ var grants = map[string][]grant{
 	"gemini_env":     {{host: "generativelanguage.googleapis.com", header: "x-goog-api-key"}},
 }
 
+// Brokers reports whether the broker has a grant for a credential key.
+func Brokers(key string) bool {
+	_, ok := grants[key]
+	return ok
+}
+
 // Request is the one JSON line a client sends on a connection.
 type Request struct {
 	Token  string `json:"token"`

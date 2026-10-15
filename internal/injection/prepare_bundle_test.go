@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/egressproxy"
 	"github.com/omkhar/workcell/internal/pathutil"
 )
 
@@ -489,5 +490,109 @@ func TestRejectWorkspaceCredentialSourcesRejectsSSHSources(t *testing.T) {
 				t.Fatalf("%s inside workspace: error = %v, want workspace rejection", tc.label, err)
 			}
 		}
+	}
+}
+
+// TestPrepareBundleBrokersAPIKeys covers --broker-credentials: a brokered key
+// stages only the session placeholder at its credential path and lists the
+// session CA in the manifest; a Claude or Gemini API key from a plain source
+// is refused; Gemini OAuth stays direct and lists no CA.
+func TestPrepareBundleBrokersAPIKeys(t *testing.T) {
+	cases := []struct {
+		name, agent, policy, gemini string
+		broker                      bool
+		wantErr, wantStaged         string
+	}{
+		{name: "claude brokered", agent: "claude", policy: "[credentials.claude_api_key]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: "%s\n"},
+		{name: "gemini brokered", agent: "gemini", policy: "[credentials.gemini_env]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: "GEMINI_API_KEY=%s\n"},
+		{name: "claude source", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n", broker: true, wantErr: "--egress-proxy brokers credentials.claude_api_key"},
+		{name: "gemini key source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GEMINI_API_KEY=sk-real\n", broker: true, wantErr: "--egress-proxy brokers credentials.gemini_env"},
+		{name: "gemini oauth source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GOOGLE_GENAI_USE_GCA=true\n", broker: true},
+		{name: "claude source unbrokered", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n"},
+		{name: "brokered without broker", agent: "claude", policy: "[credentials.claude_api_key]\nresolver = \"keychain-broker\"\n", wantErr: "resolve_credential_sources exited 1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			realHome := t.TempDir()
+			workspace := filepath.Join(realHome, "workspace")
+			if err := os.Mkdir(workspace, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			secret := tc.gemini
+			if secret == "" {
+				secret = "sk-real\n"
+			}
+			if err := os.WriteFile(filepath.Join(realHome, "key.txt"), []byte(secret), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			policyPath := filepath.Join(realHome, "policy.toml")
+			if err := os.WriteFile(policyPath, []byte("version = 1\n"+tc.policy), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			result, err := PrepareBundle(PrepareBundleOptions{
+				Agent:                tc.agent,
+				Mode:                 "strict",
+				WorkspacePath:        workspace,
+				PolicyPath:           policyPath,
+				RealHome:             realHome,
+				BrokerCredentials:    tc.broker,
+				BundleParentOverride: filepath.Join(realHome, "host-inputs"),
+				ProcessPID:           os.Getpid(),
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("PrepareBundle error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var staged []string
+			for i := 1; i < len(result.DirectSourceMounts); i += 2 {
+				data, err := os.ReadFile(strings.SplitN(result.DirectSourceMounts[i], ":", 2)[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				staged = append(staged, string(data))
+			}
+			manifest, err := os.ReadFile(filepath.Join(result.InjectionBundleRoot, "manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			listsCA := strings.Contains(string(manifest), `"egress_ca_cert":"`+EgressCACertName+`"`)
+			if tc.wantStaged == "" {
+				if result.CredentialPlaceholder != "" || listsCA {
+					t.Fatalf("an unbrokered session got placeholder %q, CA listed %v", result.CredentialPlaceholder, listsCA)
+				}
+				return
+			}
+			if !egressproxy.IsPlaceholder(result.CredentialPlaceholder) || !listsCA {
+				t.Fatalf("placeholder %q, CA listed %v; want a placeholder and the CA", result.CredentialPlaceholder, listsCA)
+			}
+			if want := fmt.Sprintf(tc.wantStaged, result.CredentialPlaceholder); len(staged) != 1 || staged[0] != want {
+				t.Fatalf("staged credentials = %q, want only %q", staged, want)
+			}
+			shell, err := FormatBundleResultForShell(result)
+			if err != nil || !strings.Contains(shell, "INJECTION_CREDENTIAL_PLACEHOLDER="+result.CredentialPlaceholder+"\n") {
+				t.Fatalf("shell result lacks the placeholder: %v\n%s", err, shell)
+			}
+		})
+	}
+}
+
+func TestCredentialBrokerFromMetadataRejectsBadTypes(t *testing.T) {
+	t.Parallel()
+	for _, metadata := range []map[string]any{
+		{"credential_broker": "true"},
+		{"credential_resolvers": []any{"keychain-broker"}},
+	} {
+		if _, err := credentialBrokerFromMetadata(metadata); err == nil {
+			t.Errorf("credentialBrokerFromMetadata(%v) accepted a bad type", metadata)
+		}
+	}
+	broker, err := credentialBrokerFromMetadata(map[string]any{"credential_broker": true, "credential_resolvers": map[string]any{"claude_api_key": "keychain-broker", "claude_auth": "claude-macos-keychain"}})
+	if err != nil || !broker.on || !broker.brokered["claude_api_key"] || broker.brokered["claude_auth"] {
+		t.Errorf("credentialBrokerFromMetadata = %+v, %v", broker, err)
 	}
 }

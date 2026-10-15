@@ -6,10 +6,12 @@
 // stdout. Overload refusals are best-effort: they are dropped if stdout stalls.
 // With -terminate it terminates TLS for the named hosts under a session CA,
 // writes the CA certificate to -ca-out, and swaps placeholder headers for
-// values from the credential broker at -broker-socket.
+// values from the credential broker at -broker-socket, authenticated with
+// the session token in WORKCELL_BROKER_TOKEN.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,14 +24,33 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/credbroker"
 	"github.com/omkhar/workcell/internal/egressproxy"
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
-// newBroker connects to the credential broker. The broker client ships with
-// the broker package; until then -terminate fails closed here.
+// brokerTokenEnv carries the session's credential broker token. The launcher
+// passes it in the environment, never in argv, and the proxy removes it from
+// its own environment once read.
+const brokerTokenEnv = "WORKCELL_BROKER_TOKEN"
+
+// socketBroker asks the credential broker at socket for each brokered value.
+type socketBroker struct{ socket, token string }
+
+func (b socketBroker) Lookup(ctx context.Context, host, header string) (string, error) {
+	return credbroker.Lookup(ctx, b.socket, b.token, host, header)
+}
+
+// newBroker reads the session token and returns the broker client.
 func newBroker(socket string) (egressproxy.Broker, error) {
-	return nil, fmt.Errorf("-broker-socket %s: this build has no credential broker client", socket)
+	token := os.Getenv(brokerTokenEnv)
+	if err := os.Unsetenv(brokerTokenEnv); err != nil {
+		return nil, err
+	}
+	if err := credbroker.CheckToken(token); err != nil {
+		return nil, fmt.Errorf("-broker-socket %s: %s: %w", socket, brokerTokenEnv, err)
+	}
+	return socketBroker{socket: socket, token: token}, nil
 }
 
 func main() {

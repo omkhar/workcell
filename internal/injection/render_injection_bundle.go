@@ -138,9 +138,13 @@ func runRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 		return err
 	}
 	policyEntrypoint := logicalPolicyPath(Path(resolvedPolicyPath), Path(filepath.Dir(resolvedPolicyPath)))
+	var broker credentialBroker
 	if policyMetadata != "" {
 		policyEntrypoint, policySources, err = loadPolicyMetadataOverride(policyMetadata)
 		if err != nil {
+			return err
+		}
+		if broker, err = loadCredentialBroker(policyMetadata); err != nil {
 			return err
 		}
 	}
@@ -165,6 +169,9 @@ func runRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 	}
 	renderedCredentials, err := renderCredentialsWithBudget(policy, Path(filepath.Dir(resolvedPolicyPath)), agent, mode, budget)
 	if err != nil {
+		return err
+	}
+	if err := broker.check(renderedCredentials); err != nil {
 		return err
 	}
 	renderedSSH, err := renderSSHWithBudget(policy, Path(resolvedOutputRoot), Path(filepath.Dir(resolvedPolicyPath)), agent, mode, budget)
@@ -209,6 +216,12 @@ func runRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 		"copies":      renderedCopies,
 		"credentials": renderedCredentials,
 		"ssh":         renderedSSH,
+	}
+
+	if broker.brokersAny() {
+		// The launcher writes the session CA here after the egress proxy
+		// creates it, before the agent starts; the agent trusts it.
+		manifest["metadata"].(map[string]any)["egress_ca_cert"] = EgressCACertName
 	}
 
 	manifestPath := filepath.Join(resolvedOutputRoot, "manifest.json")

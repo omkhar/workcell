@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/credbroker"
 	"github.com/omkhar/workcell/internal/egressproxy"
 )
 
@@ -47,7 +48,7 @@ func TestRunFailsClosedOnBadConfig(t *testing.T) {
 		"rule without ca":   {append(terminateArgs[:4:4], "-terminate", rule), "-terminate requires"},
 		"ttl over a day":    {append(append([]string{}, terminateArgs...), "-ca-ttl", "25h"), "-ca-ttl must be"},
 		"zero ttl":          {append(append([]string{}, terminateArgs...), "-ca-ttl", "0s"), "-ca-ttl must be"},
-		"no broker client":  {append(append([]string{}, terminateArgs...), "-ca-ttl", "1h"), "no credential broker client"},
+		"no broker token":   {append(append([]string{}, terminateArgs...), "-ca-ttl", "1h"), brokerTokenEnv},
 		"orphan ca-out":     {[]string{"-allow", "example.com:443", "-ca-out", filepath.Join(dir, "ca.pem")}, "require -terminate"},
 		"orphan ca-ttl":     {[]string{"-allow", "example.com:443", "-ca-ttl", "1h"}, "require -terminate"},
 		"orphan socket":     {[]string{"-allow", "example.com:443", "-broker-socket", "/s"}, "require -terminate"},
@@ -149,5 +150,59 @@ func TestListenAddrPicksTheOneAddressInTheSubnet(t *testing.T) {
 		if got, err := listenAddr(value, ifaces); err == nil {
 			t.Errorf("listenAddr(%q) = %v, want an error", value, got)
 		}
+	}
+}
+
+// TestNewBrokerLooksUpThroughTheCredentialBroker runs a real broker on a
+// socket and checks the proxy's client end to end: the token comes from the
+// environment once, a granted pair returns the value, and a refusal is an error.
+func TestNewBrokerLooksUpThroughTheCredentialBroker(t *testing.T) {
+	token := strings.Repeat("ab", 32)
+	for _, bad := range []string{"", "ab", strings.Repeat("zz", 32)} {
+		t.Setenv(brokerTokenEnv, bad)
+		if _, err := newBroker("/s"); err == nil || !strings.Contains(err.Error(), brokerTokenEnv) {
+			t.Errorf("token %q: newBroker error = %v, want a token error", bad, err)
+		}
+	}
+	// The socket path must fit the 104-byte macOS limit.
+	dir, err := os.MkdirTemp("/tmp", "wcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "b.sock")
+	log, err := os.OpenFile(filepath.Join(dir, "log"), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = log.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() {
+		served <- credbroker.Serve(ctx, credbroker.Config{SocketPath: socket, Token: []byte(token), Credentials: map[string]string{"claude_api_key": "sk-real"}, Log: log})
+	}()
+	t.Cleanup(func() { cancel(); <-served })
+
+	t.Setenv(brokerTokenEnv, token)
+	broker, err := newBroker(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, set := os.LookupEnv(brokerTokenEnv); set {
+		t.Errorf("%s is still in the proxy environment", brokerTokenEnv)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for _, err := os.Stat(socket); err != nil; _, err = os.Stat(socket) {
+		if time.Now().After(deadline) {
+			t.Fatalf("broker socket never appeared: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if value, err := broker.Lookup(ctx, "api.anthropic.com", "x-api-key"); err != nil || value != "sk-real" {
+		t.Errorf("granted lookup = %q, %v; want the brokered value", value, err)
+	}
+	var deny credbroker.DenyError
+	if _, err := broker.Lookup(ctx, "api.anthropic.com", "x-goog-api-key"); !errors.As(err, &deny) || deny != credbroker.ErrNotGranted {
+		t.Errorf("ungranted lookup error = %v, want %s", err, credbroker.ErrNotGranted)
 	}
 }
