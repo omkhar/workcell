@@ -38,6 +38,12 @@ The GitHub Releases page contains old details that are not in this file.
   to `6`.
 - The launcher writes `credential_mode` to the launch summary, the session
   record and the `launch` audit record.
+- The `credential-broker-plan` host helper prints the egress proxy rules and
+  the Keychain sources for the brokered keys of a bundle. The
+  `publish-egress-ca` host helper checks the session CA from the sidecar and
+  publishes it into the bundle. `injection-prepare-bundle` accepts
+  `--broker-credentials`. The brokered keys use the fixed login Keychain items
+  `workcell-claude-api-key` and `workcell-gemini-api-key`.
 
 ### Security hardening
 

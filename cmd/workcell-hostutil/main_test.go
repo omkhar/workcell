@@ -783,3 +783,14 @@ func TestWriteEgressDenyAuditRecords(t *testing.T) {
 		t.Fatalf("symlinked deny log: err = %v, output = %q; want an error and no output", err, out.String())
 	}
 }
+
+// TestParsePrepareBundleArgsBrokerCredentials maps --broker-credentials onto
+// the prepare option; only 1 or true turns it on.
+func TestParsePrepareBundleArgsBrokerCredentials(t *testing.T) {
+	for value, want := range map[string]bool{"1": true, "true": true, "0": false, "": false} {
+		opts, err := parsePrepareBundleArgs([]string{"--broker-credentials=" + value})
+		if err != nil || opts.BrokerCredentials != want {
+			t.Errorf("--broker-credentials=%s: BrokerCredentials = %v, %v; want %v", value, opts != nil && opts.BrokerCredentials, err, want)
+		}
+	}
+}

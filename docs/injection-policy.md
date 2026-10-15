@@ -183,6 +183,13 @@ the CA only from the read-only bundle mount,
 elsewhere in `WORKCELL_INJECTION_MANIFEST` stops the provider, so the agent
 cannot add a trust root.
 
+The `publish-egress-ca` host helper writes that file. It treats the CA from
+the sidecar as untrusted input (`internal/injection/egress_ca.go`). It accepts
+exactly one unexpired CA certificate with path length 0. The certificate must
+carry critical name constraints that permit only the hosts of the brokered
+keys. The `credential-broker-plan` helper derives the proxy rules and the
+Keychain sources from the broker grants table (`internal/credbroker/server.go`).
+
 The launch summary, the session record and the `launch` audit record report
 `credential_mode=brokered` for such a session. Every other session reports
 `credential_mode=direct`, which includes OAuth flows and Codex and Copilot keys.

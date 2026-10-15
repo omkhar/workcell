@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -69,6 +70,28 @@ var keychainItems = map[string]string{
 // KeychainItem returns the login Keychain item that holds a brokered key, or
 // "" for a key the broker does not serve.
 func KeychainItem(key string) string { return keychainItems[key] }
+
+// TerminateRules returns the egress proxy -terminate rules
+// (host=header=placeholder) that swap placeholder for the brokered key: one
+// rule for each grant of the key.
+func TerminateRules(key, placeholder string) []string {
+	rules := make([]string, 0, len(grants[key]))
+	for _, g := range grants[key] {
+		rules = append(rules, g.host+"="+g.header+"="+placeholder)
+	}
+	return rules
+}
+
+// Hosts returns the hosts that a brokered key may be sent to.
+func Hosts(key string) []string {
+	var hosts []string
+	for _, g := range grants[key] {
+		if !slices.Contains(hosts, g.host) {
+			hosts = append(hosts, g.host)
+		}
+	}
+	return hosts
+}
 
 // Brokers reports whether the broker has a grant for a credential key.
 func Brokers(key string) bool {

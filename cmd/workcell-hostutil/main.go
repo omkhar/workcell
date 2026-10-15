@@ -326,6 +326,8 @@ func helperSubcommands() []helperSubcommand {
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
 		{"egress-deny-audit-records", 1, 1, cmdHelperEgressDenyAuditRecords},
+		{"credential-broker-plan", 2, 2, cmdHelperCredentialBrokerPlan},
+		{"publish-egress-ca", 2, 2, cmdHelperPublishEgressCA},
 		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
 		{"resolve-host-output-directory-candidate", 1, 1, cmdHelperResolveHostOutputDirectoryCandidate},
 		{"cleanup-stale-injection-bundles", 1, 1, cmdHelperCleanupStaleInjectionBundles},
@@ -879,6 +881,23 @@ func writeEgressDenyAuditRecords(w io.Writer, path string) error {
 	return err
 }
 
+// cmdHelperCredentialBrokerPlan prints the egress proxy rules and broker
+// sources for a bundle: BUNDLE_ROOT PLACEHOLDER.
+func cmdHelperCredentialBrokerPlan(args []string) error {
+	plan, err := injection.CredentialBrokerPlan(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(os.Stdout, plan)
+	return err
+}
+
+// cmdHelperPublishEgressCA checks the session CA from the sidecar and
+// publishes it into the bundle: CA_FILE BUNDLE_ROOT.
+func cmdHelperPublishEgressCA(args []string) error {
+	return injection.PublishEgressCA(args[0], args[1])
+}
+
 func cmdHelperResolveEndpoints(args []string) error {
 	lines, err := launcher.ResolveEndpoints(args[0])
 	if err != nil {
@@ -1112,6 +1131,8 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 			opts.Inspect = value == "1" || value == "true"
 		case "--dry-run":
 			opts.DryRun = value == "1" || value == "true"
+		case "--broker-credentials":
+			opts.BrokerCredentials = value == "1" || value == "true"
 		case "--synthetic-codex-auth":
 			opts.SelfStagingProbeSyntheticCodexAuth = value == "1" || value == "true"
 		case "--synthetic-claude-export":
