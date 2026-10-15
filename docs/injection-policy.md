@@ -153,6 +153,11 @@ The supported resolvers are:
 The Claude resolver records the intended source. It stops the launch because
 Workcell does not provide a supported export path.
 
+The `keychain-broker` resolver is not available yet. The launcher does not
+yet pass a placeholder to the bundle, so a launch that uses this resolver
+stops. A later part of E-4c connects it. The rest of this section describes
+the design.
+
 The `keychain-broker` resolver is for `--egress-proxy` sessions. The agent gets
 only a `wcph-<32 hex>` placeholder at the usual credential path. For
 `gemini_env`, the staged file holds only `GEMINI_API_KEY=<placeholder>`. The
