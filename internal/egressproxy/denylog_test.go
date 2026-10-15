@@ -111,11 +111,11 @@ func TestDenyAuditRecordsBounds(t *testing.T) {
 	}
 
 	log.Reset()
-	for i := range 2*maxDenyKeys + 1 {
+	for i := range maxDenyKeys + 2 {
 		fmt.Fprintf(&log, `{"host":"h%d","port":443,"reason":"no_sni","count":1}`+"\n", i)
 	}
 	got = DenyAuditRecords([]byte(log.String()))
-	if want := summary("malformed", 2*maxDenyKeys, 2*maxDenyKeys, 1); got[len(got)-1] != want {
+	if want := summary("malformed", maxDenyKeys+1, maxDenyKeys+1, 1); got[len(got)-1] != want {
 		t.Fatalf("key cap summary = %q, want %q", got[len(got)-1], want)
 	}
 
@@ -130,5 +130,21 @@ func TestDenyAuditRecordsBounds(t *testing.T) {
 		`{"host":"b","port":1,"reason":"no_sni","count":2}`))
 	if want := summary("complete", 2, 18446744073709551615, 0); got[len(got)-1] != want {
 		t.Fatalf("saturated summary = %q, want %q", got[len(got)-1], want)
+	}
+}
+
+func TestDenyAuditRecordsPortZeroOnlyForOverflow(t *testing.T) {
+	t.Parallel()
+	got := DenyAuditRecords([]byte(`{"host":"(overflow)","port":0,"reason":"key_limit","count":2}`))
+	if want := "egress_deny host=(overflow) port=0 reason=key_limit count=2"; got[0] != want {
+		t.Fatalf("overflow record = %q, want %q", got[0], want)
+	}
+	for _, line := range []string{
+		`{"host":"a.example","port":0,"reason":"key_limit","count":1}`,
+		`{"host":"(overflow)","port":0,"reason":"no_sni","count":1}`,
+	} {
+		if got := DenyAuditRecords([]byte(line)); !strings.HasSuffix(got[len(got)-1], "malformed_lines=1") {
+			t.Fatalf("%s: summary = %q, want one malformed line", line, got[len(got)-1])
+		}
 	}
 }

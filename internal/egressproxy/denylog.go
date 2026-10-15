@@ -55,7 +55,7 @@ func DenyAuditRecords(log []byte) []string {
 	for _, line := range lines {
 		d, ok := parseDenyLine(line)
 		key := denyKey{d.Host, d.Port, d.Reason}
-		if _, seen := counts[key]; ok && !seen && len(counts) >= 2*maxDenyKeys {
+		if _, seen := counts[key]; ok && !seen && len(counts) > maxDenyKeys {
 			ok = false // more keys than the proxy can write
 		}
 		if !ok {
@@ -106,5 +106,6 @@ func parseDenyLine(line string) (denyLine, bool) {
 	if dec.Decode(&d) != nil || dec.InputOffset() != int64(len(line)) {
 		return d, false
 	}
-	return d, d.Port != 0 && d.Count != 0 && len(d.Host) <= maxLogHost && auditReason.MatchString(d.Reason)
+	overflow := d.Host == overflowHost && d.Reason == overflowCause
+	return d, (d.Port != 0 || overflow) && d.Count != 0 && len(d.Host) <= maxLogHost && auditReason.MatchString(d.Reason)
 }
