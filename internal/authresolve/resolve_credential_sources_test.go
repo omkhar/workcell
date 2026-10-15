@@ -825,6 +825,8 @@ func TestRunKeychainBrokerStagesOnlyAPlaceholder(t *testing.T) {
 		{"launch without placeholder", "claude", "claude_api_key", "launch", nil, 1, "needs --egress-proxy", "", false},
 		{"metadata without placeholder", "gemini", "gemini_env", "metadata", nil, 0, "", "GEMINI_API_KEY=" + zero + "\n", false},
 		{"bad placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", "wcph-short"}, 2, "--credential-placeholder must be", "", false},
+		{"duplicate placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", placeholder, "--credential-placeholder", zero}, 2, "duplicate flag: --credential-placeholder", "", false},
+		{"duplicate policy", "claude", "claude_api_key", "launch", []string{"--policy", "/nonexistent", "--credential-placeholder", placeholder}, 2, "duplicate flag: --policy", "", false},
 		{"unbrokered key", "codex", "codex_auth", "launch", []string{"--credential-placeholder", placeholder}, 1, "resolver is unsupported", "", false},
 	}
 	for _, tc := range cases {

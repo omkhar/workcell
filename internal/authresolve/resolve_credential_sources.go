@@ -162,11 +162,18 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 func parseArgs(args []string) (config, error) {
 	var cfg config
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "--") {
 			return config{}, fmt.Errorf("unexpected argument: %s", arg)
 		}
+		// A repeated flag is refused, so a later value cannot replace an
+		// earlier one, such as the credential placeholder.
+		if seen[arg] {
+			return config{}, fmt.Errorf("duplicate flag: %s", arg)
+		}
+		seen[arg] = true
 		if i+1 >= len(args) {
 			return config{}, fmt.Errorf("missing value for %s", arg)
 		}
