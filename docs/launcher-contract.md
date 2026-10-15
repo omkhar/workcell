@@ -340,9 +340,18 @@ them with the staged, fsynced, owner-only rename of
 `publish-session-capture-file`.
 
 A failed save prints a warning and leaves the earlier file unchanged. Then
-`stop_egress_proxy` removes the sidecar and the network, also after a failed
-save. The launcher cleanup calls it, and the detached session monitor calls it
-after the agent exits.
+`stop_egress_proxy` appends the deny log to the session audit chain. The
+`egress-deny-audit-records` helper reads the saved file as untrusted input. It
+prints at most 32 `egress_deny` records and one `egress_summary` record. A
+failed save or read appends `egress_summary status=unreadable`. Session delete
+passes `no-audit`, so it appends nothing.
+
+Then `stop_egress_proxy` removes the sidecar and the network, also after a
+failed save. The seal signs the last session record, so each path that seals
+stops the proxy first. The launcher and the detached session monitor call
+`stop_egress_proxy_then_finalize` after the agent exits. A session stop with a
+dead monitor calls `finish_stopped_session_fallback`. The launcher cleanup
+stops a proxy that is still running, before any seal exists.
 
 `stop_egress_proxy_for_session` runs the same cleanup for a session whose
 monitor is gone. It derives both names from the session ID and does nothing for

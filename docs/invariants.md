@@ -264,6 +264,13 @@ sidecar. Two sections of `policy/hardening-profile.toml` gate it, and the
   read-only root, runs as a non-root user, and has PID and memory limits. It
   listens only on its internal-network address, never on `0.0.0.0`.
 
+`egress-deny-audited`: each denied proxy connection reaches the audit chain of
+its session, under the session seal. When the proxy stops, the launcher appends bounded `egress_deny`
+records and one `egress_summary` record before it seals the session. The OCSF
+export maps `egress_deny` to Network Activity (`class_uid` 4001).
+`internal/testkit/egress_proxy_deny_log_test.go` enforces the records and
+their order before the seal.
+
 The injection policy can add or deny endpoints through `[network]`. It cannot
 disable the default policy or change `NETWORK_POLICY`. See
 [Network egress](injection-policy.md#network-rules).

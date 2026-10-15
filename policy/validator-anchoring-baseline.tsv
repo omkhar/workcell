@@ -346,6 +346,7 @@ internal/testkit	TestDebianSnapshotFreshnessDefaultsToSixtyDays	c80aa4b9	unrevie
 internal/testkit	TestDevQuickCheckStaysBoundedToFastLocalWork	74632a22,86556805	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDocClaimsNegativeControls	22845559,e3845a40	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDocsValidatorPrunesLockedMarkdownlintDependencies	0a910d8f,e40e877d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestEgressDenyRecordsPrecedeTheSeal	177d522b,2404bd33,43b4b458	ShellInvocations skips function and compound bodies, so the test finds the seal-path calls in scripts/workcell by line; the behavior probes run the extracted functions
 internal/testkit	TestExecGuardBenchRefusesAnActivePreload	78e9e73d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestFastPrePushFailsClosedWhenCheckoutFails	02b3720c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestFastPrePushGatesPushedBranchOtherThanHead	17880bf6	unreviewed debt in a test: review the subject, then port or justify
@@ -496,6 +497,7 @@ internal/testkit	hasOptionToken	47e039a2	unreviewed debt in a test: review the s
 internal/testkit	hostileDerivation	80903db5,bbc26ded	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	isBashCandidate	2bcde051,9481cc4c,e89605a2	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	jobBlock	81935a5c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	launcherFunction	79450fdc,c39af2db	finds a function header in scripts/workcell to run that function in bash, not to judge its content
 internal/testkit	mutateContainerSmokeHarness	67e5a80e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	parseExecBaseline	74c9b8ef	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	prepareHostedControlCommandGraphFixture	1079268e	unreviewed debt in a test: review the subject, then port or justify
