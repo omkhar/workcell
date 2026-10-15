@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,7 +56,13 @@ const OCSFSchemaVersion = "1.3.0"
 // with audit.snapshot_id, audit.parent, and audit.children. The
 // session_snapshot record gained audit.snapshot_workspace and
 // audit.snapshot_head.
-const MappingVersion = "4"
+//
+// "5": the egress_deny record maps to a Network Activity event (class 4001,
+// activity Refuse) with action, disposition, count and dst_endpoint, and gains
+// audit.host, audit.port and audit.count. The egress_summary record is a
+// recognized lifecycle event with audit.deny_keys, audit.deny_total and
+// audit.malformed_lines.
+const MappingVersion = "5"
 
 // OCSF Application Lifecycle classification constants.
 const (
@@ -63,6 +70,17 @@ const (
 	categoryName = "Application Activity"
 	classUID     = 6002
 	className    = "Application Lifecycle"
+)
+
+// OCSF Network Activity constants for an egress proxy denial: a refused
+// connection, the Denied action and the Blocked disposition.
+const (
+	networkCategoryUID    = 4
+	networkClassUID       = 4001
+	networkName           = "Network Activity"
+	networkActivityRefuse = 5
+	actionDenied          = 2
+	dispositionBlocked    = 2
 )
 
 // productName / vendorName identify Workcell as the OCSF metadata.product.
@@ -132,6 +150,12 @@ type Device struct {
 	UID      string `json:"uid,omitempty"`
 }
 
+// Endpoint is the OCSF Network Endpoint object.
+type Endpoint struct {
+	Hostname string `json:"hostname,omitempty"`
+	Port     uint64 `json:"port,omitempty"`
+}
+
 // Event is a single OCSF Application Lifecycle event. Field order and json tags
 // follow OCSF base-event + Application Lifecycle attribute names. Unmapped holds
 // the redacted long tail of session/audit fields that have no typed OCSF home.
@@ -155,6 +179,14 @@ type Event struct {
 	App          *App              `json:"app,omitempty"`
 	Device       *Device           `json:"device,omitempty"`
 	Unmapped     map[string]string `json:"unmapped,omitempty"`
+
+	// Network Activity attributes, set only on an egress proxy denial.
+	ActionID      int       `json:"action_id,omitempty"`
+	Action        string    `json:"action,omitempty"`
+	DispositionID int       `json:"disposition_id,omitempty"`
+	Disposition   string    `json:"disposition,omitempty"`
+	Count         uint64    `json:"count,omitempty"`
+	DstEndpoint   *Endpoint `json:"dst_endpoint,omitempty"`
 }
 
 // Options carries the host context the mapper needs. Home is the operator home
@@ -491,7 +523,7 @@ func auditEvent(line string, enc auditEncoding, rec sessions.SessionRecord, reda
 		msgEvent = eventName
 	}
 
-	return Event{
+	ev := Event{
 		CategoryUID:  categoryUID,
 		CategoryName: categoryName,
 		ClassUID:     classUID,
@@ -511,7 +543,28 @@ func auditEvent(line string, enc auditEncoding, rec sessions.SessionRecord, reda
 		App:          sessionApp(rec, redact),
 		Device:       sessionDevice(rec, redact),
 		Unmapped:     unmapped.finish(),
-	}, true, nil
+	}
+	if eventName == "egress_deny" {
+		asNetworkDeny(&ev, lookup, redact)
+	}
+	return ev, true, nil
+}
+
+// asNetworkDeny turns an egress proxy denial into an OCSF Network Activity
+// Refuse event with the Denied action, the Blocked disposition, the running
+// count and the destination. A port or count that does not parse is left out.
+func asNetworkDeny(ev *Event, lookup map[string]string, redact func(string) string) {
+	ev.CategoryUID, ev.CategoryName = networkCategoryUID, networkName
+	ev.ClassUID, ev.ClassName = networkClassUID, networkName
+	ev.ActivityID, ev.ActivityName = networkActivityRefuse, "Refuse"
+	ev.TypeUID, ev.TypeName = networkClassUID*100+networkActivityRefuse, networkName+": Refuse"
+	ev.ActionID, ev.Action = actionDenied, "Denied"
+	ev.DispositionID, ev.Disposition = dispositionBlocked, "Blocked"
+	ev.Count, _ = strconv.ParseUint(lookup["count"], 10, 64)
+	port, _ := strconv.ParseUint(lookup["port"], 10, 16)
+	if host := strings.TrimSpace(lookup["host"]); host != "" || port != 0 {
+		ev.DstEndpoint = &Endpoint{Hostname: redact(host), Port: port}
+	}
 }
 
 // knownAuditEvents is the bounded set of event= values the writers actually
@@ -535,6 +588,8 @@ var knownAuditEvents = map[string]struct{}{
 	"bootstrap_ready":        {},
 	"workspace_materialized": {},
 	"session_fork":           {},
+	"egress_deny":            {},
+	"egress_summary":         {},
 }
 
 // activityForEvent maps a Workcell audit event name to an OCSF activity_id.

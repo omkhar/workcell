@@ -317,11 +317,6 @@ func (p *Proxy) deny(host string, port uint16, reason string) {
 		key.host = overflowHost
 	}
 	p.denies[key]++
-	line, _ := json.Marshal(struct {
-		Host   string `json:"host"`
-		Port   uint16 `json:"port"`
-		Reason string `json:"reason"`
-		Count  uint64 `json:"count"`
-	}{key.host, port, reason, p.denies[key]})
+	line, _ := json.Marshal(denyLine{key.host, port, reason, p.denies[key]})
 	_, _ = p.denyLog.Write(append(line, '\n'))
 }

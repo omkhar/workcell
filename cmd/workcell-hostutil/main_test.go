@@ -756,3 +756,30 @@ func TestAdaptersGenReplacesSymlinkWithoutFollowing(t *testing.T) {
 		t.Fatalf("output is not an owner-only regular file: %v %v", fi, err)
 	}
 }
+
+// TestWriteEgressDenyAuditRecords prints the records of a saved deny log and
+// refuses a symbolic link in its place, so the launcher writes the unreadable
+// summary instead of reading a file the sidecar chose.
+func TestWriteEgressDenyAuditRecords(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "S1.egress-deny.jsonl")
+	if err := os.WriteFile(log, []byte(`{"host":"a.example","port":443,"reason":"no_sni","count":2}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := writeEgressDenyAuditRecords(&out, log); err != nil {
+		t.Fatal(err)
+	}
+	want := "egress_deny host=a.example port=443 reason=no_sni count=2\negress_summary status=complete deny_keys=1 deny_total=2 malformed_lines=0\n"
+	if out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+	link := filepath.Join(dir, "link.jsonl")
+	if err := os.Symlink(log, link); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := writeEgressDenyAuditRecords(&out, link); err == nil || out.Len() != 0 {
+		t.Fatalf("symlinked deny log: err = %v, output = %q; want an error and no output", err, out.String())
+	}
+}

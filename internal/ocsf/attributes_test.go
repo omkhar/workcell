@@ -52,7 +52,11 @@ func currentAttributes(t *testing.T) []string {
 	// Every other value is x: it matches rec.SessionID and is no known event name.
 	var fields []string
 	for key := range knownAuditFields {
-		if key != "event" {
+		switch key {
+		case "event":
+		case "port", "count": // the typed network attributes map only a number
+			fields = append(fields, key+"=1")
+		default:
 			fields = append(fields, key+"=x")
 		}
 	}

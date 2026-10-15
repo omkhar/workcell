@@ -325,6 +325,7 @@ func helperSubcommands() []helperSubcommand {
 		{"build-inputs-digest", 1, 1, cmdHelperBuildInputsDigest},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
+		{"egress-deny-audit-records", 1, 1, cmdHelperEgressDenyAuditRecords},
 		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
 		{"resolve-host-output-directory-candidate", 1, 1, cmdHelperResolveHostOutputDirectoryCandidate},
 		{"cleanup-stale-injection-bundles", 1, 1, cmdHelperCleanupStaleInjectionBundles},
@@ -860,6 +861,21 @@ func cmdHelperSubtractEndpoints(args []string) error {
 // parser, so --egress-proxy fails before launch on a set the proxy rejects.
 func cmdHelperValidateEgressProxyAllowlist(args []string) error {
 	_, err := egressproxy.ParseAllowlist(args[0], "--egress-proxy allowlist")
+	return err
+}
+
+// cmdHelperEgressDenyAuditRecords prints the audit records for a saved deny
+// log, one per line, after the whole log is read and checked.
+func cmdHelperEgressDenyAuditRecords(args []string) error {
+	return writeEgressDenyAuditRecords(os.Stdout, args[0])
+}
+
+func writeEgressDenyAuditRecords(w io.Writer, path string) error {
+	log, err := rootio.ReadFileNoFollow(path, "egress deny log", egressproxy.MaxDenyLogBytes)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, strings.Join(egressproxy.DenyAuditRecords(log), "\n")+"\n")
 	return err
 }
 

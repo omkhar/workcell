@@ -197,13 +197,6 @@ func listen(t *testing.T, p *Proxy, port uint16) string {
 	return ln.Addr().String()
 }
 
-type denyLine struct {
-	Host   string `json:"host"`
-	Port   uint16 `json:"port"`
-	Reason string `json:"reason"`
-	Count  uint64 `json:"count"`
-}
-
 func denies(t *testing.T, p *Proxy, log *bytes.Buffer) []denyLine {
 	t.Helper()
 	p.mu.Lock()

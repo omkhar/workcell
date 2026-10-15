@@ -73,7 +73,7 @@ Commands:
   export
     --id SESSION_ID           Export one recorded session plus matching audit records
     --format json|ocsf        Output shape: json (default) or ocsf OCSF-mapped JSONL
-                              (one Application Lifecycle event per line, redacted)
+                              (one OCSF event per line, redacted)
     --output PATH             Write the exported bundle to PATH instead of stdout
 
   verify
@@ -99,7 +99,8 @@ Notes:
     that is not a self-contained git worktree.
   - ` + "`" + `session export` + "`" + ` includes audit records that match the recorded session id.
   - ` + "`" + `session export --format ocsf` + "`" + ` maps the record and audit lifecycle events to
-    OCSF Application Lifecycle (class 6002) JSONL, versioned by metadata.version
+    OCSF Application Lifecycle (class 6002) JSONL, and egress proxy denials to
+    Network Activity (class 4001), versioned by metadata.version
     and metadata.mapping_version, with credentials, tokens, and operator home
     paths redacted by the shared support-bundle rule-set. Free-form operator
     payloads (the detached session message) are not exported: their content is
