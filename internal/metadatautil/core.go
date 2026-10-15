@@ -994,12 +994,11 @@ func GenerateBuildInputManifest(
 
 func runtimeBuildContextPaths(rootDir string, requireTracked bool) ([]string, error) {
 	paths := []string{".dockerignore", "go.mod", "go.sum"}
-	for _, directory := range []string{
-		"adapters", "runtime/container", "internal/aptbroker",
-		"cmd/workcell-apt-broker-client", "cmd/workcell-apt-broker-server",
-		"internal/cliexit", "internal/egressproxy", "internal/injectionpolicy",
-		"internal/rootio", "internal/tomlsubset", "cmd/workcell-egress-proxy",
-	} {
+	directories, err := runtimeBuildContextDirectories(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, directory := range directories {
 		files, err := walkFiles(rootDir, filepath.FromSlash(directory), "node_modules", "target")
 		if err != nil {
 			return nil, err
@@ -1007,6 +1006,29 @@ func runtimeBuildContextPaths(rootDir string, requireTracked bool) ([]string, er
 		paths = append(paths, files...)
 	}
 	return gitTrackedSubset(rootDir, paths, requireTracked)
+}
+
+// runtimeBuildContextDirectories returns each directory that .dockerignore
+// admits into the runtime build context with a "!dir/**" line, so the build
+// input manifest binds exactly what the Dockerfile can copy. The pinned-inputs
+// validator holds .dockerignore to its reviewed text, so it owns the list.
+func runtimeBuildContextDirectories(rootDir string) ([]string, error) {
+	text, err := readText(filepath.Join(rootDir, ".dockerignore"))
+	if err != nil {
+		return nil, err
+	}
+	var directories []string
+	for _, line := range strings.Split(text, "\n") {
+		if rest, ok := strings.CutPrefix(line, "!"); ok {
+			if directory, ok := strings.CutSuffix(rest, "/**"); ok {
+				directories = append(directories, directory)
+			}
+		}
+	}
+	if len(directories) == 0 {
+		return nil, errors.New(".dockerignore admits no directory into the runtime build context")
+	}
+	return directories, nil
 }
 
 func sha256HexString(text string) string {
