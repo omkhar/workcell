@@ -18,6 +18,9 @@ The GitHub Releases page contains old details that are not in this file.
   event (`class_uid` 4001) with action `Denied` and disposition `Blocked`. The
   mapping version is now `5`. The `egress-deny-audit-records` host helper reads
   a saved deny log as untrusted input and prints bounded audit records.
+- `--egress-proxy` sessions append their denied connections to the audit
+  chain of the session as `egress_deny` and `egress_summary` records. The proxy
+  stops before the session is sealed, so `session verify` covers them.
 
 ### Security hardening
 

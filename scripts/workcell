@@ -1095,6 +1095,11 @@ restore_interactive_host_terminal() {
 cleanup() {
   local exit_status="${1:-0}"
 
+  # A session that ends here has no seal, and the aborted record is its last
+  # write, so the egress proxy appends its deny records first.
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ "${EGRESS_PROXY_STARTED}" -eq 1 ]]; then
+    stop_egress_proxy "${COLIMA_PROFILE}"
+  fi
   if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] &&
     [[ "${SESSION_RECORD_WRITTEN}" -eq 1 ]] &&
     [[ "${SESSION_RECORD_FINALIZED}" -eq 0 ]]; then
@@ -1145,9 +1150,6 @@ cleanup() {
 
   if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-  fi
-  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ "${EGRESS_PROXY_STARTED}" -eq 1 ]]; then
-    stop_egress_proxy "${COLIMA_PROFILE}"
   fi
 
   cleanup_runtime_builder || true
@@ -3421,6 +3423,17 @@ finalize_session_audit() {
   FINAL_SESSION_ASSURANCE="${final_assurance}"
 }
 
+# stop_egress_proxy_then_finalize stops the proxy before finalize_session_audit
+# seals the session, so the seal covers the deny records. The flag stops the
+# EXIT cleanup from stopping the proxy a second time.
+stop_egress_proxy_then_finalize() {
+  if [[ "${EGRESS_PROXY_STARTED:-0}" -eq 1 ]]; then
+    stop_egress_proxy "$1"
+    EGRESS_PROXY_STARTED=0
+  fi
+  finalize_session_audit "$@"
+}
+
 # sign_session_audit_head signs the head of this session's audit hash-chain
 # host-side (A5). It is best-effort with respect to teardown: a signing failure
 # is warned and swallowed so it never wedges container cleanup, and an unsigned
@@ -4222,6 +4235,25 @@ session_send_main() {
   exit 0
 }
 
+# finish_stopped_session_fallback ends a stopped session whose monitor is gone.
+# The seal signs the last session record, so the egress proxy stops and appends
+# its deny records before the exit record and the seal.
+finish_stopped_session_fallback() {
+  local profile="$1"
+  local session_id="$2"
+  local record_path="$3"
+  local exit_status=""
+
+  stop_egress_proxy_for_session "${profile}" "${session_id}" || return 1
+  exit_status="$(session_container_exit_code "${profile}" "${SESSION_META_CONTAINER_NAME}")"
+  append_session_control_audit_record "${profile}" "${session_id}" "exit" \
+    "source=host-stop-fallback" \
+    "exit_status=${exit_status}" \
+    "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
+  session_write_stop_requested_terminal_record "${record_path}" "${exit_status}" || return 1
+  sign_session_audit_head_explicit "${profile}" "${session_id}" "${record_path}"
+}
+
 session_stop_main() {
   local plan=""
   local session_id=""
@@ -4268,14 +4300,7 @@ session_stop_main() {
         "source=host-cli" \
         "force=${force}" \
         "container_name=${SESSION_META_CONTAINER_NAME}"
-      stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
-      append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "exit" \
-        "source=host-stop-fallback" \
-        "exit_status=${stop_exit_status}" \
-        "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
-      session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}" || exit 1
-      sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
-      stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
+      finish_stopped_session_fallback "${SESSION_META_PROFILE}" "${session_id}" "${record_path}" || exit 1
       load_session_runtime_metadata "${session_id}"
       printf 'session_id=%s\n' "${session_id}"
       printf 'stop_requested=1\n'
@@ -4359,22 +4384,18 @@ session_stop_main() {
       ;;
   esac
   if ! session_monitor_pid_is_live; then
+    # The monitor's own cleanup is gone with it: save the deny log and remove
+    # the sidecar and network here, or a stopped session would leave them. A
+    # terminal session is sealed already, so its stop appends no records.
     case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
-      stopped | exited | failed | aborted) ;;
+      stopped | exited | failed | aborted)
+        stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" no-audit || exit 1
+        ;;
       *)
-        stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
-        append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "exit" \
-          "source=host-stop-fallback" \
-          "exit_status=${stop_exit_status}" \
-          "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
-        session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}"
-        sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
+        finish_stopped_session_fallback "${SESSION_META_PROFILE}" "${session_id}" "${record_path}" || exit 1
         load_session_runtime_metadata "${session_id}"
         ;;
     esac
-    # The monitor's own cleanup is gone with it: save the deny log and remove
-    # the sidecar and network here, or a stopped session would leave them.
-    stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
   fi
   # Seal-missing recheck (TOCTOU coverage): once the record is terminal, guarantee
   # it is sealed even if the monitor was observed live at the checks above but
@@ -4583,7 +4604,7 @@ session_delete_main() {
     if [[ -n "${proxy_network}" ]]; then
       planned_remove+=("egress_proxy")
       if [[ "${dry_run}" -eq 0 ]]; then
-        stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
+        stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" no-audit || exit 1
         if ! proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" ||
           [[ -n "${proxy_network}" ]]; then
           echo "session delete could not confirm the egress proxy cleanup: ${session_id}" >&2
@@ -5095,12 +5116,8 @@ session_monitor_main() {
 
   capture_session_audit_state "${CONTAINER_NAME}"
   capture_session_file_trace "${CONTAINER_NAME}"
-  finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${wait_status}"
+  stop_egress_proxy_then_finalize "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${wait_status}"
   run_profile_docker_command "${COLIMA_PROFILE}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-  stop_egress_proxy "${COLIMA_PROFILE}"
-  # The monitor's EXIT cleanup also stops the proxy while this flag is set, so a
-  # failed finalize cannot leave the sidecar. The stop above already ran.
-  EGRESS_PROXY_STARTED=0
   if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -d "${SESSION_AUDIT_DIR}" ]]; then
     chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
     rm -rf "${SESSION_AUDIT_DIR}"
@@ -10009,7 +10026,7 @@ fi
 restore_interactive_host_terminal
 capture_session_audit_state "${CONTAINER_NAME}"
 capture_session_file_trace "${CONTAINER_NAME}"
-finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${DOCKER_STATUS}"
+stop_egress_proxy_then_finalize "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${DOCKER_STATUS}"
 run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 if [[ "${FINAL_SESSION_ASSURANCE:-}" == "lower-assurance-package-mutation" ]]; then
   echo "Workcell warning: this session ended lower-assurance because package-manager mutations ran as root inside the container." >&2

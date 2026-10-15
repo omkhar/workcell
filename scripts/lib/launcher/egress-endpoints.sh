@@ -258,10 +258,20 @@ start_egress_proxy() {
 # or partial collection never replaces the final file. A failed save warns and
 # the cleanup still runs: a live sidecar that holds the allowlist is worse than
 # a missing log. It runs on every exit path, including after a failed start.
+#
+# Then it appends the deny log to the session audit chain: the Go helper checks
+# each untrusted line and prints bounded egress_deny records and one
+# egress_summary record. A failed save or read appends
+# egress_summary status=unreadable. The seal signs the last session record, so
+# a caller stops the proxy before it seals. Session delete passes no-audit: the
+# session and its audit go away, so it appends nothing.
 stop_egress_proxy() {
   local profile="$1"
+  local audit="${2:-audit}"
   local deny_file=""
   local staged_dir=""
+  local records="egress_summary status=unreadable"
+  local -a record=()
 
   [[ -n "${EGRESS_PROXY_CONTAINER:-}" ]] || return 0
   deny_file="$(profile_sessions_dir_path "${profile}")/${SESSION_ID}.egress-deny.jsonl"
@@ -271,8 +281,14 @@ stop_egress_proxy() {
       >"${staged_dir}/file" 2>/dev/null ||
     ! go_hostutil helper publish-session-capture-file "${staged_dir}/file" "${deny_file}" >/dev/null 2>&1; then
     echo "workcell: warning: could not save the egress proxy deny log for ${SESSION_ID}." >&2
+  elif ! records="$(go_hostutil helper egress-deny-audit-records "${deny_file}")"; then
+    records="egress_summary status=unreadable"
   fi
   [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
+  [[ "${audit}" == "no-audit" ]] || while read -r -a record; do
+    append_session_control_audit_record "${profile}" "${SESSION_ID}" "${record[@]}" ||
+      echo "workcell: warning: could not audit the egress proxy deny log for ${SESSION_ID}." >&2
+  done <<<"${records}"
   run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 ||
     echo "workcell: warning: could not remove the egress proxy sidecar ${EGRESS_PROXY_CONTAINER}; session delete removes it." >&2
   run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 ||
@@ -301,7 +317,8 @@ egress_proxy_network_for_session() {
 # stop_egress_proxy_for_session runs the same save and cleanup for a session
 # whose monitor died before its own cleanup ran. The names derive from the
 # session id, so the stop command needs no monitor state. A session that never
-# started a proxy has no such network and is left alone.
+# started a proxy has no such network and is left alone. A third argument
+# no-audit passes to stop_egress_proxy.
 stop_egress_proxy_for_session() {
   local profile="$1"
   local SESSION_ID="$2"
@@ -311,5 +328,5 @@ stop_egress_proxy_for_session() {
   network="$(egress_proxy_network_for_session "${profile}" "${SESSION_ID}")" || return 1
   [[ -n "${network}" ]] || return 0
   egress_proxy_names
-  stop_egress_proxy "${profile}"
+  stop_egress_proxy "${profile}" "${3:-audit}"
 }

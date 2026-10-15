@@ -882,7 +882,8 @@ func cmdHardeningProfileConformance(args []string) error {
 		return err
 	}
 	// The profile scan matches text. The parsed checks prove that the sidecar
-	// command and the agent route really run, so a quoted decoy cannot pass.
+	// command and the agent route really run, so a quoted decoy cannot pass,
+	// and that every session seal follows the deny-record proxy stop.
 	const endpoints = "scripts/lib/launcher/egress-endpoints.sh"
 	script, err := rootio.ReadFileNoFollow(filepath.Join(args[0], endpoints), endpoints, 1<<20)
 	if err != nil {
@@ -891,7 +892,15 @@ func cmdHardeningProfileConformance(args []string) error {
 	if err := metadatautil.ValidateEgressProxySidecar(string(script)); err != nil {
 		return err
 	}
-	return metadatautil.ValidateEgressProxySoleRoute(string(script))
+	if err := metadatautil.ValidateEgressProxySoleRoute(string(script)); err != nil {
+		return err
+	}
+	const launcher = "scripts/workcell"
+	script, err = rootio.ReadFileNoFollow(filepath.Join(args[0], launcher), launcher, 1<<20)
+	if err != nil {
+		return err
+	}
+	return metadatautil.ValidateEgressDenySealOrder(string(script))
 }
 
 // cmdWorkcellCheckBatch runs several migrated static checks in one

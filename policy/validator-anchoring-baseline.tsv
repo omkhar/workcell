@@ -496,6 +496,7 @@ internal/testkit	hasOptionToken	47e039a2	unreviewed debt in a test: review the s
 internal/testkit	hostileDerivation	80903db5,bbc26ded	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	isBashCandidate	2bcde051,9481cc4c,e89605a2	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	jobBlock	81935a5c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	launcherFunction	79450fdc,c39af2db	finds a function header in scripts/workcell to run that function in bash, not to judge its content
 internal/testkit	mutateContainerSmokeHarness	67e5a80e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	parseExecBaseline	74c9b8ef	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	prepareHostedControlCommandGraphFixture	1079268e	unreviewed debt in a test: review the subject, then port or justify
