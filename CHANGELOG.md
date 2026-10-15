@@ -28,6 +28,9 @@ The GitHub Releases page contains old details that are not in this file.
   brokered value with the session token from `WORKCELL_BROKER_TOKEN`. The
   launcher wiring for `--egress-proxy` comes in a later change, so a launch
   with this resolver stops until then.
+- The provider wrapper trusts the session CA that the injection manifest lists
+  as `egress_ca_cert`, through `NODE_EXTRA_CA_CERTS` for Claude and Gemini. A
+  listed CA that is absent stops the provider.
 
 ### Security hardening
 
