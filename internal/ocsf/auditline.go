@@ -104,6 +104,8 @@ func auditEncodingForProvider(provider string) auditEncoding {
 //	    sed 's/=%s//';
 //	  printf 'timestamp\nprev_digest\nrecord_digest\nv\n'; } | sort -u
 //
+// The egress proxy deny records add host, port, count, deny_keys, deny_total
+// and malformed_lines (egressproxy.DenyAuditRecords prints them).
 // (`event` comes from the bash bodies; the apple-container writers emit it as a
 // literal so it is not matched by =%s but is already covered.) A new legitimate
 // writer key not yet listed degrades safely to the redacted bucket, not a leak.
@@ -130,6 +132,9 @@ var knownAuditFields = map[string]struct{}{
 	"container_cpu":                      {},
 	"container_memory":                   {},
 	"container_name":                     {},
+	"count":                              {},
+	"deny_keys":                          {},
+	"deny_total":                         {},
 	"debug_log_enabled":                  {},
 	"endpoints":                          {},
 	"event":                              {},
@@ -138,12 +143,14 @@ var knownAuditFields = map[string]struct{}{
 	"final_assurance":                    {},
 	"force":                              {},
 	"github_auth_present":                {},
+	"host":                               {},
 	"image_ref":                          {},
 	"injection_credential_keys":          {},
 	"injection_policy_sha256":            {},
 	"injection_secret_copy_targets":      {},
 	"injection_ssh_enabled":              {},
 	"log_level":                          {},
+	"malformed_lines":                    {},
 	"materialization_id":                 {},
 	"mode":                               {},
 	"network_policy":                     {},
@@ -161,6 +168,7 @@ var knownAuditFields = map[string]struct{}{
 	"runtime_api":                        {},
 	"session_assurance_final":            {},
 	"parent":                             {},
+	"port":                               {},
 	"provider_arg_count":                 {},
 	"session_assurance_initial":          {},
 	"session_id":                         {},

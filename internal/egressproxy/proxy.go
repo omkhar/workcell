@@ -31,6 +31,7 @@ const (
 	maxDenyKeys   = 4096
 	maxConns      = 1024 // concurrent connections across all ports
 	overflowHost  = "(overflow)"
+	overflowCause = "key_limit" // with port 0, the one key every deny past maxDenyKeys shares
 )
 
 // publicIPv6 is the only IPv6 block allocated for global unicast; everything
@@ -305,7 +306,8 @@ func splice(client, upstream net.Conn) {
 }
 
 // deny writes one bounded JSONL line with the running count for this
-// (host, port, reason). New keys past maxDenyKeys share one overflow host.
+// (host, port, reason). New keys past maxDenyKeys share one overflow key, so
+// the log holds at most maxDenyKeys+1 keys whatever ports the allowlist holds.
 func (p *Proxy) deny(host string, port uint16, reason string) {
 	if len(host) > maxLogHost {
 		host = host[:maxLogHost]
@@ -314,14 +316,9 @@ func (p *Proxy) deny(host string, port uint16, reason string) {
 	defer p.mu.Unlock()
 	key := denyKey{host, port, reason}
 	if _, seen := p.denies[key]; !seen && len(p.denies) >= maxDenyKeys {
-		key.host = overflowHost
+		key = denyKey{overflowHost, 0, overflowCause}
 	}
 	p.denies[key]++
-	line, _ := json.Marshal(struct {
-		Host   string `json:"host"`
-		Port   uint16 `json:"port"`
-		Reason string `json:"reason"`
-		Count  uint64 `json:"count"`
-	}{key.host, port, reason, p.denies[key]})
+	line, _ := json.Marshal(denyLine{key.host, key.port, key.reason, p.denies[key]})
 	_, _ = p.denyLog.Write(append(line, '\n'))
 }

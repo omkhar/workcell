@@ -197,13 +197,6 @@ func listen(t *testing.T, p *Proxy, port uint16) string {
 	return ln.Addr().String()
 }
 
-type denyLine struct {
-	Host   string `json:"host"`
-	Port   uint16 `json:"port"`
-	Reason string `json:"reason"`
-	Count  uint64 `json:"count"`
-}
-
 func denies(t *testing.T, p *Proxy, log *bytes.Buffer) []denyLine {
 	t.Helper()
 	p.mu.Lock()
@@ -370,6 +363,18 @@ func TestDenyLogIsBounded(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), overflowHost) {
 		t.Fatal("no overflow deny line after the key limit")
+	}
+	// Past the limit, distinct ports and reasons still share the one overflow
+	// key, so every line the proxy writes stays inside the reader's key cap.
+	for i := range maxDenyKeys + 10 {
+		p.deny("late.example", uint16(i+1), []string{"no_sni", "sni_not_allowed"}[i%2])
+	}
+	if keys := len(p.denies); keys != maxDenyKeys+1 {
+		t.Fatalf("deny counter keys after many ports = %d, want %d", keys, maxDenyKeys+1)
+	}
+	got := DenyAuditRecords(log.Bytes())
+	if want := "malformed_lines=0"; !strings.HasSuffix(got[len(got)-1], want) {
+		t.Fatalf("reader summary of the proxy log = %q, want suffix %q", got[len(got)-1], want)
 	}
 }
 
