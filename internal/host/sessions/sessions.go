@@ -58,6 +58,7 @@ type SessionRecord struct {
 	FinalAssurance        string `json:"final_assurance,omitempty"`
 	WorkspaceControlPlane string `json:"workspace_control_plane,omitempty"`
 	WorkspaceRepoMcp      string `json:"workspace_repo_mcp,omitempty"`
+	CredentialMode        string `json:"credential_mode,omitempty"`
 	BootstrapID           string `json:"bootstrap_id,omitempty"`
 	ImageRef              string `json:"image_ref,omitempty"`
 	ParentSessionID       string `json:"parent_session_id,omitempty"`
@@ -258,6 +259,7 @@ func SessionShowLines(record SessionRecord) []string {
 		fmt.Sprintf("transcript_log_path=%s", record.TranscriptLogPath),
 		fmt.Sprintf("workspace_control_plane=%s", record.WorkspaceControlPlane),
 		fmt.Sprintf("workspace_repo_mcp=%s", record.WorkspaceRepoMcp),
+		fmt.Sprintf("credential_mode=%s", record.CredentialMode),
 	}
 }
 
@@ -511,6 +513,8 @@ func encodeSessionRecordFrom(existing []byte, updates map[string]string, source 
 			record.WorkspaceControlPlane = value
 		case "workspace_repo_mcp":
 			record.WorkspaceRepoMcp = value
+		case "credential_mode":
+			record.CredentialMode = value
 		case "bootstrap_id":
 			record.BootstrapID = value
 		case "image_ref":
@@ -1024,6 +1028,7 @@ func validateSessionRecord(record SessionRecord, source string) error {
 		{name: "final_assurance", value: record.FinalAssurance},
 		{name: "workspace_control_plane", value: record.WorkspaceControlPlane},
 		{name: "workspace_repo_mcp", value: record.WorkspaceRepoMcp},
+		{name: "credential_mode", value: record.CredentialMode},
 		{name: "bootstrap_id", value: record.BootstrapID},
 		{name: "image_ref", value: record.ImageRef},
 		{name: "parent_session_id", value: record.ParentSessionID},

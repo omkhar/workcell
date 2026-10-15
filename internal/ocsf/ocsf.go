@@ -62,7 +62,10 @@ const OCSFSchemaVersion = "1.3.0"
 // audit.host, audit.port and audit.count. The egress_summary record is a
 // recognized lifecycle event with audit.deny_keys, audit.deny_total and
 // audit.malformed_lines.
-const MappingVersion = "5"
+//
+// "6": the session-summary event gained session.credential_mode, and the
+// launch record gained audit.credential_mode (brokered or direct).
+const MappingVersion = "6"
 
 // OCSF Application Lifecycle classification constants.
 const (
@@ -344,6 +347,7 @@ func sessionEvent(rec sessions.SessionRecord, redact func(string) string, logged
 	unmapped.putStr("session.workspace_transport", rec.WorkspaceTransport, redact)
 	unmapped.putStr("session.workspace_control_plane", rec.WorkspaceControlPlane, redact)
 	unmapped.putStr("session.workspace_repo_mcp", rec.WorkspaceRepoMcp, redact)
+	unmapped.putStr("session.credential_mode", rec.CredentialMode, redact)
 	unmapped.putStr("session.git_branch", rec.GitBranch, redact)
 	unmapped.putStr("session.git_head", rec.GitHead, redact)
 	unmapped.putStr("session.git_base", rec.GitBase, redact)

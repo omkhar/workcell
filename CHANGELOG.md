@@ -16,7 +16,7 @@ The GitHub Releases page contains old details that are not in this file.
   `egress_enforcement=proxy`.
 - The OCSF export maps an `egress_deny` audit record to a Network Activity
   event (`class_uid` 4001) with action `Denied` and disposition `Blocked`. The
-  mapping version is now `5`. The `egress-deny-audit-records` host helper reads
+  mapping version moved to `5`. The `egress-deny-audit-records` host helper reads
   a saved deny log as untrusted input and prints bounded audit records.
 - `--egress-proxy` sessions append their denied connections to the audit
   chain of the session as `egress_deny` and `egress_summary` records. The proxy
@@ -31,6 +31,11 @@ The GitHub Releases page contains old details that are not in this file.
 - The provider wrapper trusts the session CA that the injection manifest lists
   as `egress_ca_cert`, through `NODE_EXTRA_CA_CERTS` for Claude and Gemini. A
   listed CA that is absent stops the provider.
+- The session record has a `credential_mode` field: `brokered` when the agent
+  holds only a placeholder, and `direct` otherwise. `session show` prints it.
+  The OCSF export maps it to `session.credential_mode`, and an audit
+  `credential_mode` key to `audit.credential_mode`. The mapping version moved
+  to `6`.
 
 ### Security hardening
 
