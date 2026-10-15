@@ -11,6 +11,7 @@
 --color
 --commit
 --config
+--cyber-access-program
 --dangerously-bypass-approvals-and-sandbox
 --dangerously-bypass-hook-trust
 --device-auth
