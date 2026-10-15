@@ -176,10 +176,18 @@ func readToken(fd int) ([]byte, error) {
 		return nil, err
 	}
 	token := strings.TrimSuffix(string(data), "\n")
-	if decoded, err := hex.DecodeString(token); err != nil || len(decoded) != 32 {
-		return nil, errors.New("session token must be 64 hex characters")
+	if err := CheckToken(token); err != nil {
+		return nil, err
 	}
 	return []byte(token), nil
+}
+
+// CheckToken accepts a session token: 32 random bytes, hex encoded.
+func CheckToken(token string) error {
+	if decoded, err := hex.DecodeString(token); err != nil || len(decoded) != 32 {
+		return errors.New("session token must be 64 hex characters")
+	}
+	return nil
 }
 
 // resolveSource reads keychain:SERVICE[/ACCOUNT] from the login Keychain. The

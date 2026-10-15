@@ -15,6 +15,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/egressproxy"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/pathutil"
@@ -65,6 +66,10 @@ type PrepareBundleOptions struct {
 	// ProcessPID is the launching process PID; used to namespace the
 	// per-run bundle directory under the cache parent.
 	ProcessPID int
+	// BrokerCredentials is set under --egress-proxy: the session brokers
+	// the API keys that the credential broker can serve, and the agent gets
+	// a placeholder in place of each one.
+	BrokerCredentials bool
 	// BundleParentOverride is an optional bundle parent directory.
 	// Empty in production (the bash caller always supplies the
 	// default); tests use this to redirect into a t.TempDir.
@@ -126,6 +131,10 @@ type PrepareBundleResult struct {
 	// InjectionSecretCopyTargets carries the secret-copy target paths
 	// (INJECTION_SECRET_COPY_TARGETS).
 	InjectionSecretCopyTargets string
+	// CredentialPlaceholder is the session's placeholder for brokered
+	// credentials, empty when the session brokers none
+	// (INJECTION_CREDENTIAL_PLACEHOLDER).
+	CredentialPlaceholder string
 }
 
 // DefaultInjectionPolicyPath returns the path the bash helper would have
@@ -237,6 +246,11 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		"--output-metadata", resolverMetadataPath,
 		"--output-root", bundleRoot,
 	}
+	placeholder := ""
+	if opts.BrokerCredentials {
+		placeholder = egressproxy.NewPlaceholder()
+		resolverArgs = append(resolverArgs, "--credential-placeholder", placeholder)
+	}
 	if runErr := authresolve.Run(resolverArgs, devNull{}, os.Stderr); runErr != nil {
 		// authresolve.Run returns *cliexit.ExitCodeError; lift the Code
 		// into the diagnostic so the existing exit-status message stays
@@ -284,6 +298,13 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	if len(manifestLines) < 7 || len(resolverLines) < 6 {
 		return nil, errors.New("manifest metadata returned fewer than seven lines or resolver metadata returned fewer than six lines")
 	}
+	broker, err := loadCredentialBroker(resolverMetadataPath)
+	if err != nil {
+		return nil, err
+	}
+	if !broker.brokersAny() {
+		placeholder = "" // the session brokers no credential
+	}
 
 	return &PrepareBundleResult{
 		InjectionBundleRoot:                 bundleRoot,
@@ -302,6 +323,7 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		InjectionCredentialResolutionStates: resolverLines[3],
 		InjectionProviderAuthReadyStates:    resolverLines[4],
 		InjectionSharedAuthReadyStates:      resolverLines[5],
+		CredentialPlaceholder:               placeholder,
 	}, nil
 }
 
@@ -509,6 +531,7 @@ func FormatBundleResultForShell(result *PrepareBundleResult) (string, error) {
 		shellproto.Field{Key: "INJECTION_SSH_ENABLED", Value: result.InjectionSSHEnabled},
 		shellproto.Field{Key: "INJECTION_SSH_CONFIG_ASSURANCE", Value: result.InjectionSSHConfigAssurance},
 		shellproto.Field{Key: "INJECTION_SECRET_COPY_TARGETS", Value: result.InjectionSecretCopyTargets},
+		shellproto.Field{Key: "INJECTION_CREDENTIAL_PLACEHOLDER", Value: result.CredentialPlaceholder},
 	)
 	var b strings.Builder
 	if err := shellproto.WriteFields(&b, fields); err != nil {

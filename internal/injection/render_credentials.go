@@ -11,8 +11,94 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/authresolve"
+	"github.com/omkhar/workcell/internal/credbroker"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
+
+// EgressCACertName is the bundle file that holds the session CA of a session
+// that brokers credentials.
+const EgressCACertName = "egress-ca.pem"
+
+// credentialBroker is what the resolver metadata says about the credential
+// broker: on reports a session that brokers credentials, and brokered names
+// each key that the broker serves.
+type credentialBroker struct {
+	on       bool
+	brokered map[string]bool
+}
+
+// loadCredentialBroker reads the broker state from the resolver metadata.
+func loadCredentialBroker(path string) (credentialBroker, error) {
+	data, err := rootio.ReadFileNoFollow(path, "resolver metadata", rootio.MaxManifestBytes)
+	if err != nil {
+		return credentialBroker{}, err
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return credentialBroker{}, fmt.Errorf("resolver metadata %s: %w", path, err)
+	}
+	broker, err := credentialBrokerFromMetadata(metadata)
+	if err != nil {
+		return broker, fmt.Errorf("resolver metadata %s: %w", path, err)
+	}
+	return broker, nil
+}
+
+func credentialBrokerFromMetadata(metadata map[string]any) (credentialBroker, error) {
+	broker := credentialBroker{brokered: map[string]bool{}}
+	if raw, ok := metadata["credential_broker"]; ok {
+		if broker.on, ok = raw.(bool); !ok {
+			return broker, errors.New("credential_broker must be a boolean")
+		}
+	}
+	resolvers, ok := metadata["credential_resolvers"].(map[string]any)
+	if !ok && metadata["credential_resolvers"] != nil {
+		return broker, errors.New("credential_resolvers must be an object")
+	}
+	for key, name := range resolvers {
+		broker.brokered[key] = name == authresolve.BrokerResolver
+	}
+	return broker, nil
+}
+
+// check refuses an API key that would reach the agent in a session that
+// brokers credentials: there the agent gets only a placeholder for each key
+// the broker can serve. Gemini OAuth and Vertex settings stay direct.
+func (b credentialBroker) check(rendered map[string]map[string]string) error {
+	if !b.on {
+		return nil
+	}
+	for _, key := range sortedKeys(rendered) {
+		if b.brokered[key] || !credbroker.Brokers(key) {
+			continue
+		}
+		if key == "gemini_env" {
+			metadata, err := validateGeminiEnvFile(Path(rendered[key]["source"]))
+			if err != nil {
+				return err
+			}
+			if metadata["selected_auth_type"] != "gemini-api-key" {
+				continue
+			}
+		}
+		return fmt.Errorf("--egress-proxy brokers credentials.%s: store the key in the macOS login Keychain item %q and set resolver = %q in place of source, or launch without --egress-proxy", key, credbroker.KeychainItem(key), authresolve.BrokerResolver)
+	}
+	return nil
+}
+
+// brokersAny reports whether the broker serves a credential. The resolver
+// records a resolver only for a credential it selected, so the renderer
+// renders every key that the metadata names.
+func (b credentialBroker) brokersAny() bool {
+	for _, brokered := range b.brokered {
+		if brokered {
+			return true
+		}
+	}
+	return false
+}
 
 // allowedCredentialEntryKeys is the parser-accepted key set for a table-form
 // credential entry (`[credentials.<name>]`), shared as a single source of truth

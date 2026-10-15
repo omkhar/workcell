@@ -16,6 +16,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/egressproxy"
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/providerid"
 	"github.com/omkhar/workcell/internal/rootio"
@@ -135,6 +136,9 @@ type config struct {
 	outputPolicy   string
 	outputMetadata string
 	outputRoot     string
+	// placeholder is set when the session brokers credentials; see
+	// resolveBrokerPlaceholder.
+	placeholder string
 }
 
 // Run executes the resolve-credential-sources workflow.  Diagnostics
@@ -158,11 +162,18 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 func parseArgs(args []string) (config, error) {
 	var cfg config
+	seen := map[string]bool{}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "--") {
 			return config{}, fmt.Errorf("unexpected argument: %s", arg)
 		}
+		// A repeated flag is refused, so a later value cannot replace an
+		// earlier one, such as the credential placeholder.
+		if seen[arg] {
+			return config{}, fmt.Errorf("duplicate flag: %s", arg)
+		}
+		seen[arg] = true
 		if i+1 >= len(args) {
 			return config{}, fmt.Errorf("missing value for %s", arg)
 		}
@@ -183,6 +194,11 @@ func parseArgs(args []string) (config, error) {
 			cfg.outputMetadata = value
 		case "--output-root":
 			cfg.outputRoot = value
+		case "--credential-placeholder":
+			if !egressproxy.IsPlaceholder(value) {
+				return config{}, errors.New("--credential-placeholder must be wcph-<32 hex>")
+			}
+			cfg.placeholder = value
 		default:
 			return config{}, fmt.Errorf("unsupported flag: %s", arg)
 		}
@@ -292,6 +308,9 @@ func run(cfg config) error {
 		"credential_resolution_states": map[string]string{},
 		"provider_auth_ready_states":   map[string]string{},
 		"shared_auth_ready_states":     map[string]string{},
+		// credential_broker tells the renderer that this session brokers
+		// credentials, so it refuses an API key the agent would see.
+		"credential_broker": cfg.placeholder != "",
 	}
 
 	for _, key := range relevantKeys {
@@ -372,11 +391,7 @@ func run(cfg config) error {
 			continue
 		}
 
-		resolverSet, ok := allowedResolvers[key]
-		if !ok {
-			return fmt.Errorf("credentials.%s.resolver is unsupported: %s", key, resolverName)
-		}
-		if _, ok := resolverSet[resolverName]; !ok {
+		if !ResolverSupported(key, resolverName) {
 			return fmt.Errorf("credentials.%s.resolver is unsupported: %s", key, resolverName)
 		}
 
@@ -399,7 +414,7 @@ func run(cfg config) error {
 
 		relativeDestination := filepath.Join("resolved", "credentials", key+".json")
 		destination := filepath.Join(outputRoot, relativeDestination)
-		state, err := resolveCredential(key, resolverName, outputRootFS, relativeDestination, cfg.resolutionMode)
+		state, err := resolveCredential(key, resolverName, outputRootFS, relativeDestination, cfg.resolutionMode, cfg.placeholder)
 		if err != nil {
 			return err
 		}

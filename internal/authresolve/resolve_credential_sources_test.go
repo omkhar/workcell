@@ -805,3 +805,68 @@ func TestRunRejectsInvalidConfigurations(t *testing.T) {
 		})
 	}
 }
+
+// TestRunKeychainBrokerStagesOnlyAPlaceholder covers the keychain-broker
+// resolver: with a placeholder it stages only that placeholder at the
+// credential path, a launch without one fails closed, a metadata run stages
+// the all-zero placeholder, and a key the broker cannot serve is refused.
+func TestRunKeychainBrokerStagesOnlyAPlaceholder(t *testing.T) {
+	const placeholder = "wcph-0123456789abcdef0123456789abcdef"
+	zero := "wcph-" + strings.Repeat("0", 32)
+	cases := []struct {
+		name, agent, key, mode string
+		extra                  []string
+		wantCode               int
+		wantErr, wantFile      string
+		wantBroker             bool
+	}{
+		{"claude launch", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", placeholder}, 0, "", placeholder + "\n", true},
+		{"gemini launch", "gemini", "gemini_env", "launch", []string{"--credential-placeholder", placeholder}, 0, "", "GEMINI_API_KEY=" + placeholder + "\n", true},
+		{"launch without placeholder", "claude", "claude_api_key", "launch", nil, 1, "needs --egress-proxy", "", false},
+		{"metadata without placeholder", "gemini", "gemini_env", "metadata", nil, 0, "", "GEMINI_API_KEY=" + zero + "\n", false},
+		{"bad placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", "wcph-short"}, 2, "--credential-placeholder must be", "", false},
+		{"duplicate placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", placeholder, "--credential-placeholder", zero}, 2, "duplicate flag: --credential-placeholder", "", false},
+		{"duplicate policy", "claude", "claude_api_key", "launch", []string{"--policy", "/nonexistent", "--credential-placeholder", placeholder}, 2, "duplicate flag: --policy", "", false},
+		{"unbrokered key", "codex", "codex_auth", "launch", []string{"--credential-placeholder", placeholder}, 1, "resolver is unsupported", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			policyPath := filepath.Join(root, "policy.toml")
+			writePolicy(t, policyPath, "version = 1\n[credentials."+tc.key+"]\nresolver = \"keychain-broker\"\n")
+			code, _, stderr := runResolveCredentialSources(t, append([]string{
+				"--policy", policyPath,
+				"--agent", tc.agent,
+				"--mode", "strict",
+				"--resolution-mode", tc.mode,
+				"--output-policy", filepath.Join(root, "resolved-policy.toml"),
+				"--output-metadata", filepath.Join(root, "resolver-metadata.json"),
+				"--output-root", root,
+			}, tc.extra...), nil)
+			if code != tc.wantCode || !strings.Contains(stderr, tc.wantErr) {
+				t.Fatalf("Run() = %d stderr=%q, want %d and %q", code, stderr, tc.wantCode, tc.wantErr)
+			}
+			if tc.wantCode != 0 {
+				return
+			}
+			resolvedRoot, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertSnapshotEqual(t, filepath.Join(resolvedRoot, "resolved", "credentials", tc.key+".json"), fileSnapshot{data: []byte(tc.wantFile), mode: 0o600})
+			metadata := readJSON(t, filepath.Join(resolvedRoot, "resolver-metadata.json"))
+			if metadata["credential_broker"] != tc.wantBroker {
+				t.Errorf("credential_broker = %v, want %v", metadata["credential_broker"], tc.wantBroker)
+			}
+			if got := metadata["provider_auth_ready_states"].(map[string]any)[tc.key]; got != "ready" {
+				t.Errorf("provider_auth_ready_states.%s = %v, want ready", tc.key, got)
+			}
+		})
+	}
+	if state, err := ProbeResolverReadiness("claude_api_key", BrokerResolver); err != nil || state != "host-source" {
+		t.Errorf("ProbeResolverReadiness = %q, %v; want host-source", state, err)
+	}
+	if ResolverSupported("claude_auth", BrokerResolver) {
+		t.Error("the broker resolver is supported for claude_auth, which the broker cannot serve")
+	}
+}

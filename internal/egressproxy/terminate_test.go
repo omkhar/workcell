@@ -375,3 +375,19 @@ func TestTerminateRefusesBadRules(t *testing.T) {
 		}
 	}
 }
+
+func TestNewPlaceholderIsFreshAndParses(t *testing.T) {
+	t.Parallel()
+	first, second := NewPlaceholder(), NewPlaceholder()
+	if !IsPlaceholder(first) || first == second {
+		t.Fatalf("NewPlaceholder() = %q then %q, want two distinct placeholders", first, second)
+	}
+	if _, err := ParseTerminateRule("example.com=x-api-key=" + first); err != nil {
+		t.Errorf("a new placeholder fails a terminate rule: %v", err)
+	}
+	for _, bad := range []string{"", "wcph-", first + "0", first[:len(first)-1], "WCPH-" + first[5:], " " + first, first + "\n"} {
+		if IsPlaceholder(bad) {
+			t.Errorf("IsPlaceholder(%q) = true", bad)
+		}
+	}
+}
