@@ -832,16 +832,16 @@ func TestTornStopRecordNotSuccess(t *testing.T) {
 // export carries mapping_version "2" (was "1" for the single session event).
 // Version "3" added session.parent_session_id and keeps the multi-event stream.
 func TestMappingVersionBumpedForMultiEvent(t *testing.T) {
-	if MappingVersion != "4" {
-		t.Fatalf("mapping must be version 4 after the fork and resource attributes, got %q", MappingVersion)
+	if MappingVersion != "5" {
+		t.Fatalf("mapping must be version 5 after the egress deny events, got %q", MappingVersion)
 	}
 	events := mustExport(t, sampleExport(), Options{Now: fixedNow})
 	if len(events) < 2 {
 		t.Fatalf("fixture must produce a multi-event stream, got %d", len(events))
 	}
 	for i, ev := range events {
-		if ev.Metadata.MappingVersion != "4" {
-			t.Errorf("event %d: mapping_version=%q want 4", i, ev.Metadata.MappingVersion)
+		if ev.Metadata.MappingVersion != "5" {
+			t.Errorf("event %d: mapping_version=%q want 5", i, ev.Metadata.MappingVersion)
 		}
 	}
 }
@@ -969,5 +969,31 @@ func TestExportSessionSnapshotKeepsCapture(t *testing.T) {
 		if got.Unmapped[key] != want {
 			t.Errorf("%s = %q, want %q", key, got.Unmapped[key], want)
 		}
+	}
+}
+
+// TestExportEgressDenyIsNetworkActivity maps an egress proxy denial to an OCSF
+// Network Activity Refuse event with the Denied action, the Blocked
+// disposition, the count and the destination. The summary stays a lifecycle
+// event with its counts.
+func TestExportEgressDenyIsNetworkActivity(t *testing.T) {
+	exp := sessions.SessionExport{
+		Session: sessions.SessionRecord{SessionID: "s1", Agent: "claude", Mode: "strict", Status: "exited", StartedAt: "2026-07-05T11:00:00Z"},
+		AuditRecords: []string{
+			"timestamp=2026-07-05T11:00:00Z event=egress_deny session_id=s1 host=evil.example port=443 reason=sni_not_allowed count=7",
+			"timestamp=2026-07-05T11:00:00Z event=egress_summary session_id=s1 status=complete deny_keys=1 deny_total=7 malformed_lines=0",
+		},
+	}
+	events := mustExport(t, exp, Options{Now: fixedNow})
+	deny, summary := events[1], events[2]
+	if deny.ClassUID != 4001 || deny.CategoryUID != 4 || deny.ActivityID != 5 || deny.TypeUID != 400105 ||
+		deny.ActionID != 2 || deny.Action != "Denied" || deny.DispositionID != 2 || deny.Disposition != "Blocked" ||
+		deny.Count != 7 || deny.DstEndpoint == nil || *deny.DstEndpoint != (Endpoint{Hostname: "evil.example", Port: 443}) ||
+		deny.Unmapped["audit.reason"] != "sni_not_allowed" || deny.Unmapped["audit.unexpected_fields"] != "" {
+		t.Fatalf("egress_deny event = %+v", deny)
+	}
+	if summary.ClassUID != classUID || summary.ActivityID != activityOther || summary.Message != "workcell audit egress_summary" ||
+		summary.DstEndpoint != nil || summary.Unmapped["audit.deny_total"] != "7" || summary.Unmapped["audit.unexpected_fields"] != "" {
+		t.Fatalf("egress_summary event = %+v", summary)
 	}
 }

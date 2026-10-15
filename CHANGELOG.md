@@ -14,6 +14,10 @@ The GitHub Releases page contains old details that are not in this file.
   internal-network address. Denied connections go to `<session>.egress-deny.jsonl`
   beside the session record. `session delete` removes it with the record. The launch summary reports
   `egress_enforcement=proxy`.
+- The OCSF export maps an `egress_deny` audit record to a Network Activity
+  event (`class_uid` 4001) with action `Denied` and disposition `Blocked`. The
+  mapping version is now `5`. The `egress-deny-audit-records` host helper reads
+  a saved deny log as untrusted input and prints bounded audit records.
 
 ### Security hardening
 

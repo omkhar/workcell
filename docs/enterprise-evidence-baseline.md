@@ -53,13 +53,15 @@ service or fleet inventory.
 
 `workcell session export --format ocsf` writes OCSF 1.3.0 JSON Lines. Each line
 is an Application Lifecycle event with `category_uid` 6 and `class_uid` 6002.
-The default JSON bundle is unchanged.
+The one exception is an `egress_deny` audit record. It is a Network Activity
+event with `class_uid` 4001, activity `Refuse`, action `Denied`, and
+disposition `Blocked`. The default JSON bundle is unchanged.
 
 The export has these properties:
 
 - It writes one summary event and one event for each audit record that matches
   the session.
-- It records OCSF schema version `1.3.0` and Workcell mapping version `4`.
+- It records OCSF schema version `1.3.0` and Workcell mapping version `5`.
 - It applies the shared support-bundle redactor to each dynamic session or
   audit string value.
 - It replaces free-form session messages and unexpected audit fields with a
