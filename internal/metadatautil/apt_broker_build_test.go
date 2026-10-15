@@ -4,6 +4,9 @@
 package metadatautil_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -294,5 +297,63 @@ func TestCheckPinnedInputsAcceptsCommentedAptBrokerBinaryMention(t *testing.T) {
 	})
 	if err := metadatautil.CheckPinnedInputs(cfg); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAptBrokerBuilderCopiesEveryInternalDependency derives the internal
+// packages of the three binaries the apt broker builder stage builds from the
+// Go build itself, for each target architecture the stage builds, so a new
+// import cannot pass the hand-kept COPY list and first fail inside the image
+// build. It reads only the lines of that stage.
+func TestAptBrokerBuilderCopiesEveryInternalDependency(t *testing.T) {
+	t.Parallel()
+	const (
+		stageStart = "FROM --platform=$BUILDPLATFORM ${NODE_BASE_IMAGE} AS apt-broker-builder"
+		stageEnd   = "FROM runtime-base AS provider-builder"
+		module     = "github.com/omkhar/workcell/"
+	)
+	root := filepath.Clean(filepath.Join("..", ".."))
+	dockerfile, err := os.ReadFile(filepath.Join(root, "runtime", "container", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := map[string]bool{}
+	inStage, ended := false, false
+	for _, line := range strings.Split(string(dockerfile), "\n") {
+		switch {
+		case line == stageStart:
+			inStage = true
+		case line == stageEnd && inStage:
+			inStage, ended = false, true
+		case inStage:
+			copied[line] = true
+		}
+	}
+	if !ended {
+		t.Fatal("runtime/container/Dockerfile has no apt broker builder stage between the expected boundaries")
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}",
+			"./cmd/workcell-apt-broker-client", "./cmd/workcell-apt-broker-server", "./cmd/workcell-egress-proxy")
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+arch, "CGO_ENABLED=0")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list for %s: %v", arch, err)
+		}
+		found := 0
+		for _, pkg := range strings.Fields(string(out)) {
+			dir, ok := strings.CutPrefix(pkg, module)
+			if !ok {
+				continue
+			}
+			found++
+			if !copied["COPY --chmod=0555 "+dir+" ./"+dir] {
+				t.Errorf("apt broker builder stage does not copy %s, which the %s build imports", dir, arch)
+			}
+		}
+		if found < 3 {
+			t.Fatalf("go list for %s found %d workcell packages, want at least the three built commands", arch, found)
+		}
 	}
 }

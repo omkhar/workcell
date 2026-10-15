@@ -401,6 +401,8 @@ func (validator *dockerPinnedInputValidator) validateAptBrokerContext() error {
 !cmd/workcell-apt-broker-server/**
 !internal/cliexit/
 !internal/cliexit/**
+!internal/credbroker/
+!internal/credbroker/**
 !internal/egressproxy/
 !internal/egressproxy/**
 !internal/injectionpolicy/
@@ -534,6 +536,7 @@ COPY --chmod=0555 internal/aptbroker ./internal/aptbroker
 COPY --chmod=0555 cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-client
 COPY --chmod=0555 cmd/workcell-apt-broker-server ./cmd/workcell-apt-broker-server
 COPY --chmod=0555 internal/cliexit ./internal/cliexit
+COPY --chmod=0555 internal/credbroker ./internal/credbroker
 COPY --chmod=0555 internal/egressproxy ./internal/egressproxy
 COPY --chmod=0555 internal/injectionpolicy ./internal/injectionpolicy
 COPY --chmod=0555 internal/rootio ./internal/rootio

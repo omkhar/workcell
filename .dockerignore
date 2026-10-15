@@ -11,6 +11,8 @@
 !cmd/workcell-apt-broker-server/**
 !internal/cliexit/
 !internal/cliexit/**
+!internal/credbroker/
+!internal/credbroker/**
 !internal/egressproxy/
 !internal/egressproxy/**
 !internal/injectionpolicy/
