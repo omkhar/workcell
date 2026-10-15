@@ -47,7 +47,7 @@ subcommands = [
   "ultrareview",
 ]
 other_commands = [
-  "install", "update", "plugins", "kill", "upgrade",
+  "install", "update", "plugins", "kill", "upgrade", "purge",
 ]
 allow = [
   "--agent", "--all", "--autocompact", "--ax-screen-reader", "--background",

@@ -42,7 +42,8 @@ subcommands = [
   "completion",
 ]
 other_commands = [
-  "login", "help", "init", "update", "plugin", "mcp", "skill",
+  "login", "help", "init", "update", "plugin", "mcp", "skill", "config",
+  "sandbox",
 ]
 allow = [
   "--auto-tier", "--banner", "--context",
@@ -63,7 +64,8 @@ deny = [
   "--disable-builtin-mcps", "--disable-mcp-server", "--disallow-temp-dir",
   "--dynamic-retrieval", "--enable-all-github-mcp-tools", "--enable-memory",
   "--excluded-tools", "--experimental", "--extension-sdk-path", "-i",
-  "--interactive", "--log-dir", "--max-autopilot-continues", "--mode", "-n",
+  "--interactive", "--log-dir", "--max-autopilot-continues", "--mcp-github-auth",
+  "--mode", "-n",
   "--name", "--no-ask-user", "--no-auto-update", "--no-bash-env",
   "--no-custom-instructions", "--no-remote", "--no-remote-export",
   "--no-sandbox", "--output-format", "--plan", "--plugin-dir", "-r", "--remote",

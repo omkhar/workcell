@@ -45,7 +45,8 @@ other_commands = [
 ]
 allow = [
   "--all", "--ascii", "--base", "-c", "--color", "--commit",
-  "--config", "--device-auth", "--ephemeral", "--force", "-h", "--help", "-i",
+  "--config", "--cyber-access-program", "--device-auth", "--ephemeral",
+  "--force", "-h", "--help", "-i",
   "--ignore-user-config", "--image",
   "--include-non-interactive", "--json", "--last", "--local-provider", "-m",
   "--model", "--no-alt-screen", "--no-color", "--no-daemon", "-o", "--oss",

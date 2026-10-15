@@ -26,8 +26,8 @@ var yargsProviders = map[string]bool{"gemini": true}
 // deniedCommands lists the other_commands entries that the runtime policy
 // rejects, including aliases of a rejected command (claude upgrade is update).
 var deniedCommands = map[string][]string{
-	"claude":  {"install", "update", "upgrade"},
-	"copilot": {"login", "init", "update", "plugin", "mcp", "skill"},
+	"claude":  {"install", "update", "upgrade", "purge"},
+	"copilot": {"login", "init", "update", "plugin", "mcp", "skill", "config", "sandbox"},
 	"codex": {"agents", "mcp", "plugin", "app-server", "remote-control", "update", "sandbox", "debug",
 		"queue", "migrate-rollouts", "cloud", "exec-server"},
 }
