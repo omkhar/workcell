@@ -350,8 +350,9 @@ Then `stop_egress_proxy` removes the sidecar and the network, also after a
 failed save. The seal signs the last session record, so each path that seals
 stops the proxy first. The launcher and the detached session monitor call
 `stop_egress_proxy_then_finalize` after the agent exits. A session stop with a
-dead monitor calls `finish_stopped_session_fallback`. The launcher cleanup
-stops a proxy that is still running, before any seal exists.
+dead monitor calls `finish_stopped_session_fallback`. If a launch ends before
+the seal, the session has no seal. Its cleanup stops a proxy that still runs
+before it writes the `aborted` record, the last write of the session.
 
 `stop_egress_proxy_for_session` runs the same cleanup for a session whose
 monitor is gone. It derives both names from the session ID and does nothing for

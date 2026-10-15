@@ -216,6 +216,8 @@ func runOrderProbe(t *testing.T, body string) string {
 // TestEgressDenyRecordsPrecedeTheSeal is the gate for egress-deny-audited:
 // the seal signs the last session record, so each path that seals a session
 // stops the egress proxy, which appends the deny records, before it seals.
+// A failed launch has no seal, so its cleanup stops the proxy before it
+// writes the aborted record, the last write of the session.
 func TestEgressDenyRecordsPrecedeTheSeal(t *testing.T) {
 	finalize := launcherFunction(t, "stop_egress_proxy_then_finalize")
 	for flag, want := range map[string]string{"1": "proxy prof\nseal prof path 3\nflag=0\n", "0": "seal prof path 3\nflag=0\n"} {
@@ -253,19 +255,28 @@ stop_egress_proxy_for_session() { return 1; }
 		t.Fatalf("a failed proxy stop must stop the fallback before any record, got %q", got)
 	}
 
-	// Every other seal path must go through these two functions, and every
-	// other proxy stop for a recorded session appends nothing.
-	content, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "workcell"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := strings.Replace(string(content), finalize, "", 1)
-	script = strings.Replace(script, launcherFunction(t, "finish_stopped_session_fallback"), "", 1)
-	for line := range strings.Lines(script) {
-		code := strings.TrimSpace(line)
-		if strings.HasPrefix(code, "finalize_session_audit \"") ||
-			strings.HasPrefix(code, "stop_egress_proxy_for_session ") && !strings.Contains(code, " no-audit ") {
-			t.Fatalf("scripts/workcell bypasses the deny-record order: %s", code)
+	// metadatautil.ValidateEgressDenySealOrder proves that every other seal
+	// path goes through these two functions.
+}
+
+// TestCleanupStopsTheProxyBeforeTheAbortedRecord runs the launcher cleanup for
+// a session whose detached monitor never became ready: the deny records must
+// precede the aborted record, the last write of a session with no seal.
+func TestCleanupStopsTheProxyBeforeTheAbortedRecord(t *testing.T) {
+	cleanup := launcherFunction(t, "cleanup")
+	for flag, want := range map[string]string{"1": "proxy p\naborted\n", "0": "aborted\n"} {
+		got := runOrderProbe(t, "set +u\n"+cleanup+`
+DETACHED_SESSION_ACTIVE=0 SESSION_RECORD_WRITTEN=1 SESSION_RECORD_FINALIZED=0 COLIMA_PROFILE=p EGRESS_PROXY_STARTED=`+flag+`
+stop_egress_proxy() { printf 'proxy %s\n' "$*" >>"$STEPS"; }
+write_session_record_final() { printf '%s\n' "$1" >>"$STEPS"; }
+session_assurance_initial() { :; }
+restore_interactive_host_terminal() { :; }
+cleanup_runtime_builder() { :; }
+cleanup_workcell_trusted_docker_client() { :; }
+cleanup 1
+`)
+		if got != want {
+			t.Fatalf("EGRESS_PROXY_STARTED=%s: steps = %q, want %q", flag, got, want)
 		}
 	}
 }

@@ -346,7 +346,6 @@ internal/testkit	TestDebianSnapshotFreshnessDefaultsToSixtyDays	c80aa4b9	unrevie
 internal/testkit	TestDevQuickCheckStaysBoundedToFastLocalWork	74632a22,86556805	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDocClaimsNegativeControls	22845559,e3845a40	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDocsValidatorPrunesLockedMarkdownlintDependencies	0a910d8f,e40e877d	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestEgressDenyRecordsPrecedeTheSeal	177d522b,2404bd33,43b4b458	ShellInvocations skips function and compound bodies, so the test finds the seal-path calls in scripts/workcell by line; the behavior probes run the extracted functions
 internal/testkit	TestExecGuardBenchRefusesAnActivePreload	78e9e73d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestFastPrePushFailsClosedWhenCheckoutFails	02b3720c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestFastPrePushGatesPushedBranchOtherThanHead	17880bf6	unreviewed debt in a test: review the subject, then port or justify

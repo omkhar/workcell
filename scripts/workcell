@@ -1095,6 +1095,11 @@ restore_interactive_host_terminal() {
 cleanup() {
   local exit_status="${1:-0}"
 
+  # A session that ends here has no seal, and the aborted record is its last
+  # write, so the egress proxy appends its deny records first.
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ "${EGRESS_PROXY_STARTED}" -eq 1 ]]; then
+    stop_egress_proxy "${COLIMA_PROFILE}"
+  fi
   if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] &&
     [[ "${SESSION_RECORD_WRITTEN}" -eq 1 ]] &&
     [[ "${SESSION_RECORD_FINALIZED}" -eq 0 ]]; then
@@ -1145,9 +1150,6 @@ cleanup() {
 
   if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-  fi
-  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ "${EGRESS_PROXY_STARTED}" -eq 1 ]]; then
-    stop_egress_proxy "${COLIMA_PROFILE}"
   fi
 
   cleanup_runtime_builder || true
