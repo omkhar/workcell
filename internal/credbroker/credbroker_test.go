@@ -579,3 +579,19 @@ func TestRejectionsSpendTheirOwnBudgetAndLeaveTheGrantQuotaAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestKeychainItemsMatchGrants keeps the Keychain item table and the grants
+// table on the same keys, so every brokered key has exactly one fixed item.
+func TestKeychainItemsMatchGrants(t *testing.T) {
+	if len(keychainItems) != len(grants) {
+		t.Fatalf("keychain items %v and grants %v differ in size", keychainItems, grants)
+	}
+	for key := range grants {
+		if item := KeychainItem(key); !strings.HasPrefix(item, "workcell-") {
+			t.Errorf("KeychainItem(%q) = %q, want a workcell- item", key, item)
+		}
+	}
+	if item := KeychainItem("codex_auth"); item != "" {
+		t.Errorf("KeychainItem(codex_auth) = %q, want none", item)
+	}
+}

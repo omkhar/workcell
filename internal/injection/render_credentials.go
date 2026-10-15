@@ -83,7 +83,7 @@ func (b credentialBroker) check(rendered map[string]map[string]string) error {
 				continue
 			}
 		}
-		return fmt.Errorf("--egress-proxy brokers credentials.%s: store the key in the macOS Keychain and set resolver = %q in place of source", key, authresolve.BrokerResolver)
+		return fmt.Errorf("--egress-proxy brokers credentials.%s: store the key in the macOS login Keychain item %q and set resolver = %q in place of source, or launch without --egress-proxy", key, credbroker.KeychainItem(key), authresolve.BrokerResolver)
 	}
 	return nil
 }

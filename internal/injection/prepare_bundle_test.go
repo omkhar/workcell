@@ -505,8 +505,8 @@ func TestPrepareBundleBrokersAPIKeys(t *testing.T) {
 	}{
 		{name: "claude brokered", agent: "claude", policy: "[credentials.claude_api_key]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: "%s\n"},
 		{name: "gemini brokered", agent: "gemini", policy: "[credentials.gemini_env]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: "GEMINI_API_KEY=%s\n"},
-		{name: "claude source", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n", broker: true, wantErr: "--egress-proxy brokers credentials.claude_api_key"},
-		{name: "gemini key source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GEMINI_API_KEY=sk-real\n", broker: true, wantErr: "--egress-proxy brokers credentials.gemini_env"},
+		{name: "claude source", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n", broker: true, wantErr: `--egress-proxy brokers credentials.claude_api_key: store the key in the macOS login Keychain item "workcell-claude-api-key" and set resolver = "keychain-broker" in place of source, or launch without --egress-proxy`},
+		{name: "gemini key source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GEMINI_API_KEY=sk-real\n", broker: true, wantErr: `--egress-proxy brokers credentials.gemini_env: store the key in the macOS login Keychain item "workcell-gemini-api-key"`},
 		{name: "gemini oauth source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GOOGLE_GENAI_USE_GCA=true\n", broker: true},
 		{name: "claude source unbrokered", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n"},
 		{name: "brokered without broker", agent: "claude", policy: "[credentials.claude_api_key]\nresolver = \"keychain-broker\"\n", wantErr: "resolve_credential_sources exited 1"},

@@ -156,14 +156,17 @@ Workcell does not provide a supported export path.
 The `keychain-broker` resolver is for `--egress-proxy` sessions. The agent gets
 only a `wcph-<32 hex>` placeholder at the usual credential path. For
 `gemini_env`, the staged file holds only `GEMINI_API_KEY=<placeholder>`. The
-host credential broker reads the real key from the macOS Keychain. The egress
-proxy puts the key into the request in place of the placeholder.
+host credential broker reads the real key from a fixed item in the macOS login
+Keychain: `workcell-claude-api-key` for `claude_api_key` and
+`workcell-gemini-api-key` for `gemini_env`. The egress proxy puts the key into
+the request in place of the placeholder.
 
 A launch without a placeholder stops
 (`internal/authresolve/resolve_provider_credentials.go`). When a session
 brokers credentials, a `claude_api_key` or a Gemini API key from `source`
-stops the render (`internal/injection/render_credentials.go`). Gemini OAuth
-and Vertex settings stay direct.
+stops the render (`internal/injection/render_credentials.go`). The message
+names both ways out: the Keychain item, or a launch without `--egress-proxy`.
+Gemini OAuth and Vertex settings stay direct.
 
 ### Rendered credential entry keys
 

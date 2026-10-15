@@ -59,6 +59,17 @@ var grants = map[string][]grant{
 	"gemini_env":     {{host: "generativelanguage.googleapis.com", header: "x-goog-api-key"}},
 }
 
+// keychainItems names the fixed login Keychain item (the generic password
+// service) that holds each brokered key.
+var keychainItems = map[string]string{
+	"claude_api_key": "workcell-claude-api-key",
+	"gemini_env":     "workcell-gemini-api-key",
+}
+
+// KeychainItem returns the login Keychain item that holds a brokered key, or
+// "" for a key the broker does not serve.
+func KeychainItem(key string) string { return keychainItems[key] }
+
 // Brokers reports whether the broker has a grant for a credential key.
 func Brokers(key string) bool {
 	_, ok := grants[key]
