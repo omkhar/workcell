@@ -4,6 +4,9 @@
 package metadatautil_test
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -294,5 +297,45 @@ func TestCheckPinnedInputsAcceptsCommentedAptBrokerBinaryMention(t *testing.T) {
 	})
 	if err := metadatautil.CheckPinnedInputs(cfg); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAptBrokerBuilderCopiesEveryInternalDependency derives the internal
+// packages of the three binaries the apt broker builder stage builds from the
+// Go build itself, so a new import cannot pass the hand-kept COPY list and
+// first fail inside the image build.
+func TestAptBrokerBuilderCopiesEveryInternalDependency(t *testing.T) {
+	t.Parallel()
+	root := filepath.Clean(filepath.Join("..", ".."))
+	dockerfile, err := os.ReadFile(filepath.Join(root, "runtime", "container", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}",
+		"./cmd/workcell-apt-broker-client", "./cmd/workcell-apt-broker-server", "./cmd/workcell-egress-proxy")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	copied := map[string]bool{}
+	for _, line := range strings.Split(string(dockerfile), "\n") {
+		copied[line] = true
+	}
+	const module = "github.com/omkhar/workcell/"
+	found := 0
+	for _, pkg := range strings.Fields(string(out)) {
+		dir, ok := strings.CutPrefix(pkg, module)
+		if !ok {
+			continue
+		}
+		found++
+		if !copied["COPY --chmod=0555 "+dir+" ./"+dir] {
+			t.Errorf("apt broker builder stage does not copy %s, which the built binaries import", dir)
+		}
+	}
+	if found < 3 {
+		t.Fatalf("go list found %d workcell packages, want at least the three built commands", found)
 	}
 }
