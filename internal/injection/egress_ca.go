@@ -88,7 +88,7 @@ func CredentialBrokerPlan(bundleRoot, placeholder string) (string, error) {
 // permit only the hosts of the brokered keys.
 //
 // It also publishes the system roots at rootsPath followed by the session CA
-// as the CA bundle that the manifest lists, for a client whose SSL_CERT_FILE
+// as the CA bundle that the manifest lists, for a client whose CA file
 // replaces its system roots. The launcher reads the roots from the read-only
 // filesystem of the sidecar, which runs the verified agent image, so the
 // agent cannot add a root; they must be only PEM certificates.

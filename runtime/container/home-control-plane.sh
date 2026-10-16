@@ -625,10 +625,12 @@ workcell_egress_ca_file_path() {
 
 # workcell_export_egress_ca_cert makes the provider trust the session CA, in
 # addition to the system roots. Claude and Gemini read NODE_EXTRA_CA_CERTS,
-# which adds to the system roots. Codex and Copilot read SSL_CERT_FILE, which
-# replaces them, so it names the CA bundle: the system roots of the image and
-# the session CA. Call it after sanitize_provider_env, which clears both and
-# CODEX_CA_CERTIFICATE, which Codex reads ahead of SSL_CERT_FILE.
+# which adds to the system roots. Codex reads CODEX_CA_CERTIFICATE, so it names
+# the CA bundle, which holds the system roots of the image and the session CA
+# whether Codex adds the file to its roots or replaces them. SSL_CERT_FILE is
+# not used: the exec guard refuses to start a provider from a wrapper that
+# sets it (runtime/container/rust/src/lib.rs). Call it after
+# sanitize_provider_env, which clears all three.
 workcell_export_egress_ca_cert() {
   local ca_path=""
   local bundle_path=""
@@ -638,7 +640,7 @@ workcell_export_egress_ca_cert() {
   bundle_path="$(workcell_egress_ca_file_path egress_ca_bundle)" || return 1
   [[ -n "${bundle_path}" ]] || workcell_die "Workcell expected the injection manifest to list the session CA bundle."
   export NODE_EXTRA_CA_CERTS="${ca_path}"
-  export SSL_CERT_FILE="${bundle_path}"
+  export CODEX_CA_CERTIFICATE="${bundle_path}"
 }
 
 workcell_validate_direct_mount_path() {

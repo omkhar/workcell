@@ -284,7 +284,7 @@ func writeRoots(t *testing.T, dir string) string {
 
 // TestPublishEgressCAWritesTheRootsBundle covers the second published file:
 // the system roots and the session CA in one file, for a client whose
-// SSL_CERT_FILE replaces its system roots. Roots that are not only PEM
+// CA file replaces its system roots. Roots that are not only PEM
 // certificates are refused, and a refusal publishes neither file.
 func TestPublishEgressCAWritesTheRootsBundle(t *testing.T) {
 	bundle := brokerBundle(t, "claude", claudeBrokered, true).InjectionBundleRoot

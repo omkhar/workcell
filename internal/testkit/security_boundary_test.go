@@ -675,7 +675,8 @@ done
 }
 
 // TestHomeControlPlaneExportsEgressCACert covers the session CA trust: no
-// manifest or no listed CA leaves NODE_EXTRA_CA_CERTS and SSL_CERT_FILE unset,
+// manifest or no listed CA leaves NODE_EXTRA_CA_CERTS and CODEX_CA_CERTIFICATE
+// unset, and never sets SSL_CERT_FILE, which the exec guard refuses;
 // a listed CA and CA bundle set them to the bundle paths, and a listed file
 // that is missing, a symlink, or outside the bundle stops, as does a listed CA
 // without a listed CA bundle.
@@ -692,9 +693,9 @@ source() {
 }
 builtin source "${PROBE_SCRIPT}"
 WORKCELL_SESSION_INJECTION_MANIFEST="${SESSION_MANIFEST-}"
-unset NODE_EXTRA_CA_CERTS SSL_CERT_FILE
+unset NODE_EXTRA_CA_CERTS SSL_CERT_FILE CODEX_CA_CERTIFICATE
 workcell_export_egress_ca_cert
-printf 'extra=%s ssl=%s\n' "${NODE_EXTRA_CA_CERTS-unset}" "${SSL_CERT_FILE-unset}"
+printf 'extra=%s codex=%s ssl=%s\n' "${NODE_EXTRA_CA_CERTS-unset}" "${CODEX_CA_CERTIFICATE-unset}" "${SSL_CERT_FILE-unset}"
 `
 	const both = `{"egress_ca_cert":"egress-ca.pem","egress_ca_bundle":"egress-ca-bundle.pem"}`
 	const missing = "died: Workcell expected the session CA file that the injection manifest lists: "
@@ -707,9 +708,9 @@ printf 'extra=%s ssl=%s\n' "${NODE_EXTRA_CA_CERTS-unset}" "${SSL_CERT_FILE-unset
 		wantCode       int
 		want           string
 	}{
-		{name: "no manifest", wantCode: 0, want: "extra=unset ssl=unset\n"},
-		{name: "no CA listed", manifest: true, metadata: `{}`, wantCode: 0, want: "extra=unset ssl=unset\n"},
-		{name: "CA listed", manifest: true, metadata: both, file: true, bundle: true, wantCode: 0, want: "extra=BUNDLE/egress-ca.pem ssl=BUNDLE/egress-ca-bundle.pem\n"},
+		{name: "no manifest", wantCode: 0, want: "extra=unset codex=unset ssl=unset\n"},
+		{name: "no CA listed", manifest: true, metadata: `{}`, wantCode: 0, want: "extra=unset codex=unset ssl=unset\n"},
+		{name: "CA listed", manifest: true, metadata: both, file: true, bundle: true, wantCode: 0, want: "extra=BUNDLE/egress-ca.pem codex=BUNDLE/egress-ca-bundle.pem ssl=unset\n"},
 		{name: "CA missing", manifest: true, metadata: both, bundle: true, wantCode: 1, want: missing + "BUNDLE/egress-ca.pem\n"},
 		{name: "CA symlink", manifest: true, metadata: both, link: true, bundle: true, wantCode: 1, want: missing + "BUNDLE/egress-ca.pem\n"},
 		{name: "CA outside bundle", manifest: true, metadata: `{"egress_ca_cert":"../egress-ca.pem"}`, wantCode: 1, want: "died: Invalid Workcell injection source path: ../egress-ca.pem\n"},
@@ -769,8 +770,8 @@ printf 'extra=%s ssl=%s\n' "${NODE_EXTRA_CA_CERTS-unset}" "${SSL_CERT_FILE-unset
 }
 
 // TestProviderWrapperClearsCodexCACertificate proves that the provider
-// wrapper clears CODEX_CA_CERTIFICATE, which Codex reads ahead of
-// SSL_CERT_FILE, so an agent cannot point Codex at its own trust root.
+// wrapper clears CODEX_CA_CERTIFICATE before it sets it from the session
+// bundle, so an agent cannot point Codex at its own trust root.
 func TestProviderWrapperClearsCodexCACertificate(t *testing.T) {
 	t.Parallel()
 	probe := `set -euo pipefail
