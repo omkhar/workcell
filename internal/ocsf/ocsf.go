@@ -65,7 +65,11 @@ const OCSFSchemaVersion = "1.3.0"
 //
 // "6": the session-summary event gained session.credential_mode, and the
 // launch record gained audit.credential_mode (brokered or direct).
-const MappingVersion = "6"
+//
+// "7": the credential_broker_start record is a recognized lifecycle event with
+// audit.key and audit.item, and the credential_broker_summary record one with
+// audit.granted and audit.denied.
+const MappingVersion = "7"
 
 // OCSF Application Lifecycle classification constants.
 const (
@@ -579,21 +583,23 @@ func asNetworkDeny(ev *Event, lookup map[string]string, redact func(string) stri
 // into the typed OCSF message; any other (tampered) value is treated as
 // arbitrary text and hard-redacted, never emitted verbatim.
 var knownAuditEvents = map[string]struct{}{
-	"launch":                 {},
-	"exit":                   {},
-	"assurance-change":       {},
-	"command":                {},
-	"attach":                 {},
-	"attach-attempt":         {},
-	"stop-request":           {},
-	"stop-failed":            {},
-	"session_started":        {},
-	"session_finished":       {},
-	"bootstrap_ready":        {},
-	"workspace_materialized": {},
-	"session_fork":           {},
-	"egress_deny":            {},
-	"egress_summary":         {},
+	"launch":                    {},
+	"exit":                      {},
+	"assurance-change":          {},
+	"command":                   {},
+	"attach":                    {},
+	"attach-attempt":            {},
+	"stop-request":              {},
+	"stop-failed":               {},
+	"session_started":           {},
+	"session_finished":          {},
+	"bootstrap_ready":           {},
+	"workspace_materialized":    {},
+	"session_fork":              {},
+	"egress_deny":               {},
+	"egress_summary":            {},
+	"credential_broker_start":   {},
+	"credential_broker_summary": {},
 }
 
 // activityForEvent maps a Workcell audit event name to an OCSF activity_id.

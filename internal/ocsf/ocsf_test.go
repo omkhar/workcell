@@ -832,16 +832,16 @@ func TestTornStopRecordNotSuccess(t *testing.T) {
 // export carries mapping_version "2" (was "1" for the single session event).
 // Version "3" added session.parent_session_id and keeps the multi-event stream.
 func TestMappingVersionBumpedForMultiEvent(t *testing.T) {
-	if MappingVersion != "6" {
-		t.Fatalf("mapping must be version 6 after credential_mode, got %q", MappingVersion)
+	if MappingVersion != "7" {
+		t.Fatalf("mapping must be version 7 after the credential broker records, got %q", MappingVersion)
 	}
 	events := mustExport(t, sampleExport(), Options{Now: fixedNow})
 	if len(events) < 2 {
 		t.Fatalf("fixture must produce a multi-event stream, got %d", len(events))
 	}
 	for i, ev := range events {
-		if ev.Metadata.MappingVersion != "6" {
-			t.Errorf("event %d: mapping_version=%q want 6", i, ev.Metadata.MappingVersion)
+		if ev.Metadata.MappingVersion != "7" {
+			t.Errorf("event %d: mapping_version=%q want 7", i, ev.Metadata.MappingVersion)
 		}
 	}
 }
@@ -995,5 +995,30 @@ func TestExportEgressDenyIsNetworkActivity(t *testing.T) {
 	if summary.ClassUID != classUID || summary.ActivityID != activityOther || summary.Message != "workcell audit egress_summary" ||
 		summary.DstEndpoint != nil || summary.Unmapped["audit.deny_total"] != "7" || summary.Unmapped["audit.unexpected_fields"] != "" {
 		t.Fatalf("egress_summary event = %+v", summary)
+	}
+}
+
+// TestExportCredentialBrokerRecordsAreLifecycleEvents maps the credential
+// broker start and summary records to recognized lifecycle events with their
+// typed audit attributes and no unexpected fields.
+func TestExportCredentialBrokerRecordsAreLifecycleEvents(t *testing.T) {
+	exp := sessions.SessionExport{
+		Session: sessions.SessionRecord{SessionID: "s1", Agent: "claude", Mode: "strict", Status: "exited", StartedAt: "2026-07-05T11:00:00Z"},
+		AuditRecords: []string{
+			"timestamp=2026-07-05T11:00:00Z event=credential_broker_start session_id=s1 key=claude_api_key item=workcell-claude-api-key",
+			"timestamp=2026-07-05T11:00:00Z event=credential_broker_summary session_id=s1 status=complete granted=3 denied=1 malformed_lines=0",
+		},
+	}
+	events := mustExport(t, exp, Options{Now: fixedNow})
+	start, summary := events[1], events[2]
+	if start.ClassUID != classUID || start.ActivityID != activityOther || start.Message != "workcell audit credential_broker_start" ||
+		start.Unmapped["audit.key"] != "claude_api_key" || start.Unmapped["audit.item"] != "workcell-claude-api-key" ||
+		start.Unmapped["audit.unexpected_fields"] != "" {
+		t.Fatalf("credential_broker_start event = %+v", start)
+	}
+	if summary.ClassUID != classUID || summary.ActivityID != activityOther || summary.Message != "workcell audit credential_broker_summary" ||
+		summary.Unmapped["audit.granted"] != "3" || summary.Unmapped["audit.denied"] != "1" ||
+		summary.Unmapped["audit.status"] != "complete" || summary.Unmapped["audit.unexpected_fields"] != "" {
+		t.Fatalf("credential_broker_summary event = %+v", summary)
 	}
 }

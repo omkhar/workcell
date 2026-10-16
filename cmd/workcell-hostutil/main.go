@@ -326,6 +326,7 @@ func helperSubcommands() []helperSubcommand {
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
 		{"egress-deny-audit-records", 1, 1, cmdHelperEgressDenyAuditRecords},
+		{"credential-broker-audit-records", 1, 1, cmdHelperCredentialBrokerAuditRecords},
 		{"credential-broker-plan", 2, 2, cmdHelperCredentialBrokerPlan},
 		{"publish-egress-ca", 2, 2, cmdHelperPublishEgressCA},
 		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
@@ -878,6 +879,31 @@ func writeEgressDenyAuditRecords(w io.Writer, path string) error {
 		return err
 	}
 	_, err = io.WriteString(w, strings.Join(egressproxy.DenyAuditRecords(log), "\n")+"\n")
+	return err
+}
+
+// cmdHelperCredentialBrokerAuditRecords prints the audit records for a saved
+// credential broker ledger, one per line, after the whole ledger is read.
+func cmdHelperCredentialBrokerAuditRecords(args []string) error {
+	return writeCredentialBrokerAuditRecords(os.Stdout, args[0])
+}
+
+func writeCredentialBrokerAuditRecords(w io.Writer, path string) error {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	ledger, err := rootio.OpenRegularFileAtNoFollow(parent, filepath.Base(cleaned), "credential broker ledger")
+	if err != nil {
+		return err
+	}
+	defer ledger.Close()
+	records, err := credbroker.LedgerAuditRecords(ledger)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, strings.Join(records, "\n")+"\n")
 	return err
 }
 

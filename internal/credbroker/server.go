@@ -50,6 +50,13 @@ const (
 	ErrLogFailed   = "log_failed"
 )
 
+// Ledger results the broker records besides the error codes.
+const (
+	resultGranted      = "granted"
+	resultPeerRejected = "peer_rejected"
+	resultMalformed    = "malformed"
+)
+
 type grant struct{ host, header string }
 
 // grants is the fixed table of where each credential key may be sent. The
@@ -272,7 +279,7 @@ func (s *server) serve(connection *net.UnixConn) {
 	// cannot fill the ledger through any path.
 	if uid, err := aptbroker.SocketPeerUID(connection); err != nil || uid != s.uid {
 		if s.allowRejected() {
-			_ = s.record(Request{}, "", "peer_rejected")
+			_ = s.record(Request{}, "", resultPeerRejected)
 		}
 		return
 	}
@@ -280,16 +287,16 @@ func (s *server) serve(connection *net.UnixConn) {
 	request, err := readRequest(connection)
 	if err != nil {
 		if s.allowRejected() {
-			_ = s.record(Request{}, "", "malformed")
+			_ = s.record(Request{}, "", resultMalformed)
 		}
 		return
 	}
 	response, key := s.answer(request)
 	result := response.Error
 	if result == "" {
-		result = "granted"
+		result = resultGranted
 	}
-	if result != "granted" && !s.allowRejected() {
+	if result != resultGranted && !s.allowRejected() {
 		return // over the rejection budget: no record, no answer
 	}
 	// The record is the ledger of every release: a grant whose record is not
