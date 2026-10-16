@@ -11,57 +11,21 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/jsonstrict"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"golang.org/x/sys/unix"
 )
 
+// rejectDuplicateJSONKeys has no depth cap: the readers bound each file.
 func rejectDuplicateJSONKeys(raw []byte) error {
-	return scanJSONValue(json.NewDecoder(bytes.NewReader(raw)))
-}
-
-func scanJSONValue(dec *json.Decoder) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return nil
-	}
-	if delim == '{' {
-		seen := make(map[string]struct{})
-		for dec.More() {
-			key, err := dec.Token()
-			if err != nil {
-				return err
-			}
-			name, ok := key.(string)
-			if !ok {
-				return fmt.Errorf("JSON object key is not a string")
-			}
-			if _, found := seen[name]; found {
-				return fmt.Errorf("duplicate JSON key %q", name)
-			}
-			seen[name] = struct{}{}
-			if err := scanJSONValue(dec); err != nil {
-				return err
-			}
-		}
-	} else {
-		for dec.More() {
-			if err := scanJSONValue(dec); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = dec.Token()
-	return err
+	return jsonstrict.RejectDuplicateKeys(raw, math.MaxInt)
 }
 
 // readFileSafeBounded reads a stable, single-linked regular file through a

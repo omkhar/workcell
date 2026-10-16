@@ -5,7 +5,6 @@ package metadatautil
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -27,6 +26,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/omkhar/workcell/internal/jsonstrict"
 )
 
 const (
@@ -426,7 +427,7 @@ func ApplyDebianBootstrapPins(planPath, repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	if err := rejectDebianBootstrapDuplicateJSONKeys(data); err != nil {
+	if err := jsonstrict.RejectDuplicateKeys(data, maxBootstrapPlanJSONDepth); err != nil {
 		return fmt.Errorf("decode Debian bootstrap plan: %w", err)
 	}
 	var pins DebianBootstrapPins
@@ -772,50 +773,4 @@ func validateExactJSONFields(actual map[string]json.RawMessage, expected []strin
 		}
 	}
 	return nil
-}
-
-func rejectDebianBootstrapDuplicateJSONKeys(raw []byte) error {
-	return scanDebianBootstrapJSONValue(json.NewDecoder(bytes.NewReader(raw)), 0)
-}
-
-func scanDebianBootstrapJSONValue(decoder *json.Decoder, depth int) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, isDelimiter := token.(json.Delim)
-	if !isDelimiter {
-		return nil
-	}
-	if depth >= maxBootstrapPlanJSONDepth {
-		return fmt.Errorf("JSON nesting exceeds %d levels", maxBootstrapPlanJSONDepth)
-	}
-	if delimiter == '{' {
-		seen := make(map[string]struct{})
-		for decoder.More() {
-			key, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			name, ok := key.(string)
-			if !ok {
-				return errors.New("JSON object key must be a string")
-			}
-			if _, duplicate := seen[name]; duplicate {
-				return fmt.Errorf("duplicate JSON key %q", name)
-			}
-			seen[name] = struct{}{}
-			if err := scanDebianBootstrapJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-	} else if delimiter == '[' {
-		for decoder.More() {
-			if err := scanDebianBootstrapJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = decoder.Token()
-	return err
 }
