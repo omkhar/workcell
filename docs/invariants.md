@@ -265,11 +265,16 @@ sidecar. Two sections of `policy/hardening-profile.toml` gate it, and the
   listens only on its internal-network address, never on `0.0.0.0`.
 
 `broker-socket-sidecar-only`: a brokered key reaches only the sidecar. The
-guest socket is owned by the sidecar uid with mode `0600`, and only the sidecar
-mounts it. The agent holds a `wcph-` placeholder.
+launcher sets the guest socket to the sidecar uid and mode `0600`, then reads
+both back. A mismatch stops the launch. Only the sidecar mounts the socket, and
+the agent holds a `wcph-` placeholder.
+
+`internal/testkit/credential_broker_launch_test.go` enforces the owner and mode
+check (`TestStartCredentialBrokerRollsBackEveryFailure`) and the sidecar-only
+mount (`TestBrokerSocketAndTokenReachOnlyTheSidecar`). It also limits the test
+keychain knob to an allowed harness.
 `internal/metadatautil/egress_proxy_sidecar.go` pins the sidecar create and
-`start_credential_broker`. The test keychain knob works only for an allowed
-harness (`internal/testkit/credential_broker_launch_test.go`).
+`start_credential_broker`.
 
 `egress-deny-audited`: each denied proxy connection reaches the audit chain of
 its session, under the session seal. When the proxy stops, the launcher appends bounded `egress_deny`

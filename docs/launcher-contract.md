@@ -370,7 +370,9 @@ private directory, because a macOS home carries an ACL that the broker refuses
 
 The launcher records the PID and the private directory in `<session>.broker`.
 It waits up to 150 seconds for the guest socket, then gives the socket to the
-sidecar uid `65532` with mode `0600`. A failure stops the launch.
+sidecar uid `65532` with mode `0600`. It reads the owner and mode back with
+`stat`, because the sshd bind mask sets the first mode. A failure or a mismatch
+stops the launch.
 
 For a brokered session, the sidecar create adds a `noexec` tmpfs at
 `/run/workcell-egress`, the guest socket at `/run/workcell-broker.sock` and
