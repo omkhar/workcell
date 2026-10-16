@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
+package testkit
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// brokerLaunchProbe sources the launcher modules, stubs the host helpers and
+// runs body. It returns the combined output and the run error.
+func brokerLaunchProbe(t *testing.T, dir, body string, env ...string) (string, error) {
+	t.Helper()
+	root := repoRoot(t)
+	script := `
+set -euo pipefail
+source "$ROOT/scripts/lib/launcher/host-detect.sh"
+source "$ROOT/scripts/lib/launcher/egress-endpoints.sh"
+SESSION_ID=S1 COLIMA_PROFILE=prof INJECTION_BUNDLE_ROOT=/bundle TRUSTED_HOST_PATH=/usr/bin:/bin REAL_HOME="$DIR"
+INJECTION_CREDENTIAL_PLACEHOLDER=wcph-0123456789abcdef0123456789abcdef
+profile_sessions_dir_path() { printf '%s\n' "$DIR/sessions"; }
+go_hostutil() {
+  case "$2" in
+    credential-broker-plan) printf 'terminate=api.anthropic.com=x-api-key=%s\ncredential=claude_api_key=keychain:workcell-claude-api-key\n' "$4" ;;
+    publish-session-capture-file) cp "$3" "$4" ;;
+    *) return 9 ;;
+  esac
+}
+go_tool_bin() { GO_TOOL_BIN="$DIR/broker"; }
+run_host_colima() { printf '%s\n' "$*" >>"$DIR/colima"; [[ "$1" != ssh-config ]] || printf 'Host colima-prof\n'; }
+` + body
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(), append([]string{"ROOT=" + root, "DIR=" + dir, "TMPDIR=" + dir}, env...)...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestStartCredentialBrokerKeepsTheTokenOutOfArgv starts the broker against a
+// fake binary: the token reaches it on fd 3 only, the stale guest socket goes
+// before the forward, the socket goes to the sidecar uid after it appears, and
+// the sidecar arguments are the reviewed fixed values.
+func TestStartCredentialBrokerKeepsTheTokenOutOfArgv(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The broker runs under env -i, so the fake writes beside itself.
+	broker := "#!/bin/bash\nd=\"${0%/*}\"\nprintf '%s\\n' \"$@\" >\"$d/argv\"\ncat <&3 >\"$d/token.tmp\"\nmv \"$d/token.tmp\" \"$d/token\"\nexec sleep 30\n"
+	if err := os.WriteFile(filepath.Join(dir, "broker"), []byte(broker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, err := brokerLaunchProbe(t, dir, `
+start_credential_broker
+until [[ -s "$DIR/token" ]]; do sleep 0.05; done
+read -r pid _ <"$DIR/sessions/S1.broker"
+kill "$pid"
+printf 'token=%s\n' "$CREDENTIAL_BROKER_TOKEN"
+printf 'docker=%s\n' "${EGRESS_PROXY_BROKER_DOCKER_ARGS[*]}"
+printf 'proxy=%s\n' "${EGRESS_PROXY_BROKER_PROXY_ARGS[*]}"
+`)
+	if err != nil {
+		t.Fatalf("start_credential_broker failed: %v\n%s", err, out)
+	}
+	token := strings.TrimPrefix(strings.Split(out, "\n")[0], "token=")
+	if len(token) != 64 {
+		t.Fatalf("token = %q\n%s", token, out)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "token")); string(got) != token+"\n" {
+		t.Fatalf("broker read %q on fd 3, want the session token", got)
+	}
+	argv, _ := os.ReadFile(filepath.Join(dir, "argv"))
+	if strings.Contains(string(argv), token) || !strings.Contains(string(argv), "--guest-socket\n/tmp/workcell-broker-S1.sock\n") ||
+		strings.Contains(string(argv), "--keychain") {
+		t.Fatalf("broker argv = %q", argv)
+	}
+	for _, want := range []string{
+		"docker=--tmpfs /run/workcell-egress:rw,noexec,nosuid,nodev,size=64k,uid=65532,gid=65532,mode=0700 -v /tmp/workcell-broker-S1.sock:/run/workcell-broker.sock -e WORKCELL_BROKER_TOKEN\n",
+		"proxy=-terminate api.anthropic.com=x-api-key=wcph-0123456789abcdef0123456789abcdef -ca-out /run/workcell-egress/ca.pem -ca-ttl 24h -broker-socket /run/workcell-broker.sock\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q\n%s", want, out)
+		}
+	}
+	colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
+	want := "ssh-config --profile prof\nssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n" +
+		"ssh --profile prof -- test -S /tmp/workcell-broker-S1.sock\nssh --profile prof -- sudo chown 65532:65532 -- /tmp/workcell-broker-S1.sock\n"
+	if string(colima) != want {
+		t.Fatalf("colima calls = %q, want %q", colima, want)
+	}
+}
+
+// TestCredentialBrokerTestKeychainIsHarnessOnly proves that the test keychain
+// knob is refused outside the allowed harness, before any broker work, and that
+// the launcher scrubs it without the sanitized-entrypoint marker.
+func TestCredentialBrokerTestKeychainIsHarnessOnly(t *testing.T) {
+	dir := t.TempDir()
+	for _, marker := range []string{"0", "1"} {
+		out, err := brokerLaunchProbe(t, dir, "start_credential_broker\n",
+			"WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN=/tmp/smoke.keychain-db", "WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT="+marker)
+		if err == nil || !strings.Contains(out, "reserved for the Workcell test harness") {
+			t.Fatalf("marker %s: knob accepted: %v\n%s", marker, err, out)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "colima")); statErr == nil {
+			t.Fatalf("marker %s: broker work ran before the refusal", marker)
+		}
+	}
+	scrub := launcherFunction(t, "scrub_host_process_env")
+	cmd := exec.Command("bash", "-c", scrub+"\nscrub_host_process_env\nprintf '%s' \"${WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN-unset}\"")
+	cmd.Env = append(os.Environ(), "WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN=/tmp/smoke.keychain-db")
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "unset" {
+		t.Fatalf("scrub kept the knob: %v %q", err, out)
+	}
+}
+
+// TestStopCredentialBrokerSignalsOnlyThisSessionBroker proves that the stop
+// signals the recorded PID only while it runs this session's broker, removes
+// the guest socket and the private directory, and drops the state file.
+func TestStopCredentialBrokerSignalsOnlyThisSessionBroker(t *testing.T) {
+	for _, tc := range []struct {
+		name, guest string
+		killed      bool
+	}{
+		{"this session", "/tmp/workcell-broker-S1.sock", true},
+		{"other session", "/tmp/workcell-broker-S2.sock", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			private := filepath.Join(dir, "wcb.AbC123")
+			if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(private, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(private, "ledger.jsonl"), []byte("{\"result\":\"granted\"}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := brokerLaunchProbe(t, dir, `
+(exec -a "hostutil credential-broker-cli serve --guest-socket $GUEST --log l" sleep 30) &
+pid=$!
+printf '%s %s\n' "$pid" "$PRIVATE" >"$DIR/sessions/S1.broker"
+for _ in {1..40}; do [[ "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
+stop_credential_broker prof S1
+if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; kill "$pid"; else echo killed; fi
+`, "GUEST="+tc.guest, "PRIVATE="+private)
+			if err != nil {
+				t.Fatalf("stop_credential_broker failed: %v\n%s", err, out)
+			}
+			if killed := strings.Contains(out, "killed"); killed != tc.killed {
+				t.Fatalf("killed = %v, want %v\n%s", killed, tc.killed, out)
+			}
+			colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
+			if string(colima) != "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n" {
+				t.Fatalf("colima calls = %q", colima)
+			}
+			if ledger, _ := os.ReadFile(filepath.Join(dir, "sessions", "S1.broker.jsonl")); string(ledger) != "{\"result\":\"granted\"}\n" {
+				t.Fatalf("published ledger = %q", ledger)
+			}
+			for _, gone := range []string{private, filepath.Join(dir, "sessions", "S1.broker")} {
+				if _, err := os.Stat(gone); !os.IsNotExist(err) {
+					t.Fatalf("%s remains: %v", gone, err)
+				}
+			}
+		})
+	}
+}

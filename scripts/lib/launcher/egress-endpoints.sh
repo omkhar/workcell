@@ -165,6 +165,141 @@ egress_proxy_agent_network_args() {
   done
 }
 
+# --- Credential broker (--egress-proxy with a keychain-broker key) ---
+#
+# The host broker reads each brokered key from its fixed Keychain item and
+# reaches the sidecar only through an ssh reverse forward to a guest socket in
+# the VM. The guest socket belongs to the sidecar uid with mode 0600, so only
+# the sidecar and root in the VM can connect. The agent holds placeholders only.
+
+# credential_broker_guest_socket derives the guest socket from the session id,
+# so a stop needs no launcher state.
+credential_broker_guest_socket() {
+  printf '/tmp/workcell-broker-%s.sock\n' "$1"
+}
+
+# start_credential_broker starts the broker for a session whose bundle holds a
+# placeholder, and fills the fixed sidecar arguments of start_egress_proxy. The
+# token stays in a shell variable: the broker reads it from fd 3, and the docker
+# client passes it to the sidecar from its environment, never in argv.
+start_credential_broker() {
+  local plan="" key="" value="" guest="" pid="" deadline=0
+  local -a sources=() keychain=()
+
+  EGRESS_PROXY_BROKER_DOCKER_ARGS=()
+  EGRESS_PROXY_BROKER_PROXY_ARGS=()
+  CREDENTIAL_BROKER_TOKEN=""
+  CREDENTIAL_BROKER_DIR=""
+  [[ -n "${INJECTION_CREDENTIAL_PLACEHOLDER}" ]] || return 0
+  if [[ -n "${WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN:-}" ]]; then
+    if ! support_matrix_host_override_allowed; then
+      echo "WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN is reserved for the Workcell test harness." >&2
+      return 1
+    fi
+    keychain=(--keychain "${WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN}")
+  fi
+  plan="$(go_hostutil helper credential-broker-plan "${INJECTION_BUNDLE_ROOT}" "${INJECTION_CREDENTIAL_PLACEHOLDER}")" || return 1
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      terminate) EGRESS_PROXY_BROKER_PROXY_ARGS+=(-terminate "${value}") ;;
+      credential) sources+=(--credential "${value}") ;;
+      *)
+        echo "workcell: unexpected credential broker plan field: ${key}" >&2
+        return 1
+        ;;
+    esac
+  done <<<"${plan}"
+  if ((${#sources[@]} == 0)); then
+    echo "workcell: the credential broker plan names no credential." >&2
+    return 1
+  fi
+  guest="$(credential_broker_guest_socket "${SESSION_ID}")"
+  EGRESS_PROXY_BROKER_PROXY_ARGS+=(-ca-out /run/workcell-egress/ca.pem -ca-ttl 24h -broker-socket /run/workcell-broker.sock)
+  EGRESS_PROXY_BROKER_DOCKER_ARGS=(
+    --tmpfs "/run/workcell-egress:rw,noexec,nosuid,nodev,size=64k,uid=65532,gid=65532,mode=0700"
+    -v "${guest}:/run/workcell-broker.sock"
+    -e WORKCELL_BROKER_TOKEN
+  )
+  # The socket path must stay under the 104-byte limit, and every ancestor
+  # must pass the broker's private-parent check, so the real path is used.
+  CREDENTIAL_BROKER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wcb.XXXXXX")" || return 1
+  CREDENTIAL_BROKER_DIR="$(cd "${CREDENTIAL_BROKER_DIR}" && pwd -P)" || return 1
+  run_host_colima ssh-config --profile "${COLIMA_PROFILE}" >"${CREDENTIAL_BROKER_DIR}/ssh_config" || return 1
+  chmod 0600 "${CREDENTIAL_BROKER_DIR}/ssh_config" || return 1
+  # Colima sshd does not unlink a stale socket before it binds, so the forward
+  # would fail on one left by an earlier run.
+  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo rm -f -- "${guest}" || return 1
+  CREDENTIAL_BROKER_TOKEN="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" || return 1
+  if [[ ! "${CREDENTIAL_BROKER_TOKEN}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "workcell: could not create the credential broker session token." >&2
+    return 1
+  fi
+  go_tool_bin workcell-hostutil || return 1
+  (cd / && exec env -i PATH="${TRUSTED_HOST_PATH}" HOME="${REAL_HOME}" LC_ALL=C LANG=C \
+    "${GO_TOOL_BIN}" credential-broker-cli serve --socket "${CREDENTIAL_BROKER_DIR}/b.sock" --token-fd 3 \
+    --ssh-config "${CREDENTIAL_BROKER_DIR}/ssh_config" --ssh-host "colima-${COLIMA_PROFILE}" \
+    --guest-socket "${guest}" "${sources[@]}" ${keychain[@]+"${keychain[@]}"} \
+    --log "${CREDENTIAL_BROKER_DIR}/ledger.jsonl") \
+    3<<<"${CREDENTIAL_BROKER_TOKEN}" </dev/null >/dev/null 2>"${CREDENTIAL_BROKER_DIR}/broker.log" &
+  pid="$!"
+  disown "${pid}"
+  printf '%s %s\n' "${pid}" "${CREDENTIAL_BROKER_DIR}" >"${CREDENTIAL_BROKER_DIR}/state" || return 1
+  go_hostutil helper publish-session-capture-file "${CREDENTIAL_BROKER_DIR}/state" \
+    "$(profile_sessions_dir_path "${COLIMA_PROFILE}")/${SESSION_ID}.broker" >/dev/null || return 1
+  # The first read of a Keychain item can wait for the owner's answer.
+  deadline=$((SECONDS + 150))
+  until run_host_colima ssh --profile "${COLIMA_PROFILE}" -- test -S "${guest}" 2>/dev/null; do
+    if ! kill -0 "${pid}" 2>/dev/null || ((SECONDS >= deadline)); then
+      echo "workcell: the credential broker did not open its guest socket ${guest}." >&2
+      cat "${CREDENTIAL_BROKER_DIR}/broker.log" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo chown 65532:65532 -- "${guest}" || return 1
+}
+
+# stop_credential_broker stops the broker of a session from its state file
+# alone, so the monitor, stop and delete paths need no launcher state. It
+# signals the recorded PID only while that process is the broker of this
+# session. Like the sidecar cleanup, a failure only warns.
+stop_credential_broker() {
+  local profile="$1"
+  local session="$2"
+  local state="" pid="" dir="" guest="" command=""
+
+  state="$(profile_sessions_dir_path "${profile}")/${session}.broker" || {
+    echo "workcell: warning: could not find the credential broker state of ${session}." >&2
+    return 0
+  }
+  [[ -f "${state}" ]] || return 0
+  guest="$(credential_broker_guest_socket "${session}")"
+  read -r pid dir <"${state}" || pid=""
+  if [[ "${pid}" =~ ^[0-9]+$ ]] && command="$(ps -p "${pid}" -o command=)" &&
+    [[ "${command}" == *" credential-broker-cli serve "*"--guest-socket ${guest} "* ]]; then
+    kill -TERM "${pid}" || echo "workcell: warning: could not stop the credential broker ${pid}." >&2
+    # The launcher's own cleanup is the broker's parent, so an exited broker
+    # stays a zombie there until the launcher exits.
+    for _ in {1..20}; do
+      command="$(ps -p "${pid}" -o stat=)" || break
+      [[ "${command}" != *Z* ]] || break
+      sleep 0.25
+    done
+  fi
+  run_host_colima ssh --profile "${profile}" -- sudo rm -f -- "${guest}" >/dev/null ||
+    echo "workcell: warning: could not remove the credential broker socket ${guest} in the VM." >&2
+  # The broker refuses a ledger under a parent with an extended ACL, as a macOS
+  # home has, so the ledger lives in the private directory until the stop
+  # publishes it beside the session record.
+  if [[ "${dir}" == */wcb.?????? && -d "${dir}" && ! -L "${dir}" && -O "${dir}" ]]; then
+    [[ ! -f "${dir}/ledger.jsonl" ]] ||
+      go_hostutil helper publish-session-capture-file "${dir}/ledger.jsonl" "${state}.jsonl" >/dev/null ||
+      echo "workcell: warning: could not save the credential broker ledger for ${session}." >&2
+    rm -rf "${dir}"
+  fi
+  rm -f "${state}"
+}
+
 # start_egress_proxy creates the internal network and runs the sidecar from the
 # verified image with the agent's conformance flags. The network is internal
 # and isolated: Docker gives an internal network no outside route, but its
@@ -195,7 +330,7 @@ start_egress_proxy() {
     echo "workcell: ${EGRESS_PROXY_NETWORK} has no single IPv4 subnet: ${subnet}" >&2
     return 1
   fi
-  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" create \
+  WORKCELL_BROKER_TOKEN="${CREDENTIAL_BROKER_TOKEN:-}" run_workcell_docker_client_command "${HOST_DOCKER_BIN}" create \
     --name "${EGRESS_PROXY_CONTAINER}" \
     --network "${EGRESS_PROXY_NETWORK}" \
     --user 65532:65532 \
@@ -208,7 +343,9 @@ start_egress_proxy() {
     --log-opt max-size=10m \
     --sysctl net.ipv4.ip_unprivileged_port_start=0 \
     --entrypoint /usr/local/libexec/workcell/workcell-egress-proxy \
-    "${image_id}" -allow "${ALLOW_ENDPOINTS}" -listen "${subnet}" >/dev/null || return 1
+    ${EGRESS_PROXY_BROKER_DOCKER_ARGS[@]+"${EGRESS_PROXY_BROKER_DOCKER_ARGS[@]}"} \
+    "${image_id}" -allow "${ALLOW_ENDPOINTS}" -listen "${subnet}" \
+    ${EGRESS_PROXY_BROKER_PROXY_ARGS[@]+"${EGRESS_PROXY_BROKER_PROXY_ARGS[@]}"} >/dev/null || return 1
   run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network connect bridge "${EGRESS_PROXY_CONTAINER}" || return 1
   run_workcell_docker_client_command "${HOST_DOCKER_BIN}" start "${EGRESS_PROXY_CONTAINER}" >/dev/null || return 1
   ip="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" inspect \
@@ -239,6 +376,15 @@ start_egress_proxy() {
     echo "workcell: the egress proxy sidecar is not listening on every allowlisted port." >&2
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" logs "${EGRESS_PROXY_CONTAINER}" >&2 || true
     return 1
+  fi
+  CREDENTIAL_BROKER_TOKEN=""
+  # The sidecar wrote the session CA before it listened. The host helper checks
+  # it as untrusted input and publishes it into the bundle for the agent.
+  if [[ -n "${CREDENTIAL_BROKER_DIR:-}" ]]; then
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" exec "${EGRESS_PROXY_CONTAINER}" \
+      cat /run/workcell-egress/ca.pem >"${CREDENTIAL_BROKER_DIR}/ca.pem" || return 1
+    go_hostutil helper publish-egress-ca "${CREDENTIAL_BROKER_DIR}/ca.pem" "${INJECTION_BUNDLE_ROOT}" || return 1
+    rm -f "${CREDENTIAL_BROKER_DIR}/ca.pem"
   fi
   for i in "${!DOCKER_RUN[@]}"; do
     # Only the generated --add-host values before the image carry the token. A
@@ -285,6 +431,7 @@ stop_egress_proxy() {
     records="egress_summary status=unreadable"
   fi
   [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
+  stop_credential_broker "${profile}" "${SESSION_ID}"
   [[ "${audit}" == "no-audit" ]] || while read -r -a record; do
     append_session_control_audit_record "${profile}" "${SESSION_ID}" "${record[@]}" ||
       echo "workcell: warning: could not audit the egress proxy deny log for ${SESSION_ID}." >&2

@@ -22,7 +22,7 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 	if err := metadatautil.ValidateEgressProxySidecar(string(script)); err != nil {
 		t.Fatalf("real script rejected: %v", err)
 	}
-	start := strings.Index(string(script), "  run_workcell_docker_client_command \"${HOST_DOCKER_BIN}\" create \\\n")
+	start := strings.Index(string(script), "  WORKCELL_BROKER_TOKEN=\"${CREDENTIAL_BROKER_TOKEN:-}\" run_workcell_docker_client_command \"${HOST_DOCKER_BIN}\" create \\\n")
 	end := strings.Index(string(script)[start:], ">/dev/null || return 1\n")
 	anchor := string(script)[start : start+end+len(">/dev/null || return 1")]
 	RequireRejectsAllEvasions(t, string(script), anchor, "egress proxy sidecar", metadatautil.ValidateEgressProxySidecar)
@@ -45,6 +45,37 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 		},
 		"unreviewed extra command": func(s string) string {
 			return strings.Replace(s, "  local i=\"\"\n", "  local i=\"\"\n  true\n", 1)
+		},
+		// The broker arguments reach the create through arrays, so the digest
+		// over start_credential_broker pins what they hold.
+		"second broker volume": func(s string) string {
+			return strings.Replace(s, `    -e WORKCELL_BROKER_TOKEN
+`, `    -e WORKCELL_BROKER_TOKEN
+    -v /:/host
+`, 1)
+		},
+		"broker user changed": func(s string) string {
+			return strings.Replace(s, `    -e WORKCELL_BROKER_TOKEN
+`, `    -e WORKCELL_BROKER_TOKEN
+    --user 0
+`, 1)
+		},
+		"token value in argv": func(s string) string {
+			return strings.Replace(s, `    -e WORKCELL_BROKER_TOKEN
+`, `    -e "WORKCELL_BROKER_TOKEN=${CREDENTIAL_BROKER_TOKEN}"
+`, 1)
+		},
+		"ca outside the tmpfs": func(s string) string {
+			return strings.Replace(s, "-ca-out /run/workcell-egress/ca.pem", "-ca-out /tmp/ca.pem", 1)
+		},
+		"tmpfs without noexec": func(s string) string {
+			return strings.Replace(s, "/run/workcell-egress:rw,noexec,", "/run/workcell-egress:rw,", 1)
+		},
+		"create without the token environment": func(s string) string {
+			return strings.Replace(s, `  WORKCELL_BROKER_TOKEN="${CREDENTIAL_BROKER_TOKEN:-}" run_workcell_docker_client_command`, `  run_workcell_docker_client_command`, 1)
+		},
+		"broker args dropped from the create": func(s string) string {
+			return strings.Replace(s, "    ${EGRESS_PROXY_BROKER_DOCKER_ARGS[@]+\"${EGRESS_PROXY_BROKER_DOCKER_ARGS[@]}\"} \\\n", "", 1)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

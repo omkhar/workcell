@@ -24,7 +24,7 @@ import (
 )
 
 const usageText = "usage: workcell-hostutil credential-broker-cli serve --socket PATH --token-fd N " +
-	"--ssh-config FILE --ssh-host HOST --guest-socket PATH --credential KEY=keychain:SERVICE[/ACCOUNT]... --log FILE"
+	"--ssh-config FILE --ssh-host HOST --guest-socket PATH --credential KEY=keychain:SERVICE[/ACCOUNT]... --log FILE [--keychain FILE]"
 
 // securityPath is fixed so a PATH entry cannot stand in for the Keychain tool.
 var securityPath = "/usr/bin/security"
@@ -45,6 +45,10 @@ func Main(args []string) error {
 	sshHost := flags.String("ssh-host", "", "")
 	guestSocket := flags.String("guest-socket", "", "")
 	logPath := flags.String("log", "", "")
+	// keychain names a keychain file in place of the default search list. Only
+	// the launcher's test harness sets it, so a smoke reads a throwaway
+	// keychain and never prompts for a login Keychain item.
+	keychain := flags.String("keychain", "", "")
 	sources := map[string]string{}
 	flags.Func("credential", "", func(value string) error {
 		key, source, ok := strings.Cut(value, "=")
@@ -65,7 +69,8 @@ func Main(args []string) error {
 		*tokenFD < 0 || *sshConfig == "" || *logPath == "" ||
 		!filepath.IsAbs(*socket) || !filepath.IsAbs(*guestSocket) ||
 		strings.Contains(*socket, ":") || strings.Contains(*guestSocket, ":") ||
-		*sshHost == "" || strings.HasPrefix(*sshHost, "-") {
+		*sshHost == "" || strings.HasPrefix(*sshHost, "-") ||
+		(*keychain != "" && !filepath.IsAbs(*keychain)) {
 		return usage
 	}
 	token, err := readToken(*tokenFD)
@@ -79,7 +84,7 @@ func Main(args []string) error {
 		if _, ok := grants[key]; !ok {
 			return fmt.Errorf("credential %s has no broker grant", key)
 		}
-		if credentials[key], err = resolveSource(ctx, source); err != nil {
+		if credentials[key], err = resolveSource(ctx, source, *keychain); err != nil {
 			return fmt.Errorf("credential %s: %w", key, err)
 		}
 	}
@@ -93,7 +98,10 @@ func Main(args []string) error {
 		Token:       token,
 		Credentials: credentials,
 		Log:         log,
-		SSHArgs:     []string{"-F", *sshConfig, "-N", "-o", "ExitOnForwardFailure=yes", "-R", *guestSocket + ":" + *socket, *sshHost},
+		// Lima's ssh config shares a persistent master connection. A forward
+		// through that master would outlive this ssh, so the broker opens its own.
+		SSHArgs: []string{"-F", *sshConfig, "-N", "-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+			"-R", *guestSocket + ":" + *socket, *sshHost},
 	})
 }
 
@@ -190,7 +198,8 @@ func CheckToken(token string) error {
 	return nil
 }
 
-// resolveSource reads keychain:SERVICE[/ACCOUNT] from the login Keychain. The
+// resolveSource reads keychain:SERVICE[/ACCOUNT] from the login Keychain, or
+// from the keychain file when keychain is not empty. The
 // broker holds the value on the host and does not write it to disk. The value
 // does not stay only in broker memory: each granted request sends it over the
 // forwarded socket to the session's egress sidecar in the VM. It never reaches
@@ -200,7 +209,7 @@ func CheckToken(token string) error {
 // it. Choose "Always Allow" once to add security to the item's access list;
 // later sessions then read it without a prompt. "Allow" works for one session
 // only, and "Deny" makes the broker exit before it serves anything.
-func resolveSource(ctx context.Context, source string) (string, error) {
+func resolveSource(ctx context.Context, source, keychain string) (string, error) {
 	item, ok := strings.CutPrefix(source, "keychain:")
 	service, account, hasAccount := strings.Cut(item, "/")
 	if !ok || service == "" || (hasAccount && account == "") {
@@ -213,7 +222,11 @@ func resolveSource(ctx context.Context, source string) (string, error) {
 	// The bound leaves time to answer the Keychain prompt.
 	ctx, cancel := context.WithTimeout(ctx, keychainTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, securityPath, append(args, "-w")...)
+	args = append(args, "-w")
+	if keychain != "" {
+		args = append(args, keychain)
+	}
+	cmd := exec.CommandContext(ctx, securityPath, args...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C"}
 	if home, ok := os.LookupEnv("HOME"); ok {
 		cmd.Env = append(cmd.Env, "HOME="+home)
