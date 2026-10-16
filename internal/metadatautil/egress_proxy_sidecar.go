@@ -24,7 +24,7 @@ import (
 // Colima egress script. Any edit of either body, in any spelling, fails until a
 // reviewer regenerates it. The dry-run and Colima smoke scenarios then check
 // the behavior of the reviewed functions.
-const egressProxyGuardedDigest = "0ac547871db86dcc1966893103994f1a374d2c4aec94c5b8046915d624f53ff8"
+const egressProxyGuardedDigest = "ee439ff78edf59af635380cdd28b3c0f9cbf0f8e1dd436e63592a8eeffcddce0"
 
 var egressProxyGuardedFunctions = []string{"egress_proxy_names", "start_egress_proxy", "egress_proxy_agent_network_args", "start_credential_broker"}
 

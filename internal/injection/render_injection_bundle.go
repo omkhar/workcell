@@ -219,9 +219,11 @@ func runRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 	}
 
 	if broker.brokersAny() {
-		// The launcher writes the session CA here after the egress proxy
-		// creates it, before the agent starts; the agent trusts it.
+		// The launcher writes the session CA and the CA bundle here after the
+		// egress proxy creates the CA, before the agent starts; the agent
+		// trusts them.
 		manifest["metadata"].(map[string]any)["egress_ca_cert"] = EgressCACertName
+		manifest["metadata"].(map[string]any)["egress_ca_bundle"] = EgressCABundleName
 	}
 
 	manifestPath := filepath.Join(resolvedOutputRoot, "manifest.json")

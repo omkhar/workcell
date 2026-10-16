@@ -26,7 +26,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/egress-endpoints.sh",
-      "sha256": "8d5107cb68a00fc333e7e80f69147cb124d95370e7ad872a98cca488e7468272"
+      "sha256": "bf3a7b4306e14afaa2b00cb142a228d378829daea7f13b2605be4bd29228e689"
     },
     {
       "repo_path": "scripts/lib/launcher/generated-adapters.sh",
@@ -246,7 +246,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "1c7afd2af0cddcef8d0cf685489c07f4fd6c1b574f09ee65049b81b86b93f2a6"
+      "sha256": "9337d65169240184764dab5d493be4a7383d895a32f69035859e85fcd851be95"
     },
     {
       "kind": "runtime-control-plane",
@@ -264,7 +264,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "0357a21f728dc1344d9253a3c5c066858573ef5c6b682441aad1a08e216b8107"
+      "sha256": "fbaa00dfe345139b48553160189fc971909ffb1f9dac844df8d5294ff6c6832c"
     },
     {
       "kind": "runtime-control-plane",

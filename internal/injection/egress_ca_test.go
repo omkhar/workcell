@@ -100,6 +100,7 @@ func selfSigned(t *testing.T, path string, template *x509.Certificate) []byte {
 func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 	bundle := brokerBundle(t, "claude", claudeBrokered, true).InjectionBundleRoot
 	dir := t.TempDir()
+	roots := writeRoots(t, dir)
 	ca, err := egressproxy.NewSessionCA([]string{"api.anthropic.com"}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +109,7 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 	if err := os.WriteFile(good, ca.CertPEM(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := PublishEgressCA(good, bundle); err != nil {
+	if err := PublishEgressCA(good, roots, bundle); err != nil {
 		t.Fatal(err)
 	}
 	published := filepath.Join(bundle, EgressCACertName)
@@ -231,7 +232,7 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 	skewed.NotAfter = now.Add(10*time.Minute + egressproxy.MaxCALifetime)
 	skewedPath := filepath.Join(dir, "skewed.pem")
 	selfSigned(t, skewedPath, skewed)
-	if err := PublishEgressCA(skewedPath, bundle); err != nil {
+	if err := PublishEgressCA(skewedPath, roots, bundle); err != nil {
 		t.Errorf("PublishEgressCA refused a full-lifetime CA from a clock ahead of the host: %v", err)
 	}
 
@@ -240,14 +241,14 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 		if err := write(src); err != nil {
 			t.Fatal(err)
 		}
-		if err := PublishEgressCA(src, bundle); err == nil {
+		if err := PublishEgressCA(src, roots, bundle); err == nil {
 			t.Errorf("%s: PublishEgressCA accepted it", name)
 		}
 	}
 	// The control CA passes, so each refusal above is its own check.
 	control := filepath.Join(dir, "control.pem")
 	selfSigned(t, control, constrained(&x509.Certificate{}))
-	if err := PublishEgressCA(control, bundle); err != nil {
+	if err := PublishEgressCA(control, roots, bundle); err != nil {
 		t.Errorf("control CA: %v", err)
 	}
 	// The same brokering bundle, with the CA dropped from its manifest.
@@ -263,7 +264,101 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 	if err := os.WriteFile(manifestPath, unlisted, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := PublishEgressCA(good, bundle); err == nil {
+	if err := PublishEgressCA(good, roots, bundle); err == nil {
 		t.Error("a bundle whose manifest lists no session CA got one")
+	}
+}
+
+// writeRoots writes a system roots file of two certificates and returns its
+// path.
+func writeRoots(t *testing.T, dir string) string {
+	t.Helper()
+	a := selfSigned(t, filepath.Join(dir, "root-a.pem"), &x509.Certificate{NotAfter: time.Now().Add(time.Hour)})
+	b := selfSigned(t, filepath.Join(dir, "root-b.pem"), &x509.Certificate{NotAfter: time.Now().Add(time.Hour)})
+	path := filepath.Join(dir, "roots.pem")
+	if err := os.WriteFile(path, append(append([]byte("# a comment\n"), a...), b...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestPublishEgressCAWritesTheRootsBundle covers the second published file:
+// the system roots and the session CA in one file, for a client whose
+// CA file replaces its system roots. Roots that are not only PEM
+// certificates are refused, and a refusal publishes neither file.
+func TestPublishEgressCAWritesTheRootsBundle(t *testing.T) {
+	bundle := brokerBundle(t, "claude", claudeBrokered, true).InjectionBundleRoot
+	dir := t.TempDir()
+	roots := writeRoots(t, dir)
+	ca, err := egressproxy.NewSessionCA([]string{"api.anthropic.com"}, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caPath, ca.CertPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cert := func(name string) []byte {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	key := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte{1}})
+	oversized := bytes.Repeat(cert("root-a.pem"), maxSystemRootsBytes/len(cert("root-a.pem"))+1)
+	bad := map[string][]byte{
+		"empty":          nil,
+		"not PEM":        []byte("junk\n"),
+		"private key":    append(cert("root-a.pem"), key...),
+		"trailing bytes": append(cert("root-a.pem"), "junk"...),
+		"over the cap":   oversized,
+	}
+	for name, data := range bad {
+		src := filepath.Join(dir, name+".roots")
+		if err := os.WriteFile(src, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := PublishEgressCA(caPath, src, bundle); err == nil {
+			t.Errorf("%s roots: PublishEgressCA accepted them", name)
+		}
+	}
+	link := filepath.Join(dir, "link.roots")
+	if err := os.Symlink(roots, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishEgressCA(caPath, link, bundle); err == nil {
+		t.Error("symlinked roots: PublishEgressCA accepted them")
+	}
+	for _, name := range []string{EgressCACertName, EgressCABundleName} {
+		if _, err := os.Lstat(filepath.Join(bundle, name)); !os.IsNotExist(err) {
+			t.Fatalf("a refused publish left %s: %v", name, err)
+		}
+	}
+
+	if err := PublishEgressCA(caPath, roots, bundle); err != nil {
+		t.Fatal(err)
+	}
+	want := append(append(cert("root-a.pem"), cert("root-b.pem")...), ca.CertPEM()...)
+	published := filepath.Join(bundle, EgressCABundleName)
+	data, err := os.ReadFile(published)
+	if info, statErr := os.Stat(published); err != nil || statErr != nil || !bytes.Equal(data, want) || info.Mode().Perm() != 0o600 {
+		t.Fatalf("published bundle = %q (%v, %v), want the roots then the session CA with mode 0600", data, err, statErr)
+	}
+
+	manifestPath := filepath.Join(bundle, "manifest.json")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlisted := bytes.Replace(manifest, []byte(`"egress_ca_bundle":"egress-ca-bundle.pem"`), []byte(`"egress_ca_bundle":""`), 1)
+	if bytes.Equal(unlisted, manifest) {
+		t.Fatal("the manifest does not list the bundle")
+	}
+	if err := os.WriteFile(manifestPath, unlisted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishEgressCA(caPath, roots, bundle); err == nil {
+		t.Error("a bundle whose manifest lists no CA bundle got one")
 	}
 }

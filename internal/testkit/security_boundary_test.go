@@ -675,9 +675,11 @@ done
 }
 
 // TestHomeControlPlaneExportsEgressCACert covers the session CA trust: no
-// manifest or no listed CA leaves NODE_EXTRA_CA_CERTS unset, a listed CA sets
-// it to the bundle path, and a listed CA that is missing, a symlink, or
-// outside the bundle stops.
+// manifest or no listed CA leaves NODE_EXTRA_CA_CERTS and CODEX_CA_CERTIFICATE
+// unset, and never sets SSL_CERT_FILE, which the exec guard refuses;
+// a listed CA and CA bundle set them to the bundle paths, and a listed file
+// that is missing, a symlink, or outside the bundle stops, as does a listed CA
+// without a listed CA bundle.
 func TestHomeControlPlaneExportsEgressCACert(t *testing.T) {
 	t.Parallel()
 
@@ -691,25 +693,32 @@ source() {
 }
 builtin source "${PROBE_SCRIPT}"
 WORKCELL_SESSION_INJECTION_MANIFEST="${SESSION_MANIFEST-}"
-unset NODE_EXTRA_CA_CERTS
+unset NODE_EXTRA_CA_CERTS SSL_CERT_FILE CODEX_CA_CERTIFICATE
 workcell_export_egress_ca_cert
-printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
+printf 'extra=%s codex=%s ssl=%s\n' "${NODE_EXTRA_CA_CERTS-unset}" "${CODEX_CA_CERTIFICATE-unset}" "${SSL_CERT_FILE-unset}"
 `
+	const both = `{"egress_ca_cert":"egress-ca.pem","egress_ca_bundle":"egress-ca-bundle.pem"}`
+	const missing = "died: Workcell expected the session CA file that the injection manifest lists: "
 	cases := []struct {
 		name, metadata string
 		file, link     bool
+		bundle, blink  bool
 		manifest       bool
 		agent          bool // the agent named a manifest outside the bundle mount
 		wantCode       int
 		want           string
 	}{
-		{name: "no manifest", wantCode: 0, want: "extra=unset\n"},
-		{name: "no CA listed", manifest: true, metadata: `{}`, wantCode: 0, want: "extra=unset\n"},
-		{name: "CA listed", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, file: true, wantCode: 0, want: "extra=BUNDLE/egress-ca.pem\n"},
-		{name: "CA missing", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, wantCode: 1, want: "died: Workcell expected the session CA that the injection manifest lists: BUNDLE/egress-ca.pem\n"},
-		{name: "CA symlink", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, link: true, wantCode: 1, want: "died: Workcell expected the session CA that the injection manifest lists: BUNDLE/egress-ca.pem\n"},
+		{name: "no manifest", wantCode: 0, want: "extra=unset codex=unset ssl=unset\n"},
+		{name: "no CA listed", manifest: true, metadata: `{}`, wantCode: 0, want: "extra=unset codex=unset ssl=unset\n"},
+		{name: "CA listed", manifest: true, metadata: both, file: true, bundle: true, wantCode: 0, want: "extra=BUNDLE/egress-ca.pem codex=BUNDLE/egress-ca-bundle.pem ssl=unset\n"},
+		{name: "CA missing", manifest: true, metadata: both, bundle: true, wantCode: 1, want: missing + "BUNDLE/egress-ca.pem\n"},
+		{name: "CA symlink", manifest: true, metadata: both, link: true, bundle: true, wantCode: 1, want: missing + "BUNDLE/egress-ca.pem\n"},
 		{name: "CA outside bundle", manifest: true, metadata: `{"egress_ca_cert":"../egress-ca.pem"}`, wantCode: 1, want: "died: Invalid Workcell injection source path: ../egress-ca.pem\n"},
-		{name: "agent manifest", manifest: true, agent: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, file: true, wantCode: 1, want: "died: Workcell refused an injection manifest that is not the session bundle: BUNDLE/manifest.json\n"},
+		{name: "CA bundle not listed", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, file: true, bundle: true, wantCode: 3, want: "died: Workcell expected the injection manifest to list the session CA bundle.\n"},
+		{name: "CA bundle missing", manifest: true, metadata: both, file: true, wantCode: 1, want: missing + "BUNDLE/egress-ca-bundle.pem\n"},
+		{name: "CA bundle symlink", manifest: true, metadata: both, file: true, blink: true, wantCode: 1, want: missing + "BUNDLE/egress-ca-bundle.pem\n"},
+		{name: "CA bundle outside bundle", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem","egress_ca_bundle":"../b.pem"}`, file: true, wantCode: 1, want: "died: Invalid Workcell injection source path: ../b.pem\n"},
+		{name: "agent manifest", manifest: true, agent: true, metadata: both, file: true, bundle: true, wantCode: 1, want: "died: Workcell refused an injection manifest that is not the session bundle: BUNDLE/manifest.json\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -730,18 +739,23 @@ printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
 					env["SESSION_MANIFEST"] = "/opt/workcell/host-injections/manifest.json"
 				}
 			}
-			ca := filepath.Join(bundle, "egress-ca.pem")
-			if tc.file {
-				if err := os.WriteFile(ca, []byte("-----BEGIN CERTIFICATE-----\n"), 0o600); err != nil {
-					t.Fatal(err)
+			for _, f := range []struct {
+				name       string
+				file, link bool
+			}{{"egress-ca.pem", tc.file, tc.link}, {"egress-ca-bundle.pem", tc.bundle, tc.blink}} {
+				path := filepath.Join(bundle, f.name)
+				if f.file {
+					if err := os.WriteFile(path, []byte("-----BEGIN CERTIFICATE-----\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
 				}
-			}
-			if tc.link {
-				if err := os.WriteFile(filepath.Join(bundle, "real.pem"), nil, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink("real.pem", ca); err != nil {
-					t.Fatal(err)
+				if f.link {
+					if err := os.WriteFile(path+".real", nil, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(f.name+".real", path); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 			code, output := runBashProbe(t, probe, env)
@@ -752,5 +766,23 @@ printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
 				t.Fatalf("probe = %d %q, want %d and %q", code, output, tc.wantCode, want)
 			}
 		})
+	}
+}
+
+// TestProviderWrapperClearsCodexCACertificate proves that the provider
+// wrapper clears CODEX_CA_CERTIFICATE before it sets it from the session
+// bundle, so an agent cannot point Codex at its own trust root.
+func TestProviderWrapperClearsCodexCACertificate(t *testing.T) {
+	t.Parallel()
+	probe := `set -euo pipefail
+eval "$(sed -n '/^sanitize_provider_env() {$/,/^}$/p' "${PROBE_SCRIPT}")"
+workcell_sanitize_git_runtime_env() { :; }
+export CODEX_CA_CERTIFICATE=/workspace/evil.pem SSL_CERT_FILE=/workspace/evil.pem NODE_EXTRA_CA_CERTS=/workspace/evil.pem
+sanitize_provider_env
+printf '%s|%s|%s\n' "${CODEX_CA_CERTIFICATE-unset}" "${SSL_CERT_FILE-unset}" "${NODE_EXTRA_CA_CERTS-unset}"
+`
+	code, output := runBashProbe(t, probe, map[string]string{"PROBE_SCRIPT": filepath.Join(repoRoot(t), "runtime", "container", "provider-wrapper.sh")})
+	if code != 0 || output != "unset|unset|unset\n" {
+		t.Fatalf("probe = %d %q, want every CA variable cleared", code, output)
 	}
 }

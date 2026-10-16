@@ -597,14 +597,16 @@ workcell_manifest_source_path() {
   printf '%s/%s\n' "$(workcell_manifest_root)" "${relative_path}"
 }
 
-# workcell_egress_ca_cert_path prints the session CA that the injection
-# manifest lists, and nothing when it lists none. The launcher writes the CA
-# into the bundle when the session brokers a credential. A listed CA that is
-# missing stops the launch, because the brokered provider cannot connect.
-# The agent can set WORKCELL_INJECTION_MANIFEST for a provider it starts, so
-# only the read-only bundle mount counts; any other path stops, or an
-# agent-written manifest could name an agent-written trust root.
-workcell_egress_ca_cert_path() {
+# workcell_egress_ca_file_path prints the bundle file that the injection
+# manifest lists under .metadata.<key>, and nothing when it lists none. The
+# launcher writes the session CA (egress_ca_cert) and the CA bundle
+# (egress_ca_bundle) into the bundle when the session brokers a credential. A
+# listed file that is missing stops the launch, because the brokered provider
+# cannot connect. The agent can set WORKCELL_INJECTION_MANIFEST for a provider
+# it starts, so only the read-only bundle mount counts; any other path stops,
+# or an agent-written manifest could name an agent-written trust root.
+workcell_egress_ca_file_path() {
+  local key="$1"
   local relative_path=""
   local ca_path=""
 
@@ -612,24 +614,33 @@ workcell_egress_ca_cert_path() {
   if [[ "$(workcell_manifest_path)" != "${WORKCELL_SESSION_INJECTION_MANIFEST}" ]]; then
     workcell_die "Workcell refused an injection manifest that is not the session bundle: $(workcell_manifest_path)"
   fi
-  relative_path="$(workcell_manifest_string '.metadata.egress_ca_cert // empty')" || return 1
+  relative_path="$(workcell_manifest_string ".metadata.${key} // empty")" || return 1
   [[ -n "${relative_path}" ]] || return 0
   ca_path="$(workcell_manifest_source_path "${relative_path}")" || return 1
   if [[ -L "${ca_path}" ]] || [[ ! -f "${ca_path}" ]]; then
-    workcell_die "Workcell expected the session CA that the injection manifest lists: ${ca_path}"
+    workcell_die "Workcell expected the session CA file that the injection manifest lists: ${ca_path}"
   fi
   printf '%s\n' "${ca_path}"
 }
 
 # workcell_export_egress_ca_cert makes the provider trust the session CA, in
-# addition to the system roots. Claude and Gemini read NODE_EXTRA_CA_CERTS.
-# Call it after sanitize_provider_env, which clears the variable.
+# addition to the system roots. Claude and Gemini read NODE_EXTRA_CA_CERTS,
+# which adds to the system roots. Codex reads CODEX_CA_CERTIFICATE, so it names
+# the CA bundle, which holds the system roots of the image and the session CA
+# whether Codex adds the file to its roots or replaces them. SSL_CERT_FILE is
+# not used: the exec guard refuses to start a provider from a wrapper that
+# sets it (runtime/container/rust/src/lib.rs). Call it after
+# sanitize_provider_env, which clears all three.
 workcell_export_egress_ca_cert() {
   local ca_path=""
+  local bundle_path=""
 
-  ca_path="$(workcell_egress_ca_cert_path)" || return 1
+  ca_path="$(workcell_egress_ca_file_path egress_ca_cert)" || return 1
   [[ -n "${ca_path}" ]] || return 0
+  bundle_path="$(workcell_egress_ca_file_path egress_ca_bundle)" || return 1
+  [[ -n "${bundle_path}" ]] || workcell_die "Workcell expected the injection manifest to list the session CA bundle."
   export NODE_EXTRA_CA_CERTS="${ca_path}"
+  export CODEX_CA_CERTIFICATE="${bundle_path}"
 }
 
 workcell_validate_direct_mount_path() {
