@@ -935,6 +935,7 @@ func TestSessionShowLines(t *testing.T) {
 		ObservedAt:            "2026-04-08T12:00:30Z",
 		WorkspaceControlPlane: "masked",
 		WorkspaceRepoMcp:      "denied",
+		CredentialMode:        "brokered",
 	})
 
 	want := []string{
@@ -981,6 +982,7 @@ func TestSessionShowLines(t *testing.T) {
 		"transcript_log_path=/tmp/transcript.log",
 		"workspace_control_plane=masked",
 		"workspace_repo_mcp=denied",
+		"credential_mode=brokered",
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("SessionShowLines() len = %d, want %d", len(lines), len(want))

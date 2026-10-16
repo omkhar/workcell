@@ -832,16 +832,16 @@ func TestTornStopRecordNotSuccess(t *testing.T) {
 // export carries mapping_version "2" (was "1" for the single session event).
 // Version "3" added session.parent_session_id and keeps the multi-event stream.
 func TestMappingVersionBumpedForMultiEvent(t *testing.T) {
-	if MappingVersion != "5" {
-		t.Fatalf("mapping must be version 5 after the egress deny events, got %q", MappingVersion)
+	if MappingVersion != "6" {
+		t.Fatalf("mapping must be version 6 after credential_mode, got %q", MappingVersion)
 	}
 	events := mustExport(t, sampleExport(), Options{Now: fixedNow})
 	if len(events) < 2 {
 		t.Fatalf("fixture must produce a multi-event stream, got %d", len(events))
 	}
 	for i, ev := range events {
-		if ev.Metadata.MappingVersion != "5" {
-			t.Errorf("event %d: mapping_version=%q want 5", i, ev.Metadata.MappingVersion)
+		if ev.Metadata.MappingVersion != "6" {
+			t.Errorf("event %d: mapping_version=%q want 6", i, ev.Metadata.MappingVersion)
 		}
 	}
 }
