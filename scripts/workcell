@@ -281,7 +281,8 @@ Options:
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
-  --egress-proxy                Route strict Colima egress only through a per-session SNI proxy sidecar
+  --egress-proxy[=on|off]       Route strict Colima egress only through a per-session SNI proxy sidecar
+                                (the bare flag means on; give it once)
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
   --vm-memory GIB               Colima VM memory in GiB (default: profile value)
@@ -9117,8 +9118,8 @@ while [[ $# -gt 0 ]]; do
       ALLOW_ARBITRARY_COMMAND=1
       shift
       ;;
-    --egress-proxy)
-      EGRESS_PROXY=1
+    --egress-proxy | --egress-proxy=*)
+      set_egress_proxy_setting "$1"
       shift
       ;;
     --ack-breakglass)

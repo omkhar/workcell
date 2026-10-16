@@ -299,6 +299,20 @@ Colima allowlist session with status `1`. This session check does not apply to
 stops only when a rebuild must use that bootstrap set. A prepared image can
 still launch when the session endpoint set is not empty.
 
+### `set_egress_proxy_setting()` / `resolve_egress_proxy()`
+
+`set_egress_proxy_setting` records one `--egress-proxy` flag in
+`EGRESS_PROXY_SETTING`. The module sets that value to empty when it loads, so
+an inherited value never counts. The bare flag means `on`, and
+`--egress-proxy=on` and `--egress-proxy=off` set the value. Any other value
+stops with status `2`. A second flag in any spelling stops with
+status `2`.
+
+`resolve_egress_proxy` takes the target and the mode and owns the decision
+whether the session uses the proxy. It sets `EGRESS_PROXY` to `1` only for
+`on` with the Colima target and the strict mode. `on` with another target or
+mode stops with status `2`.
+
 ### `egress_enforcement_label()`
 
 `egress_enforcement_label` returns `proxy` for an `--egress-proxy` launch. It

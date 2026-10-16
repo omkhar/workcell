@@ -474,6 +474,27 @@ run_dry_run_expect_failure 2 "egress-proxy-development" --agent codex --egress-p
 grep -q '^--egress-proxy supports only --target colima with --mode strict\.$' "${TMP_DIR}/egress-proxy-development.stderr"
 run_dry_run_expect_failure 2 "egress-proxy-docker-desktop" --agent codex --egress-proxy --target docker-desktop
 grep -q '^--egress-proxy supports only --target colima with --mode strict\.$' "${TMP_DIR}/egress-proxy-docker-desktop.stderr"
+# The launcher parser routes every spelling to the one setting owner: =on
+# matches the bare flag, =off keeps the allowlist on any mode, and a bad value
+# or a second flag in any spelling stops before launch.
+run_dry_run "egress-proxy-on-codex" --agent codex --egress-proxy=on
+grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/egress-proxy-on-codex.stderr"
+egress_proxy_route_tokens_ok "${TMP_DIR}/egress-proxy-on-codex.stdout"
+run_dry_run "egress-proxy-off-codex" --agent codex --egress-proxy=off
+grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/egress-proxy-off-codex.stderr"
+if dry_run_argv_lines "${TMP_DIR}/egress-proxy-off-codex.stdout" | grep -qx -- '--network'; then
+  echo "--egress-proxy=off joined a session network" >&2
+  exit 1
+fi
+run_dry_run "egress-proxy-off-development" --agent codex --egress-proxy=off --mode development
+grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/egress-proxy-off-development.stderr"
+run_dry_run_expect_failure 2 "egress-proxy-bad-value" --agent codex --egress-proxy=maybe
+grep -q '^--egress-proxy takes on or off: maybe$' "${TMP_DIR}/egress-proxy-bad-value.stderr"
+for repeated in "--egress-proxy --egress-proxy" "--egress-proxy --egress-proxy=off" "--egress-proxy=off --egress-proxy=on"; do
+  read -r -a repeated_flags <<<"${repeated}"
+  run_dry_run_expect_failure 2 "egress-proxy-repeated" --agent codex "${repeated_flags[@]}"
+  grep -q '^--egress-proxy may be given only once\.$' "${TMP_DIR}/egress-proxy-repeated.stderr"
+done
 
 version_output="$(HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" "${ROOT_DIR}/scripts/workcell" --version)"
 if [[ ! "${version_output}" =~ ^workcell\ v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then

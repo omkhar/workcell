@@ -20,8 +20,8 @@
 # `RUNTIME_NETWORK_ARGS` array `build_runtime_host_aliases` populates — every
 # dependency is defined before the first call site in the main launch path — so
 # they are a self-contained, behaviour-preserving unit.  The --egress-proxy
-# helpers also read `EGRESS_PROXY`, `SESSION_ID`, `ALLOW_ENDPOINTS`,
-# `HOST_DOCKER_BIN` and `DOCKER_RUN`, and call the launcher's
+# helpers set `EGRESS_PROXY_SETTING` and `EGRESS_PROXY`, read `SESSION_ID`,
+# `ALLOW_ENDPOINTS`, `HOST_DOCKER_BIN` and `DOCKER_RUN`, and call the launcher's
 # `run_workcell_docker_client_command`, `run_profile_docker_command` and
 # `profile_sessions_dir_path`.  See
 # docs/launcher-contract.md for the module contract.
@@ -140,14 +140,41 @@ build_runtime_host_aliases() {
 
 # --- Egress proxy (--egress-proxy, strict Colima only) ---
 
+# EGRESS_PROXY_SETTING holds the --egress-proxy value: empty when no flag was
+# given, else on or off. The module sets it here, so no inherited value counts.
+EGRESS_PROXY_SETTING=""
+
+# set_egress_proxy_setting records one --egress-proxy flag in
+# EGRESS_PROXY_SETTING. The bare flag means on. Any other value than on or
+# off, and a second flag in any spelling, stops with status 2, so a later
+# flag never silently overrides an earlier one.
+set_egress_proxy_setting() {
+  local value="on"
+
+  [[ "$1" != --egress-proxy=* ]] || value="${1#--egress-proxy=}"
+  if [[ -n "${EGRESS_PROXY_SETTING}" ]]; then
+    echo "--egress-proxy may be given only once." >&2
+    exit 2
+  fi
+  if [[ "${value}" != "on" ]] && [[ "${value}" != "off" ]]; then
+    echo "--egress-proxy takes on or off: ${value}" >&2
+    exit 2
+  fi
+  EGRESS_PROXY_SETTING="${value}"
+}
+
 # resolve_egress_proxy TARGET MODE owns the decision whether the session
-# routes egress through the proxy sidecar. Only strict Colima can use it, so
-# an explicit --egress-proxy on any other target or mode stops with status 2.
+# routes egress through the proxy sidecar, and sets EGRESS_PROXY. Only strict
+# Colima can use it, so --egress-proxy=on on any other target or mode stops
+# with status 2. --egress-proxy=off is valid everywhere.
 resolve_egress_proxy() {
-  if [[ "${EGRESS_PROXY}" -eq 1 ]] && { [[ "$1" != "colima" ]] || [[ "$2" != "strict" ]]; }; then
+  EGRESS_PROXY=0
+  [[ "${EGRESS_PROXY_SETTING}" == "on" ]] || return 0
+  if [[ "$1" != "colima" ]] || [[ "$2" != "strict" ]]; then
     echo "--egress-proxy supports only --target colima with --mode strict." >&2
     exit 2
   fi
+  EGRESS_PROXY=1
 }
 
 #
