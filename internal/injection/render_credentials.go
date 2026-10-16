@@ -21,6 +21,10 @@ import (
 // that brokers credentials.
 const EgressCACertName = "egress-ca.pem"
 
+// EgressCABundleName is the bundle file that holds the system roots and the
+// session CA, for a client whose SSL_CERT_FILE replaces its system roots.
+const EgressCABundleName = "egress-ca-bundle.pem"
+
 // credentialBroker is what the resolver metadata says about the credential
 // broker: on reports a session that brokers credentials, and brokered names
 // each key that the broker serves.

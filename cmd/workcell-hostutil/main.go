@@ -328,7 +328,7 @@ func helperSubcommands() []helperSubcommand {
 		{"egress-deny-audit-records", 1, 1, cmdHelperEgressDenyAuditRecords},
 		{"credential-broker-audit-records", 1, 1, cmdHelperCredentialBrokerAuditRecords},
 		{"credential-broker-plan", 2, 2, cmdHelperCredentialBrokerPlan},
-		{"publish-egress-ca", 2, 2, cmdHelperPublishEgressCA},
+		{"publish-egress-ca", 3, 3, cmdHelperPublishEgressCA},
 		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
 		{"resolve-host-output-directory-candidate", 1, 1, cmdHelperResolveHostOutputDirectoryCandidate},
 		{"cleanup-stale-injection-bundles", 1, 1, cmdHelperCleanupStaleInjectionBundles},
@@ -919,9 +919,10 @@ func cmdHelperCredentialBrokerPlan(args []string) error {
 }
 
 // cmdHelperPublishEgressCA checks the session CA from the sidecar and
-// publishes it into the bundle: CA_FILE BUNDLE_ROOT.
+// publishes it, and the system roots with it, into the bundle: CA_FILE
+// ROOTS_FILE BUNDLE_ROOT.
 func cmdHelperPublishEgressCA(args []string) error {
-	return injection.PublishEgressCA(args[0], args[1])
+	return injection.PublishEgressCA(args[0], args[1], args[2])
 }
 
 func cmdHelperResolveEndpoints(args []string) error {

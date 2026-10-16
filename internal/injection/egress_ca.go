@@ -26,6 +26,10 @@ import (
 // P-256 certificate in PEM is under 1 KiB.
 const maxEgressCABytes = 16 << 10
 
+// maxSystemRootsBytes bounds the system roots read from the sidecar image.
+// The Debian bundle is about 220 KiB.
+const maxSystemRootsBytes = 1 << 20
+
 // BrokeredCredentialKeys returns, sorted, the keys that the credential broker
 // serves for the bundle at bundleRoot, from its resolver metadata.
 func BrokeredCredentialKeys(bundleRoot string) ([]string, error) {
@@ -82,20 +86,27 @@ func CredentialBrokerPlan(bundleRoot, placeholder string) (string, error) {
 // unexpired CA certificate that expires within egressproxy.MaxCALifetime and
 // may issue only end-entity certificates, with critical name constraints that
 // permit only the hosts of the brokered keys.
-func PublishEgressCA(srcPath, bundleRoot string) error {
+//
+// It also publishes the system roots at rootsPath followed by the session CA
+// as the CA bundle that the manifest lists, for a client whose SSL_CERT_FILE
+// replaces its system roots. The launcher reads the roots from the read-only
+// filesystem of the sidecar, which runs the verified agent image, so the
+// agent cannot add a root; they must be only PEM certificates.
+func PublishEgressCA(srcPath, rootsPath, bundleRoot string) error {
 	manifestData, err := rootio.ReadFileNoFollow(filepath.Join(bundleRoot, "manifest.json"), "injection manifest", rootio.MaxManifestBytes)
 	if err != nil {
 		return err
 	}
 	var manifest struct {
 		Metadata struct {
-			EgressCACert string `json:"egress_ca_cert"`
+			EgressCACert   string `json:"egress_ca_cert"`
+			EgressCABundle string `json:"egress_ca_bundle"`
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return fmt.Errorf("injection manifest: %w", err)
 	}
-	if manifest.Metadata.EgressCACert != EgressCACertName {
+	if manifest.Metadata.EgressCACert != EgressCACertName || manifest.Metadata.EgressCABundle != EgressCABundleName {
 		return errors.New("the injection manifest lists no session CA")
 	}
 	data, err := rootio.ReadFileNoFollow(srcPath, "session CA", maxEgressCABytes)
@@ -132,12 +143,49 @@ func PublishEgressCA(srcPath, bundleRoot string) error {
 	if !excludesEveryIP(cert) {
 		return errors.New("the session CA must exclude every IPv4 and IPv6 address")
 	}
-	parent, path, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(bundleRoot, EgressCACertName))
+	roots, err := readSystemRoots(rootsPath)
+	if err != nil {
+		return err
+	}
+	caPEM := pem.EncodeToMemory(block)
+	if err := publishBundleFile(bundleRoot, EgressCABundleName, append(roots, caPEM...)); err != nil {
+		return err
+	}
+	return publishBundleFile(bundleRoot, EgressCACertName, caPEM)
+}
+
+// readSystemRoots returns the PEM certificates at path, re-encoded, and
+// refuses a file that holds anything else.
+func readSystemRoots(path string) ([]byte, error) {
+	data, err := rootio.ReadFileNoFollow(path, "system roots", maxSystemRootsBytes)
+	if err != nil {
+		return nil, err
+	}
+	var roots []byte
+	for {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("the system roots hold a %s block", block.Type)
+		}
+		roots = append(roots, pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: block.Bytes})...)
+		data = rest
+	}
+	if len(roots) == 0 || len(bytes.TrimSpace(data)) != 0 {
+		return nil, errors.New("the system roots must be only PEM certificates")
+	}
+	return roots, nil
+}
+
+func publishBundleFile(bundleRoot, name string, data []byte) error {
+	parent, path, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(bundleRoot, name))
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
-	return rootio.StageAndPublishAt(parent, filepath.Base(path), pem.EncodeToMemory(block), 0o600, ".egress-ca-")
+	return rootio.StageAndPublishAt(parent, filepath.Base(path), data, 0o600, ".egress-ca-")
 }
 
 // excludesEveryIP reports whether cert permits no IP range and excludes all of

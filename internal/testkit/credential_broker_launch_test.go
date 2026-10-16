@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -316,7 +317,7 @@ go_hostutil() {
   case "$2" in
     credential-broker-plan) printf 'terminate=api.anthropic.com=x-api-key=%s\ncredential=claude_api_key=keychain:workcell-claude-api-key\n' "$4" ;;
     publish-session-capture-file) cp "$3" "$4" ;;
-    publish-egress-ca) ;;
+    publish-egress-ca) printf '%s\n' "${@:3}" >"$DIR/publish" ;;
     *) return 9 ;;
   esac
 }
@@ -346,6 +347,16 @@ printf 'agent=%s\n' "${DOCKER_RUN[*]}"
 		t.Fatalf("agent command or token = %q", out)
 	}
 	calls, _ := os.ReadFile(filepath.Join(dir, "docker"))
+	// The CA bundle takes the system roots of the verified image from the
+	// read-only sidecar, never from the agent container.
+	if !slices.Contains(strings.Split(string(calls), "\n"), "|exec side cat /etc/ssl/certs/ca-certificates.crt") {
+		t.Fatalf("the system roots were not read from the sidecar: %q", calls)
+	}
+	publish, _ := os.ReadFile(filepath.Join(dir, "publish"))
+	if args := strings.Split(string(publish), "\n"); len(args) != 4 || filepath.Base(args[0]) != "ca.pem" ||
+		args[1] != filepath.Join(filepath.Dir(args[0]), "roots.pem") {
+		t.Fatalf("publish-egress-ca arguments = %q, want the CA, the roots and the bundle", publish)
+	}
 	for _, call := range strings.Split(strings.TrimSuffix(string(calls), "\n"), "\n") {
 		env, args, _ := strings.Cut(call, "|")
 		create := strings.HasPrefix(args, "create --name side ")

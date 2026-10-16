@@ -522,12 +522,16 @@ start_egress_proxy() {
   fi
   CREDENTIAL_BROKER_TOKEN=""
   # The sidecar wrote the session CA before it listened. The host helper checks
-  # it as untrusted input and publishes it into the bundle for the agent.
+  # it as untrusted input and publishes it into the bundle for the agent, with
+  # the system roots of the verified image from the read-only sidecar.
   if [[ -n "${CREDENTIAL_BROKER_DIR:-}" ]]; then
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" exec "${EGRESS_PROXY_CONTAINER}" \
       cat /run/workcell-egress/ca.pem >"${CREDENTIAL_BROKER_DIR}/ca.pem" || return 1
-    go_hostutil helper publish-egress-ca "${CREDENTIAL_BROKER_DIR}/ca.pem" "${INJECTION_BUNDLE_ROOT}" || return 1
-    rm -f "${CREDENTIAL_BROKER_DIR}/ca.pem"
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" exec "${EGRESS_PROXY_CONTAINER}" \
+      cat /etc/ssl/certs/ca-certificates.crt >"${CREDENTIAL_BROKER_DIR}/roots.pem" || return 1
+    go_hostutil helper publish-egress-ca "${CREDENTIAL_BROKER_DIR}/ca.pem" "${CREDENTIAL_BROKER_DIR}/roots.pem" \
+      "${INJECTION_BUNDLE_ROOT}" || return 1
+    rm -f "${CREDENTIAL_BROKER_DIR}/ca.pem" "${CREDENTIAL_BROKER_DIR}/roots.pem"
   fi
   for i in "${!DOCKER_RUN[@]}"; do
     # Only the generated --add-host values before the image carry the token. A
