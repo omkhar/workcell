@@ -509,3 +509,66 @@ if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; k
 		})
 	}
 }
+
+// TestDetachedStopPathsStopTheBroker runs the two stop paths of a detached
+// brokered session with the real proxy and broker stop and a fake broker
+// process: the monitor's stop_egress_proxy_then_finalize, and a session stop
+// whose monitor is gone (finish_stopped_session_fallback). Each stops the
+// broker, removes its state file and appends its summary before the seal. A
+// live detached brokered run reads the login Keychain, so this stubbed run is
+// the automated gate for that path.
+func TestDetachedStopPathsStopTheBroker(t *testing.T) {
+	paths := map[string]struct{ body, seal string }{
+		"monitor": {launcherFunction(t, "stop_egress_proxy_then_finalize") + `
+EGRESS_PROXY_STARTED=1 EGRESS_PROXY_CONTAINER=wc-egress-S1 EGRESS_PROXY_NETWORK=wc-S1
+finalize_session_audit() { printf 'seal %s\n' "$*" >>"$DIR/audit"; }
+stop_egress_proxy_then_finalize prof path 0
+`, "seal prof path 0\n"},
+		"session stop with a dead monitor": {launcherFunction(t, "finish_stopped_session_fallback") + `
+SESSION_META_CONTAINER_NAME=c SESSION_META_CURRENT_ASSURANCE=managed-mutable
+egress_proxy_network_for_session() { printf 'wc-%s\n' "$2"; }
+session_container_exit_code() { printf '7\n'; }
+session_write_stop_requested_terminal_record() { :; }
+sign_session_audit_head_explicit() { printf 'seal %s\n' "$*" >>"$DIR/audit"; }
+finish_stopped_session_fallback prof S1 rec.json
+`, "prof S1 exit source=host-stop-fallback exit_status=7 final_assurance=managed-mutable\nseal prof S1 rec.json\n"},
+	}
+	for name, path := range paths {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			private := filepath.Join(dir, "wcb.AbC123")
+			for _, d := range []string{filepath.Join(dir, "sessions"), private} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(private, "ledger.jsonl"), []byte("{}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := brokerLaunchProbe(t, dir, `
+run_profile_docker_command() { :; }
+(exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.AbC123/b.sock --guest-socket /tmp/workcell-broker-S1.sock" sleep 30) &
+pid=$!
+printf '%s %s\n' "$pid" "$DIR/wcb.AbC123" >"$DIR/sessions/S1.broker"
+for _ in {1..40}; do [[ "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
+`+path.body+`
+if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; kill "$pid"; else echo stopped; fi
+`)
+			if err != nil || !strings.HasSuffix(out, "stopped\n") {
+				t.Fatalf("the broker outlived the stop: %v\n%s", err, out)
+			}
+			got, _ := os.ReadFile(filepath.Join(dir, "audit"))
+			want := "prof S1 credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n" +
+				"prof S1 egress_summary status=unreadable\n" + path.seal
+			if string(got) != want {
+				t.Fatalf("audit steps = %q, want %q", got, want)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "sessions", "S1.broker")); !os.IsNotExist(err) {
+				t.Fatalf("state file remains: %v", err)
+			}
+			if colima, _ := os.ReadFile(filepath.Join(dir, "colima")); string(colima) != "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n" {
+				t.Fatalf("colima calls = %q, want the guest socket removal", colima)
+			}
+		})
+	}
+}

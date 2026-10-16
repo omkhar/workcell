@@ -595,3 +595,32 @@ func TestKeychainItemsMatchGrants(t *testing.T) {
 		t.Errorf("KeychainItem(codex_auth) = %q, want none", item)
 	}
 }
+
+// TestListenRefusesASocketDirectoryWithAnExtendedACL is part of the
+// broker-host-socket-private gate: an ACL on the socket directory or on an
+// ancestor can let another uid replace entries without showing in the mode bits.
+func TestListenRefusesASocketDirectoryWithAnExtendedACL(t *testing.T) {
+	addACL := []string{"/bin/chmod", "+a", "everyone allow add_file,delete_child"}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("setfacl"); err != nil {
+			t.Skip("setfacl is not installed")
+		}
+		addACL = []string{"setfacl", "-n", "-m", "u:" + strconv.Itoa(os.Getuid()+1) + ":rwx"}
+	}
+	dir := socketDir(t)
+	if out, err := exec.Command(addACL[0], append(addACL[1:], dir)...).CombinedOutput(); err != nil {
+		t.Fatalf("add ACL: %v: %s", err, out)
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(dir, "b.sock"), filepath.Join(sub, "b.sock")} {
+		if socket, err := listen(path); !errors.Is(err, rootio.ErrExtendedACL) {
+			if err == nil {
+				socket.close()
+			}
+			t.Fatalf("listen(%s) under a directory with an extended ACL = %v, want ErrExtendedACL", path, err)
+		}
+	}
+}
