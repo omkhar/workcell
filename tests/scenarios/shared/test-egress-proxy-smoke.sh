@@ -2,7 +2,8 @@
 # Real Colima smoke for --egress-proxy: an allowlisted host works through the
 # sidecar, and a denied SNI, an IP literal and a DNS lookup all fail. The
 # per-session network and sidecar are gone after an attached run and after a
-# detached session stops.
+# detached session stops. A brokered Claude key reaches the upstream only
+# through the sidecar: the agent holds a placeholder, never the key.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -20,7 +21,8 @@ cleanup() {
   local file=""
 
   if [[ "${status}" -ne 0 ]]; then
-    for file in prepare.stderr probe.stdout probe.stderr detached.stdout detached.stderr; do
+    for file in prepare.stderr probe.stdout probe.stderr detached.stdout detached.stderr \
+      broker.stdout broker.stderr broker-missing.stderr; do
       [[ -f "${TMP_DIR}/${file}" ]] || continue
       printf -- '--- %s ---\n' "${file}" >&2
       cat "${TMP_DIR}/${file}" >&2
@@ -34,6 +36,9 @@ cleanup() {
   rm -rf "${REAL_HOME}/.colima/_lima/colima-${PROFILE}"
   rm -rf "${REAL_HOME}/.colima/_lima/_disks/colima-${PROFILE}"
   rm -f "${REAL_HOME}/.colima/_store/colima-${PROFILE}.json"
+  for file in smoke empty; do
+    [[ ! -f "${TMP_DIR}/${file}.keychain-db" ]] || security delete-keychain "${TMP_DIR}/${file}.keychain-db" || status=1
+  done
   rm -rf "${TMP_DIR}"
   exit "${status}"
 }
@@ -144,5 +149,73 @@ assert_no_proxy_residue "a detached session stop"
 deny_log="$(find "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets" \
   -path "*/${PROFILE}/sessions/${session_id}.egress-deny.jsonl" -type f | head -n 1)"
 grep -q '"host":"example.com"' "${deny_log}"
+
+# A throwaway keychain holds a canary key; -T lets /usr/bin/security read it
+# without a prompt. The harness-only knob points the broker at this keychain.
+keychain_password="$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')"
+canary="sk-canary-$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')"
+for file in smoke empty; do
+  security create-keychain -p "${keychain_password}" "${TMP_DIR}/${file}.keychain-db"
+  security set-keychain-settings "${TMP_DIR}/${file}.keychain-db"
+  security unlock-keychain -p "${keychain_password}" "${TMP_DIR}/${file}.keychain-db"
+done
+security add-generic-password -s workcell-claude-api-key -a smoke -w "${canary}" \
+  -T /usr/bin/security "${TMP_DIR}/smoke.keychain-db"
+printf 'version = 1\n\n[credentials.claude_api_key]\nresolver = "keychain-broker"\n' >"${TMP_DIR}/broker-policy.toml"
+broker_flags=(--agent claude --workspace "${WORKSPACE}" --colima-profile "${PROFILE}"
+  --injection-policy "${TMP_DIR}/broker-policy.toml" --egress-proxy
+  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}")
+brokered_workcell() {
+  local keychain="$1"
+  shift
+  WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1 WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN="${keychain}" \
+    /bin/bash -p "${ROOT_DIR}/scripts/workcell" "$@"
+}
+cat >"${TMP_DIR}/broker-probe.sh" <<'EOF'
+bundle=/opt/workcell/host-injections
+placeholder="$(cat "$(jq -r '.credentials.claude_api_key.mount_path' "${bundle}/manifest.json")")"
+echo "placeholder=${placeholder}"
+curl -sS -o /dev/null -w 'status=%{http_code}\n' --max-time 30 --cacert "${bundle}/egress-ca.pem" \
+  -H "x-api-key: ${placeholder}" -H 'anthropic-version: 2023-06-01' https://api.anthropic.com/v1/models || echo "status=fail"
+echo "canary_hits=$({ env; cat /proc/[0-9]*/environ; grep -rs . "${bundle}" "${HOME}/.claude"; } 2>/dev/null | grep -c sk-canary)"
+EOF
+brokered_workcell "${TMP_DIR}/smoke.keychain-db" "${broker_flags[@]}" -- bash -c "$(cat "${TMP_DIR}/broker-probe.sh")" \
+  >"${TMP_DIR}/broker.stdout" 2>"${TMP_DIR}/broker.stderr"
+grep -q '^credential_mode=brokered$' "${TMP_DIR}/broker.stderr"
+grep -Eq '^placeholder=wcph-[0-9a-f]{32}$' "${TMP_DIR}/broker.stdout"
+# The canary is not a real key, so the upstream answers 401: the swapped
+# request left the sidecar. A 502 would mean the proxy refused it.
+grep -q '^status=401$' "${TMP_DIR}/broker.stdout"
+grep -q '^canary_hits=0$' "${TMP_DIR}/broker.stdout"
+audit_log="$(sed -n 's/^execution_path=.* audit_log=//p' "${TMP_DIR}/broker.stderr")"
+broker_session="$(grep 'event=launch' "${audit_log}" | grep 'credential_mode=brokered' | tail -n 1 |
+  sed -n 's/.*session_id=\([^ ]*\).*/\1/p')"
+[[ -n "${broker_session}" ]]
+ledger="$(find "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets" \
+  -path "*/${PROFILE}/sessions/${broker_session}.broker.jsonl" -type f)"
+grep '"result":"granted"' "${ledger}" | grep -q '"header":"x-api-key"'
+[[ -f "${ledger%.broker.jsonl}.egress-deny.jsonl" ]]
+if grep -q "${canary}" "${ledger}" || grep -q placeholder_unswapped "${ledger%.broker.jsonl}.egress-deny.jsonl" ||
+  [[ -e "${ledger%.jsonl}" ]]; then
+  echo "the brokered run left the key, an unswapped placeholder or the broker state" >&2
+  exit 1
+fi
+assert_no_proxy_residue "a brokered run"
+
+# Without the Keychain item the broker stops the launch before the agent runs.
+if brokered_workcell "${TMP_DIR}/empty.keychain-db" "${broker_flags[@]}" -- true >/dev/null 2>"${TMP_DIR}/broker-missing.stderr"; then
+  echo "a brokered launch without the Keychain item started" >&2
+  exit 1
+fi
+grep -q 'did not open its guest socket' "${TMP_DIR}/broker-missing.stderr"
+assert_no_proxy_residue "a brokered launch without the Keychain item"
+
+# The detached re-exec drops the harness-only keychain knob, so a brokered
+# detached session needs a login Keychain item and is not part of this smoke.
+guest_sockets="$(COLIMA_HOME="${REAL_HOME}/.colima" colima ssh --profile "${PROFILE}" -- ls /tmp)"
+if grep -q '^workcell-broker-' <<<"${guest_sockets}"; then
+  echo "a credential broker guest socket remains in the VM" >&2
+  exit 1
+fi
 
 echo "Egress proxy smoke scenario passed"

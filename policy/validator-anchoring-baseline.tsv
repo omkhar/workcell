@@ -59,7 +59,7 @@ internal/metadatautil	TestSelectCopilotStableReportsCoolOffSkippedStableRelease	
 internal/metadatautil	TestSelectCopilotStableSkipsPrereleaseAndMissingAssetsThenSelectsCompatible	6a02b904,a656257a	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestStripCommentsRemovesCommentProse	0ec57caa,6c14ba0f,8413caa1,ceb66e88	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestV1ContractHistoryLogArgsAreCompleteAndSignatureFree	84938076	unreviewed debt in a test: review the subject, then port or justify
-internal/metadatautil	TestValidateEgressProxySidecarRejectsEvasions	6f4ef6ae,72ff511f,db6f293d,e5726c69	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestValidateEgressProxySidecarRejectsEvasions	72ff511f,97c7551b,db6f293d,e5726c69	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingVerifierAttestations	88ace8a2,c061caba	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestValidateUpstreamRefreshWorkflowRejectsMutations	84f95350	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites	cc0c4208,cc0c4208	unreviewed debt in a test: review the subject, then port or justify
@@ -312,6 +312,7 @@ internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, th
 internal/testkit	RequireEncodedFieldIsInert	31229c8f	unreviewed debt: review the subject, then port or justify
 internal/testkit	TestAppleSiliconOnlyHostGuardsArePinned	12bf8293,1610ce33,d4416723	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestAptWrapperForwardsOnlyEnvironmentTheBrokerAdmits	3a5aa90d,4b6e3eae,c2736a2a	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestBrokerSocketAndTokenReachOnlyTheSidecar	45e589bd,62837735,747d7c0a,d2c9241d	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestBuildAndTestDockerModeUsesSnapshotBackedValidatorRun	1163fce5,40b2fa73,60ff6d56	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestC3CertificationEntrypointSanitizesBuildControl	1e6707af,b2d0873d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCIPlanGitCollectorBindsCanonicalWorktreeAndOverridesLocalConfig	4c932dc3	unreviewed debt in a test: review the subject, then port or justify
@@ -342,6 +343,7 @@ internal/testkit	TestCommitMsgHookRejectsInvalidSubjects	cfc4e2dc	unreviewed deb
 internal/testkit	TestCommitMsgHookRejectsSubjectWhenCommentCharIsRiskSymbol	413ca48e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestContainerSmokeFailureTrapHonorsErrexitState	6cb2ed52,ad0cb1e1	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCountFlagOccurrencesIgnoresAValueContainingTheFlag	6729b737	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestCredentialBrokerTestKeychainIsHarnessOnly	c4efab32	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestDebianSnapshotFreshnessDefaultsToSixtyDays	c80aa4b9	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDevQuickCheckStaysBoundedToFastLocalWork	74632a22,86556805	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestDocClaimsNegativeControls	22845559,e3845a40	unreviewed debt in a test: review the subject, then port or justify
@@ -410,6 +412,9 @@ internal/testkit	TestRunCodespellPrintsOffendingLines	e39abc3c	unreviewed debt i
 internal/testkit	TestRuntimeUserKeepsNoShellBrokerState	b320fcfa	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestSafePathDocDocumentsRepoPublishWrapperBeforeLowerLevelHelper	135686ee,5eba53e0,d9108578	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestStartAptBrokerDelegatesToTheServerBinary	514a97c9	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestStartCredentialBrokerKeepsTheTokenOutOfArgv	0632cc2e,4f007e97,b1471bd1,e2d4f54b	the pattern checks the output of a stubbed launcher function run, not script text
+internal/testkit	TestStartCredentialBrokerRollsBackEveryFailure	10de7dda,29448914,85ca1424	the pattern checks the output of a stubbed launcher function run, not script text
+internal/testkit	TestStopCredentialBrokerSignalsOnlyThisSessionBroker	748626f1,9b1b8084	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStopEgressProxyDenyLogPublish	9941dc0e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient	3d8902ef,5498922e,9f5547ec,a40bd0ec,a6771e85,d3b1f9a1,fffc2f3b	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUninstallKeepsTrustedDockerSandboxOfRunningProcess	5a401a06	unreviewed debt in a test: review the subject, then port or justify

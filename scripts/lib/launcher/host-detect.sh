@@ -27,7 +27,8 @@ support_matrix_host_override_allowed() {
       *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \
       *"tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh"* | \
       *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"* | \
-      *"tests/scenarios/shared/test-linux-colima-qemu-dry-run.sh"*)
+      *"tests/scenarios/shared/test-linux-colima-qemu-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-egress-proxy-smoke.sh"*)
       return 0
       ;;
   esac

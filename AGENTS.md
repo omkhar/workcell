@@ -220,6 +220,19 @@ argument again. Do not start another review round to settle them.
   the series plan carries the visibility. Scheduled work is not a rebuttal
   and not a fix.
 
+- **Egress sidecar broker socket.** Under `--egress-proxy` with a
+  `keychain-broker` key, the per-session egress proxy sidecar gets the guest
+  credential-broker socket and the session token. This is the approved E-4
+  design, an owner decision. The sidecar is not the agent runtime: the agent
+  container gets only `wcph-` placeholders. Answer the finding with this
+  disposition, and do not change the design.
+
+  `TestBrokerSocketAndTokenReachOnlyTheSidecar` in
+  `internal/testkit/credential_broker_launch_test.go` keeps the socket mount
+  and the token on the sidecar create only.
+  `internal/metadatautil/egress_proxy_sidecar.go` pins that create and
+  `start_credential_broker`.
+
 ## Pull request workflow
 
 - For publish, PR follow-up, or merge requests in this repository, use the

@@ -33,7 +33,7 @@ func TestResolveSourceRunsFixedSecurityWithScrubbedEnv(t *testing.T) {
 	t.Setenv("WORKCELL_LEAK_CANARY", "leak")
 	t.Setenv("PATH", t.TempDir())
 	dir := fakeSecurity(t, `printf '%s\n' "$@" > "$(dirname "$0")/args"; env > "$(dirname "$0")/env"; printf 'sk-from-keychain\n'`)
-	value, err := resolveSource(context.Background(), "keychain:workcell-claude/me@example")
+	value, err := resolveSource(context.Background(), "keychain:workcell-claude/me@example", "")
 	if err != nil || value != "sk-from-keychain" {
 		t.Fatalf("resolveSource = %q, %v", value, err)
 	}
@@ -45,30 +45,37 @@ func TestResolveSourceRunsFixedSecurityWithScrubbedEnv(t *testing.T) {
 	if strings.Contains(string(env), "WORKCELL_LEAK_CANARY") || !strings.Contains(string(env), "PATH=/usr/bin:/bin") {
 		t.Fatalf("security env not scrubbed: %s", env)
 	}
-	if _, err := resolveSource(context.Background(), "keychain:svc"); err != nil {
+	if _, err := resolveSource(context.Background(), "keychain:svc", ""); err != nil {
 		t.Fatalf("service-only source: %v", err)
 	}
 	args, _ = os.ReadFile(filepath.Join(dir, "args"))
 	if strings.Contains(string(args), "-a") {
 		t.Fatalf("service-only source passed an account: %q", args)
 	}
+	if _, err := resolveSource(context.Background(), "keychain:svc", "/tmp/smoke.keychain-db"); err != nil {
+		t.Fatalf("keychain file source: %v", err)
+	}
+	args, _ = os.ReadFile(filepath.Join(dir, "args"))
+	if got := strings.Join(strings.Fields(string(args)), " "); got != "find-generic-password -s svc -w /tmp/smoke.keychain-db" {
+		t.Fatalf("keychain file args = %q", got)
+	}
 }
 
 func TestResolveSourceFailsClosed(t *testing.T) {
 	fakeSecurity(t, "echo 'security: item not found' >&2; exit 44\n")
-	if _, err := resolveSource(context.Background(), "keychain:svc"); err == nil || !strings.Contains(err.Error(), "exit status 44") {
+	if _, err := resolveSource(context.Background(), "keychain:svc", ""); err == nil || !strings.Contains(err.Error(), "exit status 44") {
 		t.Fatalf("missing item = %v", err)
 	}
 	fakeSecurity(t, "printf 'a\\nb\\n'\n")
-	if _, err := resolveSource(context.Background(), "keychain:svc"); err == nil {
+	if _, err := resolveSource(context.Background(), "keychain:svc", ""); err == nil {
 		t.Fatal("multi-line value accepted")
 	}
 	fakeSecurity(t, "printf '\\n'\n")
-	if _, err := resolveSource(context.Background(), "keychain:svc"); err == nil {
+	if _, err := resolveSource(context.Background(), "keychain:svc", ""); err == nil {
 		t.Fatal("empty value accepted")
 	}
 	for _, source := range []string{"file:/x", "keychain:", "keychain:/acct", "keychain:svc/", "svc"} {
-		if _, err := resolveSource(context.Background(), source); err == nil {
+		if _, err := resolveSource(context.Background(), source, ""); err == nil {
 			t.Fatalf("resolveSource accepted %q", source)
 		}
 	}
@@ -111,7 +118,7 @@ while [ ! -f "$(dirname "$0")/stop" ]; do sleep 0.05; done
 		}
 	}
 	args, _ := os.ReadFile(argsFile)
-	want := "-F /cfg -N -o ExitOnForwardFailure=yes -R /tmp/workcell-broker-s1.sock:" + socket + " colima-wcl"
+	want := "-F /cfg -N -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none -R /tmp/workcell-broker-s1.sock:" + socket + " colima-wcl"
 	if got := strings.Join(strings.Fields(string(args)), " "); got != want {
 		t.Fatalf("ssh args = %q, want %q", got, want)
 	}
@@ -156,6 +163,8 @@ func TestMainRejectsBadArguments(t *testing.T) {
 		"repeated --log=":    append(append([]string(nil), valid...), "--log=/tmp/other"),
 		"repeated token-fd":  append(append([]string(nil), valid...), "-token-fd=98"),
 		"repeated ssh-host":  append(append([]string(nil), valid...), "--ssh-host", "other"),
+		"relative keychain":  append(append([]string(nil), valid...), "--keychain", "smoke.keychain-db"),
+		"repeated keychain":  append(append([]string(nil), valid...), "--keychain", "/a", "--keychain=/b"),
 	} {
 		var exit *cliexit.ExitCodeError
 		if err := Main(args); !errors.As(err, &exit) || exit.Code != 2 {

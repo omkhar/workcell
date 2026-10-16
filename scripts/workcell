@@ -23,6 +23,7 @@ scrub_host_process_env() {
     unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO
     unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION
     unset WORKCELL_TEST_KVM_DEVICE
+    unset WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN
   fi
   unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
   unset RUBYOPT RUBYLIB GEM_HOME GEM_PATH
@@ -5763,6 +5764,7 @@ prepare_injection_bundle() {
     "--doctor=${DOCTOR:-0}" \
     "--inspect=${INSPECT:-0}" \
     "--dry-run=${DRY_RUN:-0}" \
+    "--broker-credentials=${EGRESS_PROXY:-0}" \
     "--synthetic-codex-auth=${synthetic_codex}" \
     "--synthetic-claude-export=${synthetic_claude}" \
     "--real-home=${REAL_HOME}" \
@@ -9999,6 +10001,7 @@ DOCKER_STATUS=0
 run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
   EGRESS_PROXY_STARTED=1
+  start_credential_broker || exit 1
   start_egress_proxy "${CURRENT_IMAGE_ID}" || exit 1
 fi
 if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
