@@ -110,7 +110,7 @@ func PublishEgressCA(srcPath, bundleRoot string) error {
 	if err != nil {
 		return fmt.Errorf("session CA: %w", err)
 	}
-	if !cert.IsCA || !cert.MaxPathLenZero || !egressproxy.ValidCAExpiry(cert.NotAfter, time.Now()) {
+	if !cert.IsCA || !cert.MaxPathLenZero || !cert.NotAfter.After(time.Now()) || !egressproxy.ValidCALifetime(cert.NotBefore, cert.NotAfter) {
 		return fmt.Errorf("the session CA must be a CA with path length 0 that expires within %s", egressproxy.MaxCALifetime)
 	}
 	keys, err := BrokeredCredentialKeys(bundleRoot)

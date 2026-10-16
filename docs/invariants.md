@@ -295,9 +295,15 @@ smoke is a certification scenario, so only the local certification lane of
 `scripts/run-scenario-tests.sh` runs it. No CI or pre-merge lane runs it.
 
 `session-ca-constrained`: the session CA that reaches the agent is a CA with
-path length 0. Its critical DNS name constraints permit only the brokered
-hosts, and it excludes every IPv4 and IPv6 address. It is unexpired and
-expires within 24 hours.
+path length 0. Its critical DNS name constraints name only the brokered hosts,
+and it excludes every IPv4 and IPv6 address. An X.509 DNS name constraint also
+permits subdomains of a named host. The sidecar signs leaves only for the
+exact terminate hosts, and the CA key stays in the sidecar's memory.
+
+The CA's own validity period, from `NotBefore` to `NotAfter`, is at most 24
+hours plus a one-minute backdate. It must be unexpired on the host clock. The
+period check needs no clock, so skew between the host and the VM does not
+refuse a valid CA.
 
 `internal/injection/egress_ca.go` (`PublishEgressCA`) refuses any other CA from
 the sidecar before the launcher publishes it, and

@@ -74,8 +74,10 @@ The fixes are below.
 - The decoder for audit records now rejects NUL bytes (#739).
 - `session delete` now stops a credential broker that a failed launch left
   without a proxy network, and removes its state file and ledger (#862).
-- `publish-egress-ca` now refuses a session CA that expires more than 24 hours
-  from now (`internal/injection/egress_ca.go`).
+- `publish-egress-ca` now refuses a session CA whose own validity period is
+  longer than 24 hours plus the one-minute backdate. It checks the period, not
+  the host clock, so VM clock skew does not refuse a valid CA
+  (`internal/injection/egress_ca.go`).
 
 ### Added
 
