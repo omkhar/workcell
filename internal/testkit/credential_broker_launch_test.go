@@ -168,3 +168,133 @@ if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; k
 		})
 	}
 }
+
+// TestStartCredentialBrokerRollsBackEveryFailure fails each step of the start
+// in turn. Every failure after the private directory exists stops a started
+// broker, removes the guest socket and the private directory, and clears the
+// token, so a failed launch leaves no forward and no resolved key behind.
+func TestStartCredentialBrokerRollsBackEveryFailure(t *testing.T) {
+	broker := "#!/bin/bash\n[[ ! -f \"${0%/*}/exit-now\" ]] || exit 3\nexec -a \"fakebroker ${0%/*} \" sleep 30\n"
+	for _, fail := range []string{"ssh-config", "state", "publish", "exit", "timeout", "chown"} {
+		t.Run(fail, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "broker"), []byte(broker), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if fail == "exit" {
+				if err := os.WriteFile(filepath.Join(dir, "exit-now"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := brokerLaunchProbe(t, dir, `
+sleep() { command sleep 0.05; SECONDS=$((SECONDS + 10)); }
+go_tool_bin() {
+  GO_TOOL_BIN="$DIR/broker"
+  [[ "$FAIL" != state ]] || mkdir "${CREDENTIAL_BROKER_DIR}/state"
+}
+go_hostutil() {
+  case "$2" in
+    credential-broker-plan) printf 'credential=claude_api_key=keychain:workcell-claude-api-key\n' ;;
+    publish-session-capture-file) [[ "$FAIL" != publish ]] && cp "$3" "$4" ;;
+    *) return 9 ;;
+  esac
+}
+run_host_colima() {
+  printf '%s\n' "$*" >>"$DIR/colima"
+  case "$FAIL $*" in
+    "ssh-config ssh-config"* | "timeout ssh --profile prof -- test -S"* | "exit ssh --profile prof -- test -S"* | "chown ssh --profile prof -- sudo chown"*) return 1 ;;
+  esac
+  [[ "$1" != ssh-config ]] || printf 'Host colima-prof\n'
+}
+if start_credential_broker; then echo started; fi
+printf 'token=[%s] dir=[%s]\n' "$CREDENTIAL_BROKER_TOKEN" "$CREDENTIAL_BROKER_DIR"
+# A broker that was not stopped would sleep for 30 seconds.
+for _ in {1..40}; do
+  running="$(ps -axo command=)"
+  grep -qF -- "fakebroker $DIR " <<<"$running" || break
+  command sleep 0.05
+done
+if grep -qF -- "fakebroker $DIR " <<<"$running"; then echo alive; fi
+`, "FAIL="+fail)
+			if err != nil || strings.Contains(out, "started") || !strings.Contains(out, "token=[] dir=[]") {
+				t.Fatalf("start did not fail and roll back: %v\n%s", err, out)
+			}
+			if strings.Contains(out, "alive") {
+				t.Fatalf("the broker still runs after the failed start\n%s", out)
+			}
+			colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
+			if !strings.HasSuffix(string(colima), "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n") {
+				t.Fatalf("guest socket not removed last: %q", colima)
+			}
+			if left, _ := filepath.Glob(filepath.Join(dir, "wcb.*")); len(left) != 0 {
+				t.Fatalf("private directory left behind: %v", left)
+			}
+		})
+	}
+}
+
+// TestBrokerSocketAndTokenReachOnlyTheSidecar runs the real broker start and
+// sidecar start with a recording docker client. Only the sidecar create gets
+// the guest socket mount and the token, and the token rides only that call's
+// environment. The agent command gets neither the socket, the token name nor
+// the token value; it gets only the placeholder that the bundle stages.
+func TestBrokerSocketAndTokenReachOnlyTheSidecar(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broker"), []byte("#!/bin/bash\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, err := brokerLaunchProbe(t, dir, `
+EGRESS_PROXY_NETWORK=net EGRESS_PROXY_CONTAINER=side ALLOW_ENDPOINTS=api.anthropic.com:443 HOST_DOCKER_BIN=docker IMAGE_TAG=img
+DOCKER_RUN=(docker run --add-host api.anthropic.com:egress-proxy-ip img claude)
+go_hostutil() {
+  case "$2" in
+    credential-broker-plan) printf 'terminate=api.anthropic.com=x-api-key=%s\ncredential=claude_api_key=keychain:workcell-claude-api-key\n' "$4" ;;
+    publish-session-capture-file) cp "$3" "$4" ;;
+    publish-egress-ca) ;;
+    *) return 9 ;;
+  esac
+}
+run_workcell_docker_client_command() {
+  shift
+  printf '%s|%s\n' "${WORKCELL_BROKER_TOKEN:-}" "$*" >>"$DIR/docker"
+  case "$1 $2" in
+    "network inspect") printf '10.9.0.0/24 \n' ;;
+    "inspect -f") printf '10.9.0.2\n' ;;
+    "exec side") [[ "$3" != cat || "$4" != /proc/net/tcp ]] || printf '  0: 0200090A:01BB 00000000:0000 0A 0\n' ;;
+  esac
+}
+start_credential_broker
+token="$CREDENTIAL_BROKER_TOKEN"
+start_egress_proxy sha256:abc
+read -r pid _ <"$DIR/sessions/S1.broker"
+kill "$pid"
+printf 'token=%s\n' "$token"
+printf 'agent=%s\n' "${DOCKER_RUN[*]}"
+`)
+	if err != nil {
+		t.Fatalf("probe failed: %v\n%s", err, out)
+	}
+	lines := strings.Split(out, "\n")
+	token := strings.TrimPrefix(lines[0], "token=")
+	if lines[1] != "agent=docker run --add-host api.anthropic.com:10.9.0.2 img claude" || len(token) != 64 {
+		t.Fatalf("agent command or token = %q", out)
+	}
+	calls, _ := os.ReadFile(filepath.Join(dir, "docker"))
+	for _, call := range strings.Split(strings.TrimSuffix(string(calls), "\n"), "\n") {
+		env, args, _ := strings.Cut(call, "|")
+		create := strings.HasPrefix(args, "create --name side ")
+		if (env != "") != create || (env != "" && env != token) {
+			t.Fatalf("token environment on the wrong call: %q", call)
+		}
+		if strings.Contains(args, "/run/workcell-broker.sock") != create || strings.Contains(args, "WORKCELL_BROKER_TOKEN") != create ||
+			strings.Contains(args, token) {
+			t.Fatalf("broker socket or token on the wrong call: %q", call)
+		}
+	}
+}

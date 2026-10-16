@@ -223,18 +223,37 @@ start_credential_broker() {
   # The socket path must stay under the 104-byte limit, and every ancestor
   # must pass the broker's private-parent check, so the real path is used.
   CREDENTIAL_BROKER_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wcb.XXXXXX")" || return 1
-  CREDENTIAL_BROKER_DIR="$(cd "${CREDENTIAL_BROKER_DIR}" && pwd -P)" || return 1
-  run_host_colima ssh-config --profile "${COLIMA_PROFILE}" >"${CREDENTIAL_BROKER_DIR}/ssh_config" || return 1
-  chmod 0600 "${CREDENTIAL_BROKER_DIR}/ssh_config" || return 1
+  CREDENTIAL_BROKER_DIR="$(cd "${CREDENTIAL_BROKER_DIR}" && pwd -P)" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
+  run_host_colima ssh-config --profile "${COLIMA_PROFILE}" >"${CREDENTIAL_BROKER_DIR}/ssh_config" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
+  chmod 0600 "${CREDENTIAL_BROKER_DIR}/ssh_config" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
   # Colima sshd does not unlink a stale socket before it binds, so the forward
   # would fail on one left by an earlier run.
-  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo rm -f -- "${guest}" || return 1
-  CREDENTIAL_BROKER_TOKEN="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" || return 1
+  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo rm -f -- "${guest}" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
+  CREDENTIAL_BROKER_TOKEN="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
   if [[ ! "${CREDENTIAL_BROKER_TOKEN}" =~ ^[0-9a-f]{64}$ ]]; then
     echo "workcell: could not create the credential broker session token." >&2
+    abort_credential_broker "${pid}" "${guest}"
     return 1
   fi
-  go_tool_bin workcell-hostutil || return 1
+  go_tool_bin workcell-hostutil || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
   (cd / && exec env -i PATH="${TRUSTED_HOST_PATH}" HOME="${REAL_HOME}" LC_ALL=C LANG=C \
     "${GO_TOOL_BIN}" credential-broker-cli serve --socket "${CREDENTIAL_BROKER_DIR}/b.sock" --token-fd 3 \
     --ssh-config "${CREDENTIAL_BROKER_DIR}/ssh_config" --ssh-host "colima-${COLIMA_PROFILE}" \
@@ -243,20 +262,49 @@ start_credential_broker() {
     3<<<"${CREDENTIAL_BROKER_TOKEN}" </dev/null >/dev/null 2>"${CREDENTIAL_BROKER_DIR}/broker.log" &
   pid="$!"
   disown "${pid}"
-  printf '%s %s\n' "${pid}" "${CREDENTIAL_BROKER_DIR}" >"${CREDENTIAL_BROKER_DIR}/state" || return 1
+  printf '%s %s\n' "${pid}" "${CREDENTIAL_BROKER_DIR}" >"${CREDENTIAL_BROKER_DIR}/state" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
   go_hostutil helper publish-session-capture-file "${CREDENTIAL_BROKER_DIR}/state" \
-    "$(profile_sessions_dir_path "${COLIMA_PROFILE}")/${SESSION_ID}.broker" >/dev/null || return 1
+    "$(profile_sessions_dir_path "${COLIMA_PROFILE}")/${SESSION_ID}.broker" >/dev/null || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
   # The first read of a Keychain item can wait for the owner's answer.
   deadline=$((SECONDS + 150))
   until run_host_colima ssh --profile "${COLIMA_PROFILE}" -- test -S "${guest}" 2>/dev/null; do
     if ! kill -0 "${pid}" 2>/dev/null || ((SECONDS >= deadline)); then
       echo "workcell: the credential broker did not open its guest socket ${guest}." >&2
       cat "${CREDENTIAL_BROKER_DIR}/broker.log" >&2
+      abort_credential_broker "${pid}" "${guest}"
       return 1
     fi
     sleep 1
   done
-  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo chown 65532:65532 -- "${guest}" || return 1
+  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo chown 65532:65532 -- "${guest}" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
+}
+
+# abort_credential_broker undoes a start that failed after the private
+# directory exists: it stops the broker it started, if any, removes the guest
+# socket and the private directory, and clears the token. A failed launch then
+# leaves no forward and no resolved key behind. The exit cleanup still runs
+# stop_credential_broker for a state file that was published.
+abort_credential_broker() {
+  local pid="$1"
+  local guest="$2"
+
+  if [[ -n "${pid}" ]]; then
+    kill -TERM "${pid}" || echo "workcell: warning: could not stop the credential broker ${pid}." >&2
+  fi
+  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo rm -f -- "${guest}" >/dev/null ||
+    echo "workcell: warning: could not remove the credential broker socket ${guest} in the VM." >&2
+  rm -rf "${CREDENTIAL_BROKER_DIR}"
+  CREDENTIAL_BROKER_DIR=""
+  CREDENTIAL_BROKER_TOKEN=""
 }
 
 # stop_credential_broker stops the broker of a session from its state file
