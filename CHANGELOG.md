@@ -62,8 +62,8 @@ The GitHub Releases page contains old details that are not in this file.
   ChatGPT OAuth stays direct.
 - A brokered session publishes `egress-ca-bundle.pem`, the image system roots
   and the session CA, and the manifest lists it as `egress_ca_bundle`. The
-  provider wrapper points `SSL_CERT_FILE` at it and clears
-  `CODEX_CA_CERTIFICATE`. `publish-egress-ca` now takes the roots file too.
+  provider wrapper clears any agent `CODEX_CA_CERTIFICATE` and sets it to the
+  bundle. `publish-egress-ca` now takes the roots file too.
 
 ### Security hardening
 

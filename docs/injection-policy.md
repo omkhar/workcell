@@ -183,11 +183,17 @@ of the image, then the session CA.
 
 The provider wrapper clears the provider
 environment, including `CODEX_CA_CERTIFICATE`. Then it sets
-`NODE_EXTRA_CA_CERTS` to the CA and `SSL_CERT_FILE` to the CA bundle. Claude
-and Gemini read `NODE_EXTRA_CA_CERTS`, which adds to the system roots. Codex
-reads `SSL_CERT_FILE`, which replaces them, so the bundle holds both. A listed
-file that is absent or a symbolic link stops the provider
+`NODE_EXTRA_CA_CERTS` to the CA and `CODEX_CA_CERTIFICATE` to the CA bundle.
+Claude and Gemini read `NODE_EXTRA_CA_CERTS`, which adds to the system roots.
+Codex reads `CODEX_CA_CERTIFICATE`. The bundle holds the roots and the CA, so
+it works whether Codex adds the file or replaces its roots. A listed file that
+is absent or a symbolic link stops the provider
 (`runtime/container/home-control-plane.sh`).
+
+The wrapper never sets
+`SSL_CERT_FILE`, because the exec guard refuses a provider start with it
+(`runtime/container/rust/src/lib.rs`). `TestHomeControlPlaneExportsEgressCACert`
+in `internal/testkit/security_boundary_test.go` enforces it.
 
 The wrapper reads
 the CA files only from the read-only bundle mount,

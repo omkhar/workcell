@@ -64,7 +64,7 @@ Residual risk: the agent can use and copy OAuth tokens.
 
 ## Session CA trust in child processes
 
-The provider wrapper sets `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE`, and the
+The provider wrapper sets `NODE_EXTRA_CA_CERTS` and `CODEX_CA_CERTIFICATE`, and the
 provider's child processes inherit them. Those processes also trust the session
 CA. The CA can sign only for the brokered hosts, and its key stays in the
 sidecar's memory (`internal/egressproxy/terminate.go`).
