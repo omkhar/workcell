@@ -289,8 +289,11 @@ command gets neither the token nor the broker socket.
 
 The live canary check is in `tests/scenarios/shared/test-egress-proxy-smoke.sh`.
 It stores a random `sk-canary-` key in a throwaway keychain. A brokered Claude
-run then counts the canary in its environment, in each readable
-`/proc/*/environ`, in the bundle and in the provider home. It must count 0. The
+run and a brokered Codex run then count the canary. They count it in the
+environment, in each readable `/proc/*/environ`, in the bundle and in the
+provider home. Each must count 0.
+
+The real Codex binary must also reach OpenAI through the CA bundle. The
 smoke is a certification scenario, so only the local certification lane of
 `scripts/run-scenario-tests.sh` runs it. No CI or pre-merge lane runs it.
 
@@ -308,6 +311,12 @@ refuse a valid CA.
 `internal/injection/egress_ca.go` (`PublishEgressCA`) refuses any other CA from
 the sidecar before the launcher publishes it, and
 `internal/injection/egress_ca_test.go` enforces each refusal.
+
+The CA bundle for `CODEX_CA_CERTIFICATE` holds the image system roots and this CA.
+The launcher reads the roots from the read-only sidecar, not from the agent
+container. `PublishEgressCA` accepts only PEM certificates there, and
+`TestPublishEgressCAWritesTheRootsBundle` in
+`internal/injection/egress_ca_test.go` enforces it.
 `internal/egressproxy/terminate.go` owns the 24-hour bound for both the sidecar
 and the publisher.
 

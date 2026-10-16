@@ -54,6 +54,16 @@ The GitHub Releases page contains old details that are not in this file.
   reads a saved broker ledger as untrusted input and prints one summary record.
 - `--egress-proxy` sessions append `credential_broker_start` after the broker
   starts and `credential_broker_summary` when it stops, before the seal.
+- The `keychain-broker` resolver serves `codex_auth` in Codex API-key mode from
+  the Keychain item `workcell-codex-api-key`. The agent gets
+  `{"OPENAI_API_KEY":"<placeholder>"}`, and the proxy puts the key only into
+  the `Authorization` header to `api.openai.com`. A Codex `auth.json` with
+  `OPENAI_API_KEY` from `source` stops an `--egress-proxy` launch. Codex
+  ChatGPT OAuth stays direct.
+- A brokered session publishes `egress-ca-bundle.pem`, the image system roots
+  and the session CA, and the manifest lists it as `egress_ca_bundle`. The
+  provider wrapper clears any agent `CODEX_CA_CERTIFICATE` and sets it to the
+  bundle. `publish-egress-ca` now takes the roots file too.
 
 ### Security hardening
 
