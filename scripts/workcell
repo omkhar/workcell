@@ -9187,10 +9187,7 @@ validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
 validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
-if [[ "${EGRESS_PROXY}" -eq 1 ]] && { [[ "${TARGET_BACKEND}" != "colima" ]] || [[ "${MODE}" != "strict" ]]; }; then
-  echo "--egress-proxy supports only --target colima with --mode strict." >&2
-  exit 2
-fi
+resolve_egress_proxy "${TARGET_BACKEND}" "${MODE}"
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
   echo "--target-id only supports --target aws-ec2-ssm or --target gcp-vm." >&2
   exit 2

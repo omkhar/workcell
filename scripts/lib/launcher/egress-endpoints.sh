@@ -139,6 +139,17 @@ build_runtime_host_aliases() {
 }
 
 # --- Egress proxy (--egress-proxy, strict Colima only) ---
+
+# resolve_egress_proxy TARGET MODE owns the decision whether the session
+# routes egress through the proxy sidecar. Only strict Colima can use it, so
+# an explicit --egress-proxy on any other target or mode stops with status 2.
+resolve_egress_proxy() {
+  if [[ "${EGRESS_PROXY}" -eq 1 ]] && { [[ "$1" != "colima" ]] || [[ "$2" != "strict" ]]; }; then
+    echo "--egress-proxy supports only --target colima with --mode strict." >&2
+    exit 2
+  fi
+}
+
 #
 # The agent joins only the per-session internal network wc-<session>, with no
 # resolver. Each allowlisted host maps to the sidecar proxy, which peeks at the
