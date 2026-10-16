@@ -95,11 +95,17 @@ type SessionCA struct {
 	leaves map[string]*tls.Certificate
 }
 
+// ValidCAExpiry reports whether a session CA that expires at notAfter is
+// unexpired at now and expires within MaxCALifetime of now.
+func ValidCAExpiry(notAfter, now time.Time) bool {
+	return notAfter.After(now) && notAfter.Sub(now) <= MaxCALifetime
+}
+
 // NewSessionCA returns a CA whose critical name constraints permit only hosts
 // and no IP address. notAfter must be in the future and within MaxCALifetime.
 func NewSessionCA(hosts []string, notAfter time.Time) (*SessionCA, error) {
 	now := time.Now()
-	if !notAfter.After(now) || notAfter.Sub(now) > MaxCALifetime {
+	if !ValidCAExpiry(notAfter, now) {
 		return nil, fmt.Errorf("session CA expiry must be within %s from now", MaxCALifetime)
 	}
 	if len(hosts) == 0 {
