@@ -62,6 +62,7 @@ type SessionRecord struct {
 	BootstrapID           string `json:"bootstrap_id,omitempty"`
 	ImageRef              string `json:"image_ref,omitempty"`
 	ParentSessionID       string `json:"parent_session_id,omitempty"`
+	EgressEnforcement     string `json:"egress_enforcement,omitempty"`
 }
 
 type SessionListOptions struct {
@@ -260,6 +261,7 @@ func SessionShowLines(record SessionRecord) []string {
 		fmt.Sprintf("workspace_control_plane=%s", record.WorkspaceControlPlane),
 		fmt.Sprintf("workspace_repo_mcp=%s", record.WorkspaceRepoMcp),
 		fmt.Sprintf("credential_mode=%s", record.CredentialMode),
+		fmt.Sprintf("egress_enforcement=%s", record.EgressEnforcement),
 	}
 }
 
@@ -515,6 +517,8 @@ func encodeSessionRecordFrom(existing []byte, updates map[string]string, source 
 			record.WorkspaceRepoMcp = value
 		case "credential_mode":
 			record.CredentialMode = value
+		case "egress_enforcement":
+			record.EgressEnforcement = value
 		case "bootstrap_id":
 			record.BootstrapID = value
 		case "image_ref":
@@ -1029,6 +1033,7 @@ func validateSessionRecord(record SessionRecord, source string) error {
 		{name: "workspace_control_plane", value: record.WorkspaceControlPlane},
 		{name: "workspace_repo_mcp", value: record.WorkspaceRepoMcp},
 		{name: "credential_mode", value: record.CredentialMode},
+		{name: "egress_enforcement", value: record.EgressEnforcement},
 		{name: "bootstrap_id", value: record.BootstrapID},
 		{name: "image_ref", value: record.ImageRef},
 		{name: "parent_session_id", value: record.ParentSessionID},

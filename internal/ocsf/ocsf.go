@@ -69,7 +69,10 @@ const OCSFSchemaVersion = "1.3.0"
 // "7": the credential_broker_start record is a recognized lifecycle event with
 // audit.key and audit.item, and the credential_broker_summary record one with
 // audit.granted and audit.denied.
-const MappingVersion = "7"
+//
+// "8": the session-summary event gained session.egress_enforcement, and the
+// launch record gained audit.egress_enforcement (proxy, allowlist or none).
+const MappingVersion = "8"
 
 // OCSF Application Lifecycle classification constants.
 const (
@@ -352,6 +355,7 @@ func sessionEvent(rec sessions.SessionRecord, redact func(string) string, logged
 	unmapped.putStr("session.workspace_control_plane", rec.WorkspaceControlPlane, redact)
 	unmapped.putStr("session.workspace_repo_mcp", rec.WorkspaceRepoMcp, redact)
 	unmapped.putStr("session.credential_mode", rec.CredentialMode, redact)
+	unmapped.putStr("session.egress_enforcement", rec.EgressEnforcement, redact)
 	unmapped.putStr("session.git_branch", rec.GitBranch, redact)
 	unmapped.putStr("session.git_head", rec.GitHead, redact)
 	unmapped.putStr("session.git_base", rec.GitBase, redact)
