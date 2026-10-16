@@ -105,7 +105,9 @@ func auditEncodingForProvider(provider string) auditEncoding {
 //	  printf 'timestamp\nprev_digest\nrecord_digest\nv\n'; } | sort -u
 //
 // The egress proxy deny records add host, port, count, deny_keys, deny_total
-// and malformed_lines (egressproxy.DenyAuditRecords prints them).
+// and malformed_lines (egressproxy.DenyAuditRecords prints them). The credential
+// broker records add key, item, granted and denied (credbroker.StartAuditRecord
+// and credbroker.LedgerAuditRecords print them).
 // (`event` comes from the bash bodies; the apple-container writers emit it as a
 // literal so it is not matched by =%s but is already covered.) A new legitimate
 // writer key not yet listed degrades safely to the redacted bucket, not a leak.
@@ -137,6 +139,7 @@ var knownAuditFields = map[string]struct{}{
 	"deny_keys":                          {},
 	"deny_total":                         {},
 	"debug_log_enabled":                  {},
+	"denied":                             {},
 	"endpoints":                          {},
 	"event":                              {},
 	"execution_path":                     {},
@@ -144,12 +147,15 @@ var knownAuditFields = map[string]struct{}{
 	"final_assurance":                    {},
 	"force":                              {},
 	"github_auth_present":                {},
+	"granted":                            {},
 	"host":                               {},
 	"image_ref":                          {},
 	"injection_credential_keys":          {},
 	"injection_policy_sha256":            {},
 	"injection_secret_copy_targets":      {},
 	"injection_ssh_enabled":              {},
+	"item":                               {},
+	"key":                                {},
 	"log_level":                          {},
 	"malformed_lines":                    {},
 	"materialization_id":                 {},

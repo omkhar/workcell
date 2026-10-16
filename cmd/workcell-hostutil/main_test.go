@@ -784,6 +784,34 @@ func TestWriteEgressDenyAuditRecords(t *testing.T) {
 	}
 }
 
+// TestWriteCredentialBrokerAuditRecords prints the summary of a saved broker
+// ledger and refuses a symbolic link in its place, so the launcher writes the
+// unreadable summary instead of reading a file another process chose.
+func TestWriteCredentialBrokerAuditRecords(t *testing.T) {
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "S1.broker.jsonl")
+	line := `{"time":"2026-10-16T00:00:00Z","host":"api.anthropic.com","header":"x-api-key","credential":"claude_api_key","result":"granted"}`
+	if err := os.WriteFile(ledger, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := writeCredentialBrokerAuditRecords(&out, ledger); err != nil {
+		t.Fatal(err)
+	}
+	want := "credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n"
+	if out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+	link := filepath.Join(dir, "link.jsonl")
+	if err := os.Symlink(ledger, link); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := writeCredentialBrokerAuditRecords(&out, link); err == nil || out.Len() != 0 {
+		t.Fatalf("symlinked ledger: err = %v, output = %q; want an error and no output", err, out.String())
+	}
+}
+
 // TestParsePrepareBundleArgsBrokerCredentials maps --broker-credentials onto
 // the prepare option; only 1 or true turns it on.
 func TestParsePrepareBundleArgsBrokerCredentials(t *testing.T) {

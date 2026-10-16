@@ -47,6 +47,11 @@ The GitHub Releases page contains old details that are not in this file.
   publishes it into the bundle. `injection-prepare-bundle` accepts
   `--broker-credentials`. The brokered keys use the fixed login Keychain items
   `workcell-claude-api-key` and `workcell-gemini-api-key`.
+- The OCSF export maps the `credential_broker_start` and
+  `credential_broker_summary` audit records to lifecycle events with
+  `audit.key`, `audit.item`, `audit.granted` and `audit.denied`. The mapping
+  version moved to `7`. The `credential-broker-audit-records` host helper
+  reads a saved broker ledger as untrusted input and prints one summary record.
 
 ### Security hardening
 
