@@ -1107,11 +1107,18 @@ func cmdHelperLookupStateRoots(args []string) error {
 
 func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, error) {
 	opts := &injection.PrepareBundleOptions{ProcessPID: os.Getpid()}
+	seen := map[string]bool{}
 	for _, arg := range args {
 		key, value, ok := strings.Cut(arg, "=")
 		if !ok {
 			return nil, fmt.Errorf("expected KEY=VALUE, got %q", arg)
 		}
+		// A repeated flag is refused, so a later value cannot undo an earlier
+		// one, such as --broker-credentials=0 after --broker-credentials=1.
+		if seen[key] {
+			return nil, fmt.Errorf("duplicate flag: %s", key)
+		}
+		seen[key] = true
 		switch key {
 		case "--agent":
 			opts.Agent = value

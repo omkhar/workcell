@@ -793,4 +793,12 @@ func TestParsePrepareBundleArgsBrokerCredentials(t *testing.T) {
 			t.Errorf("--broker-credentials=%s: BrokerCredentials = %v, %v; want %v", value, opts != nil && opts.BrokerCredentials, err, want)
 		}
 	}
+	for _, args := range [][]string{
+		{"--broker-credentials=1", "--broker-credentials=0"},
+		{"--agent=claude", "--broker-credentials=1", "--agent=codex"},
+	} {
+		if _, err := parsePrepareBundleArgs(args); err == nil || !strings.Contains(err.Error(), "duplicate flag") {
+			t.Errorf("parsePrepareBundleArgs(%q) error = %v, want a duplicate flag error", args, err)
+		}
+	}
 }

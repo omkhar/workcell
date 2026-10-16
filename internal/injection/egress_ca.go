@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -125,10 +126,32 @@ func PublishEgressCA(srcPath, bundleRoot string) error {
 			return fmt.Errorf("the session CA permits %q, which no brokered key uses", domain)
 		}
 	}
+	if !excludesEveryIP(cert) {
+		return errors.New("the session CA must exclude every IPv4 and IPv6 address")
+	}
 	parent, path, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(bundleRoot, EgressCACertName))
 	if err != nil {
 		return err
 	}
 	defer parent.Close()
 	return rootio.StageAndPublishAt(parent, filepath.Base(path), pem.EncodeToMemory(block), 0o600, ".egress-ca-")
+}
+
+// excludesEveryIP reports whether cert permits no IP range and excludes all of
+// IPv4 and IPv6, the constraints egressproxy.NewSessionCA sets, so the CA
+// cannot sign a certificate for an IP address.
+func excludesEveryIP(cert *x509.Certificate) bool {
+	if len(cert.PermittedIPRanges) != 0 {
+		return false
+	}
+	var v4, v6 bool
+	for _, r := range cert.ExcludedIPRanges {
+		ones, bits := r.Mask.Size()
+		if ones != 0 {
+			continue
+		}
+		v4 = v4 || (bits == 32 && r.IP.Equal(net.IPv4zero))
+		v6 = v6 || (bits == 128 && r.IP.Equal(net.IPv6zero))
+	}
+	return v4 && v6
 }

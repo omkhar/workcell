@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -120,6 +121,10 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 		t.PermittedDNSDomainsCritical, t.PermittedDNSDomains = true, []string{"api.anthropic.com"}
 		t.NotBefore, t.NotAfter = now.Add(-time.Hour), now.Add(time.Hour)
 		t.KeyUsage = x509.KeyUsageCertSign
+		t.ExcludedIPRanges = []*net.IPNet{
+			{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)},
+			{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)},
+		}
 		return t
 	}
 	other, _ := egressproxy.NewSessionCA([]string{"example.com"}, now.Add(time.Hour))
@@ -172,6 +177,30 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 				t.Fatal("no basic constraints to edit")
 			}
 			return os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: edited}), 0o600)
+		},
+		"no IP exclusions": func(p string) error {
+			c := constrained(&x509.Certificate{})
+			c.ExcludedIPRanges = nil
+			selfSigned(t, p, c)
+			return nil
+		},
+		"IPv4 exclusion only": func(p string) error {
+			c := constrained(&x509.Certificate{})
+			c.ExcludedIPRanges = c.ExcludedIPRanges[:1]
+			selfSigned(t, p, c)
+			return nil
+		},
+		"narrow IPv4 exclusion": func(p string) error {
+			c := constrained(&x509.Certificate{})
+			c.ExcludedIPRanges[0] = &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(8, 32)}
+			selfSigned(t, p, c)
+			return nil
+		},
+		"permits an IP range": func(p string) error {
+			c := constrained(&x509.Certificate{})
+			c.PermittedIPRanges = []*net.IPNet{{IP: net.IPv4(192, 0, 2, 0), Mask: net.CIDRMask(24, 32)}}
+			selfSigned(t, p, c)
+			return nil
 		},
 		"not critical": func(p string) error {
 			c := constrained(&x509.Certificate{})
