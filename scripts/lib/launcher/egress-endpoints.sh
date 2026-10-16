@@ -262,7 +262,9 @@ start_credential_broker() {
     3<<<"${CREDENTIAL_BROKER_TOKEN}" </dev/null >/dev/null 2>"${CREDENTIAL_BROKER_DIR}/broker.log" &
   pid="$!"
   disown "${pid}"
-  printf '%s %s\n' "${pid}" "${CREDENTIAL_BROKER_DIR}" >"${CREDENTIAL_BROKER_DIR}/state" || {
+  # The published copy is the durable one: the helper stages it owner-only,
+  # syncs it and its directory, and renames it into place.
+  (umask 077 && printf '%s %s\n' "${pid}" "${CREDENTIAL_BROKER_DIR}" >"${CREDENTIAL_BROKER_DIR}/state") || {
     abort_credential_broker "${pid}" "${guest}"
     return 1
   }
@@ -291,46 +293,77 @@ start_credential_broker() {
 # abort_credential_broker undoes a start that failed after the private
 # directory exists: it stops the broker it started, if any, removes the guest
 # socket and the private directory, and clears the token. A failed launch then
-# leaves no forward and no resolved key behind. The exit cleanup still runs
-# stop_credential_broker for a state file that was published.
+# leaves no forward and no resolved key behind.
 abort_credential_broker() {
-  local pid="$1"
-  local guest="$2"
-
-  if [[ -n "${pid}" ]]; then
-    kill -TERM "${pid}" || echo "workcell: warning: could not stop the credential broker ${pid}." >&2
-  fi
-  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo rm -f -- "${guest}" >/dev/null ||
-    echo "workcell: warning: could not remove the credential broker socket ${guest} in the VM." >&2
-  rm -rf "${CREDENTIAL_BROKER_DIR}"
+  credential_broker_terminate "${COLIMA_PROFILE}" "$1" "$2" "${CREDENTIAL_BROKER_DIR}" ""
   CREDENTIAL_BROKER_DIR=""
   CREDENTIAL_BROKER_TOKEN=""
 }
 
-# stop_credential_broker stops the broker of a session from its state file
-# alone, so the monitor, stop and delete paths need no launcher state. It
-# signals the recorded PID only while that process is the broker of this
-# session. Like the sidecar cleanup, a failure only warns.
-stop_credential_broker() {
-  local profile="$1"
-  local session="$2"
-  local state="" pid="" dir="" guest="" command=""
+# credential_broker_find owns the answer to "which broker serves this
+# session". The launcher can die between the start and the state file, so it
+# reads this uid's processes, not the state file. It compares argv words: the
+# pinned workcell-hostutil binary, then credential-broker-cli serve, and a
+# --guest-socket word that is exactly this session's guest socket. A shell or
+# an editor whose arguments merely mention those words does not match. It sets CREDENTIAL_BROKER_FOUND_PID, and
+# CREDENTIAL_BROKER_FOUND_DIR from the --socket <dir>/b.sock argument when that
+# directory has the private shape and belongs to this user. ps joins argv with
+# spaces: the guest socket holds none, and the directory words are joined back
+# until one ends in /b.sock, then checked.
+credential_broker_find() {
+  local guest="" listing="" pid="" command="" dir="" i=0 match=0
+  local -a words=()
 
-  state="$(profile_sessions_dir_path "${profile}")/${session}.broker" || {
-    echo "workcell: warning: could not find the credential broker state of ${session}." >&2
+  CREDENTIAL_BROKER_FOUND_PID=""
+  CREDENTIAL_BROKER_FOUND_DIR=""
+  guest="$(credential_broker_guest_socket "$1")"
+  listing="$(ps -U "$(id -u)" -o pid=,command=)" || return 1
+  while read -r pid command; do
+    read -r -a words <<<"${command}"
+    [[ "${#words[@]}" -gt 3 && "${words[0]##*/}" == workcell-hostutil-* &&
+      "${words[1]}" == credential-broker-cli && "${words[2]}" == serve ]] || continue
+    match=0
+    dir=""
+    for ((i = 3; i + 1 < ${#words[@]}; i++)); do
+      if [[ "${words[i]}" == --guest-socket && "${words[i + 1]}" == "${guest}" ]]; then
+        match=1
+      elif [[ "${words[i]}" == --socket && -z "${dir}" ]]; then
+        dir="${words[i + 1]}"
+        while [[ "${dir}" != */b.sock ]] && ((i + 2 < ${#words[@]})); do
+          i=$((i + 1))
+          dir="${dir} ${words[i + 1]}"
+        done
+      fi
+    done
+    [[ "${match}" -eq 1 && "${pid}" =~ ^[0-9]+$ ]] || continue
+    CREDENTIAL_BROKER_FOUND_PID="${pid}"
+    dir="${dir%/b.sock}"
+    if [[ "${dir}" == */wcb.?????? && -d "${dir}" && ! -L "${dir}" && -O "${dir}" ]]; then
+      CREDENTIAL_BROKER_FOUND_DIR="${dir}"
+    fi
     return 0
-  }
-  [[ -f "${state}" ]] || return 0
-  guest="$(credential_broker_guest_socket "${session}")"
-  read -r pid dir <"${state}" || pid=""
-  if [[ "${pid}" =~ ^[0-9]+$ ]] && command="$(ps -p "${pid}" -o command=)" &&
-    [[ "${command}" == *" credential-broker-cli serve "*"--guest-socket ${guest} "* ]]; then
+  done <<<"${listing}"
+}
+
+# credential_broker_terminate owns the cleanup of one broker: it signals PID
+# when one is given, removes the guest socket in the VM, publishes the ledger
+# to RECORD.jsonl when RECORD is given, and removes the private directory only
+# when it has the private shape and belongs to this user. A failure only warns.
+credential_broker_terminate() {
+  local profile="$1"
+  local pid="$2"
+  local guest="$3"
+  local dir="$4"
+  local record="$5"
+  local stat=""
+
+  if [[ -n "${pid}" ]]; then
     kill -TERM "${pid}" || echo "workcell: warning: could not stop the credential broker ${pid}." >&2
     # The launcher's own cleanup is the broker's parent, so an exited broker
     # stays a zombie there until the launcher exits.
     for _ in {1..20}; do
-      command="$(ps -p "${pid}" -o stat=)" || break
-      [[ "${command}" != *Z* ]] || break
+      stat="$(ps -p "${pid}" -o stat=)" || break
+      [[ "${stat}" != *Z* ]] || break
       sleep 0.25
     done
   fi
@@ -340,12 +373,36 @@ stop_credential_broker() {
   # home has, so the ledger lives in the private directory until the stop
   # publishes it beside the session record.
   if [[ "${dir}" == */wcb.?????? && -d "${dir}" && ! -L "${dir}" && -O "${dir}" ]]; then
-    [[ ! -f "${dir}/ledger.jsonl" ]] ||
-      go_hostutil helper publish-session-capture-file "${dir}/ledger.jsonl" "${state}.jsonl" >/dev/null ||
-      echo "workcell: warning: could not save the credential broker ledger for ${session}." >&2
+    [[ -z "${record}" || ! -f "${dir}/ledger.jsonl" ]] ||
+      go_hostutil helper publish-session-capture-file "${dir}/ledger.jsonl" "${record}.jsonl" >/dev/null ||
+      echo "workcell: warning: could not save the credential broker ledger." >&2
     rm -rf "${dir}"
   fi
-  rm -f "${state}"
+}
+
+# stop_credential_broker stops the broker of a session from the session id
+# alone, so the monitor, stop and delete paths need no launcher state. The
+# process scan finds a broker even when no state file was written; the state
+# file still names the private directory of a broker that already exited.
+stop_credential_broker() {
+  local profile="$1"
+  local session="$2"
+  local record="" pid="" dir=""
+
+  record="$(profile_sessions_dir_path "${profile}")/${session}.broker" || {
+    echo "workcell: warning: could not find the credential broker state of ${session}." >&2
+    record=""
+  }
+  if [[ -n "${record}" && -f "${record}" ]]; then
+    read -r pid dir <"${record}" || dir=""
+  fi
+  credential_broker_find "${session}" ||
+    echo "workcell: warning: could not list processes to find the credential broker of ${session}." >&2
+  [[ -n "${CREDENTIAL_BROKER_FOUND_PID}" || -n "${dir}" ]] || return 0
+  [[ -z "${CREDENTIAL_BROKER_FOUND_DIR}" ]] || dir="${CREDENTIAL_BROKER_FOUND_DIR}"
+  credential_broker_terminate "${profile}" "${CREDENTIAL_BROKER_FOUND_PID}" \
+    "$(credential_broker_guest_socket "${session}")" "${dir}" "${record}"
+  [[ -z "${record}" ]] || rm -f "${record}"
 }
 
 # start_egress_proxy creates the internal network and runs the sidecar from the
@@ -521,7 +578,12 @@ stop_egress_proxy_for_session() {
   local network=""
 
   network="$(egress_proxy_network_for_session "${profile}" "${SESSION_ID}")" || return 1
-  [[ -n "${network}" ]] || return 0
+  if [[ -z "${network}" ]]; then
+    # A launch that died after the broker start and before the network
+    # create leaves only the broker.
+    stop_credential_broker "${profile}" "${SESSION_ID}"
+    return 0
+  fi
   egress_proxy_names
   stop_egress_proxy "${profile}" "${3:-audit}"
 }

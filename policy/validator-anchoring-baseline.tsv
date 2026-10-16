@@ -414,7 +414,7 @@ internal/testkit	TestSafePathDocDocumentsRepoPublishWrapperBeforeLowerLevelHelpe
 internal/testkit	TestStartAptBrokerDelegatesToTheServerBinary	514a97c9	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestStartCredentialBrokerKeepsTheTokenOutOfArgv	0632cc2e,4f007e97,b1471bd1,e2d4f54b	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStartCredentialBrokerRollsBackEveryFailure	10de7dda,29448914,85ca1424	the pattern checks the output of a stubbed launcher function run, not script text
-internal/testkit	TestStopCredentialBrokerSignalsOnlyThisSessionBroker	9b1b8084	the pattern checks the output of a stubbed launcher function run, not script text
+internal/testkit	TestStopCredentialBrokerSignalsOnlyThisSessionBroker	748626f1,9b1b8084	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStopEgressProxyDenyLogPublish	9941dc0e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient	3d8902ef,5498922e,9f5547ec,a40bd0ec,a6771e85,d3b1f9a1,fffc2f3b	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUninstallKeepsTrustedDockerSandboxOfRunningProcess	5a401a06	unreviewed debt in a test: review the subject, then port or justify

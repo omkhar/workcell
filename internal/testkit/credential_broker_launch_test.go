@@ -117,53 +117,85 @@ func TestCredentialBrokerTestKeychainIsHarnessOnly(t *testing.T) {
 }
 
 // TestStopCredentialBrokerSignalsOnlyThisSessionBroker proves that the stop
-// signals the recorded PID only while it runs this session's broker, removes
-// the guest socket and the private directory, and drops the state file.
+// finds this session's broker by its argv words, with or without the state
+// file, signals only it, removes the guest socket, publishes the ledger and
+// removes the private directory only when it has the private shape. Another
+// session's broker, or this session's socket inside another argument, is left
+// alone.
 func TestStopCredentialBrokerSignalsOnlyThisSessionBroker(t *testing.T) {
+	const bin = "/x/workcell-hostutil-abc "
+	const serve = bin + "credential-broker-cli serve --socket $PRIVATE/b.sock "
+	const s1 = "--guest-socket /tmp/workcell-broker-S1.sock --log l"
 	for _, tc := range []struct {
-		name, guest string
-		killed      bool
+		name, argv             string
+		state, killed, cleaned bool
 	}{
-		{"this session", "/tmp/workcell-broker-S1.sock", true},
-		{"other session", "/tmp/workcell-broker-S2.sock", false},
+		{"state this session", serve + "--token-fd 3 " + s1, true, true, true},
+		{"state other session", serve + "--guest-socket /tmp/workcell-broker-S2.sock", true, false, true},
+		{"no state this session", serve + "--token-fd 3 " + s1, false, true, true},
+		{"no state other session", serve + "--guest-socket /tmp/workcell-broker-S2.sock", false, false, false},
+		{"socket inside another argument", serve + "--ssh-host x--guest-socket /tmp/workcell-broker-S1.sock --log l", false, false, false},
+		{"not a serving broker", bin + "credential-broker-cli --socket $PRIVATE/b.sock " + s1, false, false, false},
+		{"serve words inside a shell command", bin + "x credential-broker-cli serve --socket $PRIVATE/b.sock " + s1, false, false, false},
+		{"another binary", "/bin/zsh credential-broker-cli serve --socket $PRIVATE/b.sock " + s1, false, false, false},
+		{"unshaped socket directory", bin + "credential-broker-cli serve --socket $DIR/keep/b.sock " + s1, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			private := filepath.Join(dir, "wcb.AbC123")
-			if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Mkdir(private, 0o700); err != nil {
-				t.Fatal(err)
+			for _, d := range []string{filepath.Join(dir, "sessions"), private, filepath.Join(dir, "keep")} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := os.WriteFile(filepath.Join(private, "ledger.jsonl"), []byte("{\"result\":\"granted\"}\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			state := "0"
+			if tc.state {
+				state = "1"
+			}
 			out, err := brokerLaunchProbe(t, dir, `
-(exec -a "hostutil credential-broker-cli serve --guest-socket $GUEST --log l" sleep 30) &
+argv="${ARGV//\$PRIVATE/$PRIVATE}"
+argv="${argv//\$DIR/$DIR}"
+(exec -a "$argv" sleep 30) &
 pid=$!
-printf '%s %s\n' "$pid" "$PRIVATE" >"$DIR/sessions/S1.broker"
+[[ "$STATE" != 1 ]] || printf '%s %s\n' "$pid" "$PRIVATE" >"$DIR/sessions/S1.broker"
 for _ in {1..40}; do [[ "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
+credential_broker_find S1
+printf 'found=[%s]\n' "$CREDENTIAL_BROKER_FOUND_DIR"
 stop_credential_broker prof S1
 if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; kill "$pid"; else echo killed; fi
-`, "GUEST="+tc.guest, "PRIVATE="+private)
+`, "ARGV="+tc.argv, "PRIVATE="+private, "STATE="+state)
 			if err != nil {
 				t.Fatalf("stop_credential_broker failed: %v\n%s", err, out)
+			}
+			found := "found=[]"
+			if tc.killed && tc.cleaned {
+				found = "found=[" + private + "]"
+			}
+			if !strings.Contains(out, found+"\n") {
+				t.Fatalf("found directory: want %s\n%s", found, out)
 			}
 			if killed := strings.Contains(out, "killed"); killed != tc.killed {
 				t.Fatalf("killed = %v, want %v\n%s", killed, tc.killed, out)
 			}
 			colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
-			if string(colima) != "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n" {
-				t.Fatalf("colima calls = %q", colima)
+			if want := tc.killed || tc.state; (string(colima) == "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n") != want {
+				t.Fatalf("colima calls = %q, want the guest socket removal %v", colima, want)
 			}
-			if ledger, _ := os.ReadFile(filepath.Join(dir, "sessions", "S1.broker.jsonl")); string(ledger) != "{\"result\":\"granted\"}\n" {
-				t.Fatalf("published ledger = %q", ledger)
+			ledger, _ := os.ReadFile(filepath.Join(dir, "sessions", "S1.broker.jsonl"))
+			_, privateErr := os.Stat(private)
+			if (string(ledger) == "{\"result\":\"granted\"}\n") != tc.cleaned || os.IsNotExist(privateErr) != tc.cleaned {
+				t.Fatalf("ledger = %q, private dir error = %v, want cleaned %v", ledger, privateErr, tc.cleaned)
 			}
-			for _, gone := range []string{private, filepath.Join(dir, "sessions", "S1.broker")} {
-				if _, err := os.Stat(gone); !os.IsNotExist(err) {
-					t.Fatalf("%s remains: %v", gone, err)
+			for _, kept := range []string{filepath.Join(dir, "keep")} {
+				if _, err := os.Stat(kept); err != nil {
+					t.Fatalf("%s removed: %v", kept, err)
 				}
+			}
+			if _, err := os.Stat(filepath.Join(dir, "sessions", "S1.broker")); !os.IsNotExist(err) {
+				t.Fatalf("state file remains: %v", err)
 			}
 		})
 	}
@@ -295,6 +327,49 @@ printf 'agent=%s\n' "${DOCKER_RUN[*]}"
 		if strings.Contains(args, "/run/workcell-broker.sock") != create || strings.Contains(args, "WORKCELL_BROKER_TOKEN") != create ||
 			strings.Contains(args, token) {
 			t.Fatalf("broker socket or token on the wrong call: %q", call)
+		}
+	}
+}
+
+// TestStopEgressProxyForSessionStopsAnOrphanBroker proves that a session with
+// no proxy network still gets its broker stopped: a launch that died after the
+// broker start and before the network create leaves only the broker.
+func TestStopEgressProxyForSessionStopsAnOrphanBroker(t *testing.T) {
+	out, err := brokerLaunchProbe(t, t.TempDir(), `
+egress_proxy_network_for_session() { :; }
+stop_credential_broker() { printf 'broker %s\n' "$*"; }
+stop_egress_proxy() { printf 'proxy %s\n' "$*"; }
+stop_egress_proxy_for_session prof S9 no-audit
+`)
+	if err != nil || out != "broker prof S9\n" {
+		t.Fatalf("stop_egress_proxy_for_session = %q, %v; want only the broker stop", out, err)
+	}
+}
+
+// TestCredentialBrokerTerminateKeepsUnshapedDirectories proves that the
+// cleanup removes only an owned, real wcb.* directory: a directory of another
+// shape and a wcb.* symlink to the private directory both stay.
+func TestCredentialBrokerTerminateKeepsUnshapedDirectories(t *testing.T) {
+	dir := t.TempDir()
+	private := filepath.Join(dir, "wcb.AbC123")
+	for _, d := range []string{private, filepath.Join(dir, "keep")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(private, filepath.Join(dir, "wcb.Sym123")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := brokerLaunchProbe(t, dir, `
+credential_broker_terminate prof "" /tmp/workcell-broker-S1.sock "$DIR/keep" ""
+credential_broker_terminate prof "" /tmp/workcell-broker-S1.sock "$DIR/wcb.Sym123" ""
+`)
+	if err != nil {
+		t.Fatalf("credential_broker_terminate failed: %v\n%s", err, out)
+	}
+	for _, kept := range []string{private, filepath.Join(dir, "keep"), filepath.Join(dir, "wcb.Sym123")} {
+		if _, err := os.Lstat(kept); err != nil {
+			t.Fatalf("%s removed: %v", kept, err)
 		}
 	}
 }

@@ -26,7 +26,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/egress-endpoints.sh",
-      "sha256": "aa08f440ee56b0088c9aaf14be6d191d33cf9a4484e81cbed235a15824f94495"
+      "sha256": "0d9a54013cb2341dbf184811f84084c399f3f8501a988e74d480a8e5514ab6a0"
     },
     {
       "repo_path": "scripts/lib/launcher/generated-adapters.sh",
