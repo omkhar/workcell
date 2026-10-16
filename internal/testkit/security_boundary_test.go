@@ -673,3 +673,84 @@ done
 		t.Fatalf("control-plane mask materialized a workspace .gemini/.env: exit %d: %s", code, output)
 	}
 }
+
+// TestHomeControlPlaneExportsEgressCACert covers the session CA trust: no
+// manifest or no listed CA leaves NODE_EXTRA_CA_CERTS unset, a listed CA sets
+// it to the bundle path, and a listed CA that is missing, a symlink, or
+// outside the bundle stops.
+func TestHomeControlPlaneExportsEgressCACert(t *testing.T) {
+	t.Parallel()
+
+	probe := `set -euo pipefail
+workcell_die() { printf 'died: %s\n' "$*" >&2; exit 3; }
+source() {
+  if [[ "$1" == "/usr/local/libexec/workcell/assurance.sh" ]]; then
+    return 0
+  fi
+  builtin source "$@"
+}
+builtin source "${PROBE_SCRIPT}"
+WORKCELL_SESSION_INJECTION_MANIFEST="${SESSION_MANIFEST-}"
+unset NODE_EXTRA_CA_CERTS
+workcell_export_egress_ca_cert
+printf 'extra=%s\n' "${NODE_EXTRA_CA_CERTS-unset}"
+`
+	cases := []struct {
+		name, metadata string
+		file, link     bool
+		manifest       bool
+		agent          bool // the agent named a manifest outside the bundle mount
+		wantCode       int
+		want           string
+	}{
+		{name: "no manifest", wantCode: 0, want: "extra=unset\n"},
+		{name: "no CA listed", manifest: true, metadata: `{}`, wantCode: 0, want: "extra=unset\n"},
+		{name: "CA listed", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, file: true, wantCode: 0, want: "extra=BUNDLE/egress-ca.pem\n"},
+		{name: "CA missing", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, wantCode: 1, want: "died: Workcell expected the session CA that the injection manifest lists: BUNDLE/egress-ca.pem\n"},
+		{name: "CA symlink", manifest: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, link: true, wantCode: 1, want: "died: Workcell expected the session CA that the injection manifest lists: BUNDLE/egress-ca.pem\n"},
+		{name: "CA outside bundle", manifest: true, metadata: `{"egress_ca_cert":"../egress-ca.pem"}`, wantCode: 1, want: "died: Invalid Workcell injection source path: ../egress-ca.pem\n"},
+		{name: "agent manifest", manifest: true, agent: true, metadata: `{"egress_ca_cert":"egress-ca.pem"}`, file: true, wantCode: 1, want: "died: Workcell refused an injection manifest that is not the session bundle: BUNDLE/manifest.json\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bundle := t.TempDir()
+			env := map[string]string{
+				"PROBE_SCRIPT":                filepath.Join(repoRoot(t), "runtime", "container", "home-control-plane.sh"),
+				"WORKCELL_INJECTION_MANIFEST": "",
+			}
+			if tc.manifest {
+				manifest := filepath.Join(bundle, "manifest.json")
+				if err := os.WriteFile(manifest, []byte(`{"version":1,"metadata":`+tc.metadata+`}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				env["WORKCELL_INJECTION_MANIFEST"] = manifest
+				env["SESSION_MANIFEST"] = manifest
+				if tc.agent {
+					env["SESSION_MANIFEST"] = "/opt/workcell/host-injections/manifest.json"
+				}
+			}
+			ca := filepath.Join(bundle, "egress-ca.pem")
+			if tc.file {
+				if err := os.WriteFile(ca, []byte("-----BEGIN CERTIFICATE-----\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.link {
+				if err := os.WriteFile(filepath.Join(bundle, "real.pem"), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("real.pem", ca); err != nil {
+					t.Fatal(err)
+				}
+			}
+			code, output := runBashProbe(t, probe, env)
+			want := strings.ReplaceAll(tc.want, "BUNDLE", bundle)
+			// Exact output: a path the bundle cannot hold stops at that
+			// check, with one message.
+			if code != tc.wantCode || output != want {
+				t.Fatalf("probe = %d %q, want %d and %q", code, output, tc.wantCode, want)
+			}
+		})
+	}
+}

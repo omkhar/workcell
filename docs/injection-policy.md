@@ -173,6 +173,16 @@ stops the render (`internal/injection/render_credentials.go`). The message
 names both ways out: the Keychain item, or a launch without `--egress-proxy`.
 Gemini OAuth and Vertex settings stay direct.
 
+A session that brokers a key lists the session CA as `egress_ca_cert` in the
+manifest. The provider wrapper sets `NODE_EXTRA_CA_CERTS` to that bundle file
+after it clears the provider environment. Claude and Gemini then trust the CA
+and the system roots. A listed CA that is absent or a symbolic link stops
+the provider (`runtime/container/home-control-plane.sh`). The wrapper reads
+the CA only from the read-only bundle mount,
+`/opt/workcell/host-injections/manifest.json`. A manifest that the agent names
+elsewhere in `WORKCELL_INJECTION_MANIFEST` stops the provider, so the agent
+cannot add a trust root.
+
 ### Rendered credential entry keys
 
 The resolver removes `resolver` and `materialization`. It writes a staged

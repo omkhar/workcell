@@ -469,6 +469,10 @@ workcell_current_effective_codex_rules_mutability() {
     "$(workcell_session_assurance)"
 }
 
+# The launcher mounts the session bundle read-only here. Set in this file, not
+# from the environment, so an agent cannot move it.
+WORKCELL_SESSION_INJECTION_MANIFEST="/opt/workcell/host-injections/manifest.json"
+
 workcell_manifest_active() {
   [[ -n "${WORKCELL_INJECTION_MANIFEST:-}" ]]
 }
@@ -591,6 +595,41 @@ workcell_manifest_source_path() {
   esac
 
   printf '%s/%s\n' "$(workcell_manifest_root)" "${relative_path}"
+}
+
+# workcell_egress_ca_cert_path prints the session CA that the injection
+# manifest lists, and nothing when it lists none. The launcher writes the CA
+# into the bundle when the session brokers a credential. A listed CA that is
+# missing stops the launch, because the brokered provider cannot connect.
+# The agent can set WORKCELL_INJECTION_MANIFEST for a provider it starts, so
+# only the read-only bundle mount counts; any other path stops, or an
+# agent-written manifest could name an agent-written trust root.
+workcell_egress_ca_cert_path() {
+  local relative_path=""
+  local ca_path=""
+
+  workcell_manifest_active || return 0
+  if [[ "$(workcell_manifest_path)" != "${WORKCELL_SESSION_INJECTION_MANIFEST}" ]]; then
+    workcell_die "Workcell refused an injection manifest that is not the session bundle: $(workcell_manifest_path)"
+  fi
+  relative_path="$(workcell_manifest_string '.metadata.egress_ca_cert // empty')" || return 1
+  [[ -n "${relative_path}" ]] || return 0
+  ca_path="$(workcell_manifest_source_path "${relative_path}")" || return 1
+  if [[ -L "${ca_path}" ]] || [[ ! -f "${ca_path}" ]]; then
+    workcell_die "Workcell expected the session CA that the injection manifest lists: ${ca_path}"
+  fi
+  printf '%s\n' "${ca_path}"
+}
+
+# workcell_export_egress_ca_cert makes the provider trust the session CA, in
+# addition to the system roots. Claude and Gemini read NODE_EXTRA_CA_CERTS.
+# Call it after sanitize_provider_env, which clears the variable.
+workcell_export_egress_ca_cert() {
+  local ca_path=""
+
+  ca_path="$(workcell_egress_ca_cert_path)" || return 1
+  [[ -n "${ca_path}" ]] || return 0
+  export NODE_EXTRA_CA_CERTS="${ca_path}"
 }
 
 workcell_validate_direct_mount_path() {

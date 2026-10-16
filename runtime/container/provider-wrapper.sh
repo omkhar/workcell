@@ -451,6 +451,10 @@ declare -a MANAGED_COPILOT_SAFETY_ARGS=(
   "--secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN"
 )
 
+# A session that brokers a credential lists its session CA in the injection
+# manifest.
+workcell_export_egress_ca_cert
+
 case "${AGENT_NAME}" in
   codex)
     codex_first_subcommand "$@"

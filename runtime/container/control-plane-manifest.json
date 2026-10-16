@@ -246,7 +246,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "d0f93dedec1d43e9467aee87d59984e004043d65d4ca1cdb24b6cf2ac605298d"
+      "sha256": "1c7afd2af0cddcef8d0cf685489c07f4fd6c1b574f09ee65049b81b86b93f2a6"
     },
     {
       "kind": "runtime-control-plane",
@@ -264,7 +264,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "59a0f23d4d25b1599ba78203d0223313bd2cd3628fd5f400435a21d184686c0f"
+      "sha256": "0357a21f728dc1344d9253a3c5c066858573ef5c6b682441aad1a08e216b8107"
     },
     {
       "kind": "runtime-control-plane",
