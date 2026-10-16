@@ -61,10 +61,13 @@ func TestLedgerAuditRecordsCountsEveryOtherLineAsMalformed(t *testing.T) {
 		`{` + ts + `,"result":"bad_token","value":"sk-a"}`,
 		`{` + ts + `,"result":"bad_token"} {}`,
 		`{` + ts + `,"result":"bad_token"}x`,
+		`{` + ts + `,"result":"granted","credential":"bogus","credential":"claude_api_key","host":"api.anthropic.com","header":"x-api-key"}`,
+		`{` + ts + `,"result":"granted","result":"bad_token"}`,
+		`[` + ts + `]`,
 	}
 	good := `{` + ts + `,"host":"api.anthropic.com","header":"authorization","credential":"claude_api_key","result":"granted"}`
 	records, err := LedgerAuditRecords(strings.NewReader(strings.Join(append(lines, good), "\n") + "\n"))
-	want := "credential_broker_summary status=malformed granted=1 denied=0 malformed_lines=14"
+	want := "credential_broker_summary status=malformed granted=1 denied=0 malformed_lines=17"
 	if err != nil || len(records) != 1 || records[0] != want {
 		t.Fatalf("LedgerAuditRecords = %q, %v; want [%q]", records, err, want)
 	}
@@ -111,5 +114,23 @@ func TestStartAuditRecordNamesTheKeychainItem(t *testing.T) {
 		if got := StartAuditRecord(key); got != want {
 			t.Errorf("StartAuditRecord(%q) = %q, want %q", key, got, want)
 		}
+	}
+}
+
+// TestLedgerAuditRecordsStopsAtTheRecordLimit bounds the read: past
+// maxLedgerRecords lines the summary stops counting and says so.
+func TestLedgerAuditRecordsStopsAtTheRecordLimit(t *testing.T) {
+	saved := maxLedgerRecords
+	maxLedgerRecords = 3
+	t.Cleanup(func() { maxLedgerRecords = saved })
+	line := `{"time":"2026-10-16T00:00:00Z","result":"bad_token"}` + "\n"
+	records, err := LedgerAuditRecords(strings.NewReader(strings.Repeat(line, 5)))
+	want := "credential_broker_summary status=truncated granted=0 denied=3 malformed_lines=0"
+	if err != nil || len(records) != 1 || records[0] != want {
+		t.Fatalf("LedgerAuditRecords = %q, %v; want [%q]", records, err, want)
+	}
+	records, err = LedgerAuditRecords(strings.NewReader(strings.Repeat(line, 3)))
+	if want := "credential_broker_summary status=complete granted=0 denied=3 malformed_lines=0"; err != nil || records[0] != want {
+		t.Fatalf("at the limit: LedgerAuditRecords = %q, %v; want [%q]", records, err, want)
 	}
 }
