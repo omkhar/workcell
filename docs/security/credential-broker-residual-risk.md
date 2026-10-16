@@ -1,6 +1,6 @@
 # Credential Broker Residual Risk
 
-This record covers `--egress-proxy` sessions that use the `keychain-broker`
+This record covers egress proxy sessions that use the `keychain-broker`
 resolver. The brokered keys are the Claude API key, the Gemini API key and the
 Codex API key. The agent holds only a `wcph-` placeholder. The egress proxy
 sidecar swaps the placeholder for the real key on the wire.
@@ -49,7 +49,7 @@ Residual risk: workspace data can leave through the provider API.
 ## Copilot token
 
 Copilot is not brokered. The agent holds the GitHub token in
-`COPILOT_GITHUB_TOKEN`, also under `--egress-proxy`. Such a session reports
+`COPILOT_GITHUB_TOKEN`, also under the egress proxy. Such a session reports
 `credential_mode=direct`.
 
 Residual risk: the agent can use and copy the GitHub token.
