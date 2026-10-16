@@ -3025,8 +3025,7 @@ workspace_repo_mcp_state() {
 # credential_mode_label reports how the agent holds its provider API key:
 # brokered when the session stages only a placeholder and the egress proxy
 # swaps in the key from the host credential broker, and direct otherwise
-# (OAuth flows, Codex and Copilot keys, and every session without
-# --egress-proxy).
+# (OAuth flows, Copilot tokens, and every session without --egress-proxy).
 credential_mode_label() {
   if [[ -n "${INJECTION_CREDENTIAL_PLACEHOLDER}" ]]; then
     printf 'brokered\n'

@@ -155,6 +155,30 @@ func TestLookupReleasesOnlyGrantedPairs(t *testing.T) {
 	}
 }
 
+// TestCodexKeyGoesOnlyToOpenAIAuthorization pins the Codex API-key grant:
+// the key goes only in the Authorization header to api.openai.com, never to
+// the Codex OAuth hosts.
+func TestCodexKeyGoesOnlyToOpenAIAuthorization(t *testing.T) {
+	s, _ := testServer(t, map[string]string{"codex_auth": "sk-openai"})
+	path := listenServer(t, s)
+	ctx := context.Background()
+	if v, err := Lookup(ctx, path, testToken, "api.openai.com", "authorization"); err != nil || v != "sk-openai" {
+		t.Fatalf("codex lookup = %q, %v", v, err)
+	}
+	for _, pair := range [][2]string{
+		{"api.openai.com", "x-api-key"},
+		{"auth.openai.com", "authorization"},
+		{"chatgpt.com", "authorization"},
+	} {
+		if _, err := Lookup(ctx, path, testToken, pair[0], pair[1]); err != DenyError(ErrNotGranted) {
+			t.Fatalf("lookup %v = %v, want not_granted", pair, err)
+		}
+	}
+	if got := KeychainItem("codex_auth"); got != "workcell-codex-api-key" {
+		t.Fatalf("KeychainItem(codex_auth) = %q", got)
+	}
+}
+
 func TestPeerWithAnotherUIDGetsNoAnswer(t *testing.T) {
 	s, log := testServer(t, map[string]string{"claude_api_key": "sk-claude"})
 	s.uid++
@@ -224,7 +248,7 @@ func TestGrantFiltering(t *testing.T) {
 	if response, _ := s.answer(Request{Token: testToken, Host: "generativelanguage.googleapis.com", Header: "x-goog-api-key"}); response.Error != ErrNotGranted {
 		t.Fatalf("unconfigured gemini = %+v, want not_granted", response)
 	}
-	if _, err := newServer(Config{Token: []byte(testToken), Credentials: map[string]string{"codex_auth": "x"}, Log: discardLog{}}); err == nil {
+	if _, err := newServer(Config{Token: []byte(testToken), Credentials: map[string]string{"copilot_github_token": "x"}, Log: discardLog{}}); err == nil {
 		t.Fatal("newServer accepted a credential with no grant")
 	}
 	if _, err := newServer(Config{Credentials: map[string]string{}, Log: discardLog{}}); err == nil {
@@ -591,8 +615,8 @@ func TestKeychainItemsMatchGrants(t *testing.T) {
 			t.Errorf("KeychainItem(%q) = %q, want a workcell- item", key, item)
 		}
 	}
-	if item := KeychainItem("codex_auth"); item != "" {
-		t.Errorf("KeychainItem(codex_auth) = %q, want none", item)
+	if item := KeychainItem("copilot_github_token"); item != "" {
+		t.Errorf("KeychainItem(copilot_github_token) = %q, want none", item)
 	}
 }
 

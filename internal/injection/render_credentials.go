@@ -13,6 +13,7 @@ import (
 	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/credbroker"
+	"github.com/omkhar/workcell/internal/jsonstrict"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
@@ -69,7 +70,8 @@ func credentialBrokerFromMetadata(metadata map[string]any) (credentialBroker, er
 
 // check refuses an API key that would reach the agent in a session that
 // brokers credentials: there the agent gets only a placeholder for each key
-// the broker can serve. Gemini OAuth and Vertex settings stay direct.
+// the broker can serve. Gemini OAuth, Vertex settings and Codex OAuth tokens
+// stay direct.
 func (b credentialBroker) check(rendered map[string]map[string]string) error {
 	if !b.on {
 		return nil
@@ -87,9 +89,42 @@ func (b credentialBroker) check(rendered map[string]map[string]string) error {
 				continue
 			}
 		}
+		if key == "codex_auth" {
+			apiKey, err := codexAuthHoldsAPIKey(Path(rendered[key]["source"]))
+			if err != nil {
+				return err
+			}
+			if !apiKey {
+				continue
+			}
+		}
 		return fmt.Errorf("--egress-proxy brokers credentials.%s: store the key in the macOS login Keychain item %q and set resolver = %q in place of source, or launch without --egress-proxy", key, credbroker.KeychainItem(key), authresolve.BrokerResolver)
 	}
 	return nil
+}
+
+// maxCodexAuthJSONDepth bounds the nesting of a Codex auth.json, which nests
+// two levels.
+const maxCodexAuthJSONDepth = 16
+
+// codexAuthHoldsAPIKey reports whether a Codex auth.json sets OPENAI_API_KEY,
+// the API key of API-key mode; ChatGPT OAuth leaves it null. A repeated key
+// is refused: encoding/json reads only the last copy, and the file with every
+// copy would reach the agent.
+func codexAuthHoldsAPIKey(source Path) (bool, error) {
+	data, err := readInjectionPath(source, nil)
+	if err != nil {
+		return false, err
+	}
+	if err := jsonstrict.RejectDuplicateKeys(data, maxCodexAuthJSONDepth); err != nil {
+		return false, fmt.Errorf("credentials.codex_auth %s: %w", source, err)
+	}
+	var auth map[string]any
+	if err := json.Unmarshal(data, &auth); err != nil {
+		return false, fmt.Errorf("credentials.codex_auth must contain a JSON object: %s", source)
+	}
+	value, ok := auth["OPENAI_API_KEY"]
+	return ok && value != nil, nil
 }
 
 // brokersAny reports whether the broker serves a credential. The resolver

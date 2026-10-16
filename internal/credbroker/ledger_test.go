@@ -110,6 +110,7 @@ func TestStartAuditRecordNamesTheKeychainItem(t *testing.T) {
 	for key, want := range map[string]string{
 		"claude_api_key": "credential_broker_start key=claude_api_key item=workcell-claude-api-key",
 		"gemini_env":     "credential_broker_start key=gemini_env item=workcell-gemini-api-key",
+		"codex_auth":     "credential_broker_start key=codex_auth item=workcell-codex-api-key",
 	} {
 		if got := StartAuditRecord(key); got != want {
 			t.Errorf("StartAuditRecord(%q) = %q, want %q", key, got, want)

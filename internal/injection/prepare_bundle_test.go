@@ -495,12 +495,13 @@ func TestRejectWorkspaceCredentialSourcesRejectsSSHSources(t *testing.T) {
 
 // TestPrepareBundleBrokersAPIKeys covers --broker-credentials: a brokered key
 // stages only the session placeholder at its credential path and lists the
-// session CA in the manifest; a Claude or Gemini API key from a plain source
-// is refused; Gemini OAuth stays direct and lists no CA.
+// session CA in the manifest; a Claude, Gemini or Codex API key from a plain
+// source or the Codex home resolver is refused; Gemini and Codex OAuth stay
+// direct and list no CA.
 func TestPrepareBundleBrokersAPIKeys(t *testing.T) {
 	cases := []struct {
 		name, agent, policy, gemini string
-		broker                      bool
+		broker, codexHome           bool
 		wantErr, wantStaged         string
 	}{
 		{name: "claude brokered", agent: "claude", policy: "[credentials.claude_api_key]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: "%s\n"},
@@ -508,6 +509,16 @@ func TestPrepareBundleBrokersAPIKeys(t *testing.T) {
 		{name: "claude source", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n", broker: true, wantErr: `--egress-proxy brokers credentials.claude_api_key: store the key in the macOS login Keychain item "workcell-claude-api-key" and set resolver = "keychain-broker" in place of source, or launch without --egress-proxy`},
 		{name: "gemini key source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GEMINI_API_KEY=sk-real\n", broker: true, wantErr: `--egress-proxy brokers credentials.gemini_env: store the key in the macOS login Keychain item "workcell-gemini-api-key"`},
 		{name: "gemini oauth source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GOOGLE_GENAI_USE_GCA=true\n", broker: true},
+		{name: "codex brokered", agent: "codex", policy: "[credentials.codex_auth]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: `{"OPENAI_API_KEY":"%s"}` + "\n"},
+		{name: "codex key source", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":"sk-real"}`, broker: true, wantErr: `--egress-proxy brokers credentials.codex_auth: store the key in the macOS login Keychain item "workcell-codex-api-key" and set resolver = "keychain-broker" in place of source, or launch without --egress-proxy`},
+		{name: "codex key and tokens", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":"sk-real","tokens":{"access_token":"a"}}`, broker: true, wantErr: "workcell-codex-api-key"},
+		{name: "codex escaped key name", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_\u004bEY":"sk-real"}`, broker: true, wantErr: "workcell-codex-api-key"},
+		{name: "codex empty key", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":""}`, broker: true, wantErr: "workcell-codex-api-key"},
+		{name: "codex repeated key", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":"sk-real","OPENAI_API_KEY":null}`, broker: true, wantErr: `duplicate JSON key "OPENAI_API_KEY"`},
+		{name: "codex not an object", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `["sk-real"]`, broker: true, wantErr: "credentials.codex_auth must contain a JSON object"},
+		{name: "codex home key", agent: "codex", policy: "[credentials.codex_auth]\nresolver = \"codex-home-auth-file\"\n", gemini: `{"OPENAI_API_KEY":"sk-real"}`, codexHome: true, broker: true, wantErr: "workcell-codex-api-key"},
+		{name: "codex oauth source", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":null,"tokens":{"access_token":"a"}}`, broker: true},
+		{name: "codex key source unbrokered", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":"sk-real"}`},
 		{name: "claude source unbrokered", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n"},
 		{name: "brokered without broker", agent: "claude", policy: "[credentials.claude_api_key]\nresolver = \"keychain-broker\"\n", wantErr: "resolve_credential_sources exited 1"},
 	}
@@ -524,6 +535,15 @@ func TestPrepareBundleBrokersAPIKeys(t *testing.T) {
 			}
 			if err := os.WriteFile(filepath.Join(realHome, "key.txt"), []byte(secret), 0o600); err != nil {
 				t.Fatal(err)
+			}
+			if tc.codexHome {
+				t.Setenv("HOME", realHome)
+				if err := os.Mkdir(filepath.Join(realHome, ".codex"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(realHome, ".codex", "auth.json"), []byte(secret), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			policyPath := filepath.Join(realHome, "policy.toml")
 			if err := os.WriteFile(policyPath, []byte("version = 1\n"+tc.policy), 0o600); err != nil {

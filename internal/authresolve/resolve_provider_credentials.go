@@ -171,8 +171,12 @@ func resolveBrokerPlaceholder(key string, outputRoot *os.Root, relativeDestinati
 		placeholder = "wcph-" + strings.Repeat("0", 32)
 	}
 	content := placeholder + "\n"
-	if key == "gemini_env" {
+	switch key {
+	case "gemini_env":
 		content = "GEMINI_API_KEY=" + content
+	case "codex_auth":
+		// The Codex auth.json of API-key mode.
+		content = `{"OPENAI_API_KEY":"` + placeholder + `"}` + "\n"
 	}
 	if err := rootio.WriteFileAtomic(outputRoot, relativeDestination, []byte(content), 0o600, ".workcell-write-"); err != nil {
 		return "", err
