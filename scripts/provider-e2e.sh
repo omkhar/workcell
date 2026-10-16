@@ -423,9 +423,11 @@ if [[ -n "${INJECTION_POLICY}" ]]; then
   shell_probe_cmd+=("--injection-policy" "${INJECTION_POLICY}")
   probe_cmd+=("--injection-policy" "${INJECTION_POLICY}")
 elif [[ -n "${GENERATED_POLICY}" ]]; then
-  prepare_only_cmd+=("--injection-policy" "${GENERATED_POLICY}")
+  # The generated policy stages each API key from a file. The default egress
+  # proxy of strict Colima refuses such a key, so the strict steps opt out.
+  prepare_only_cmd+=("--injection-policy" "${GENERATED_POLICY}" "--egress-proxy=off")
   shell_probe_cmd+=("--injection-policy" "${GENERATED_POLICY}")
-  probe_cmd+=("--injection-policy" "${GENERATED_POLICY}")
+  probe_cmd+=("--injection-policy" "${GENERATED_POLICY}" "--egress-proxy=off")
 fi
 shell_probe_cmd+=("--" "bash" "-lc" "$(build_shell_probe_command)")
 case "${AGENT}" in

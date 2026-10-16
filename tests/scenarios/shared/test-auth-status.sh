@@ -69,6 +69,8 @@ run_auth_status() {
     --auth-status
 }
 
+# The policy stages API keys from source, which the egress proxy refuses, so
+# these launch rows keep the allowlist session that they prove.
 run_launch_dry_run() {
   local agent="$1"
 
@@ -76,6 +78,7 @@ run_launch_dry_run() {
     --agent "${agent}" \
     --workspace "${WORKSPACE}" \
     --injection-policy "${AUTH_ROOT}/policy.toml" \
+    --egress-proxy=off \
     --dry-run \
     >"${TMP_DIR}/launch-${agent}.stdout" 2>"${TMP_DIR}/launch-${agent}.stderr"
 }
@@ -171,6 +174,19 @@ if [[ "${launch_blocked}" -eq 0 ]]; then
   grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=claude_api_key,claude_auth,github_hosts ssh_injected=1$' "${TMP_DIR}/launch-claude.stderr"
   grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=copilot_github_token ssh_injected=1$' "${TMP_DIR}/launch-copilot.stderr"
   grep -Eq '^injection_policy_sha256=sha256:[0-9a-f]+ credential_keys=(gemini_env,github_hosts|github_hosts,gemini_env) ssh_injected=1$' "${TMP_DIR}/launch-gemini.stderr"
+fi
+
+# Without --egress-proxy=off, strict Colima uses the proxy, which refuses the
+# Claude API key from source and names both ways out.
+if [[ "${launch_blocked}" -eq 0 ]]; then
+  set +e
+  "${ROOT_DIR}/scripts/workcell" --dry-run --agent claude --workspace "${WORKSPACE}" \
+    --injection-policy "${AUTH_ROOT}/policy.toml" \
+    >"${TMP_DIR}/launch-claude-proxy.stdout" 2>"${TMP_DIR}/launch-claude-proxy.stderr"
+  proxy_rc=$?
+  set -e
+  test "${proxy_rc}" -eq 1
+  grep -q 'the egress proxy brokers credentials.claude_api_key: .* or launch with --egress-proxy=off$' "${TMP_DIR}/launch-claude-proxy.stderr"
 fi
 
 echo "Auth-status and launch scenario passed"

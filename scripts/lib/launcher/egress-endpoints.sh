@@ -138,19 +138,25 @@ build_runtime_host_aliases() {
 
 }
 
-# --- Egress proxy (--egress-proxy, strict Colima only) ---
+# --- Egress proxy (the default for strict Colima; --egress-proxy=off opts out) ---
 
 # EGRESS_PROXY_SETTING holds the --egress-proxy value: empty when no flag was
 # given, else on or off. The module sets it here, so no inherited value counts.
 EGRESS_PROXY_SETTING=""
 
-# set_egress_proxy_setting records one --egress-proxy flag in
+# set_egress_proxy_setting FLAG NEXT records one --egress-proxy flag in
 # EGRESS_PROXY_SETTING. The bare flag means on. Any other value than on or
 # off, and a second flag in any spelling, stops with status 2, so a later
-# flag never silently overrides an earlier one.
+# flag never silently overrides an earlier one. A bare flag followed by on or
+# off also stops: the value goes after =, and --egress-proxy off would
+# otherwise turn the proxy on and pass off to the agent.
 set_egress_proxy_setting() {
   local value="on"
 
+  if [[ "$1" == "--egress-proxy" ]] && { [[ "${2-}" == "on" ]] || [[ "${2-}" == "off" ]]; }; then
+    echo "--egress-proxy takes its value after =: --egress-proxy=$2" >&2
+    exit 2
+  fi
   [[ "$1" != --egress-proxy=* ]] || value="${1#--egress-proxy=}"
   if [[ -n "${EGRESS_PROXY_SETTING}" ]]; then
     echo "--egress-proxy may be given only once." >&2
@@ -164,17 +170,31 @@ set_egress_proxy_setting() {
 }
 
 # resolve_egress_proxy TARGET MODE owns the decision whether the session
-# routes egress through the proxy sidecar, and sets EGRESS_PROXY. Only strict
-# Colima can use it, so --egress-proxy=on on any other target or mode stops
-# with status 2. --egress-proxy=off is valid everywhere.
+# routes egress through the proxy sidecar, and sets EGRESS_PROXY. Strict
+# Colima uses the proxy unless --egress-proxy=off. Every other target and mode
+# runs without it, so --egress-proxy=on there stops with status 2.
+# --egress-proxy=off is valid everywhere.
 resolve_egress_proxy() {
   EGRESS_PROXY=0
-  [[ "${EGRESS_PROXY_SETTING}" == "on" ]] || return 0
-  if [[ "$1" != "colima" ]] || [[ "$2" != "strict" ]]; then
+  if [[ "$1" == "colima" ]] && [[ "$2" == "strict" ]]; then
+    [[ "${EGRESS_PROXY_SETTING}" == "off" ]] || EGRESS_PROXY=1
+  elif [[ "${EGRESS_PROXY_SETTING}" == "on" ]]; then
     echo "--egress-proxy supports only --target colima with --mode strict." >&2
     exit 2
   fi
-  EGRESS_PROXY=1
+}
+
+# egress_proxy_brokers_credentials prints 1 when the session brokers its API
+# keys: a proxy session that prepares a launch. --auth-status, --doctor and
+# --inspect launch nothing and read the policy in metadata mode, so they
+# stage it without the broker and still report on a key from source, which
+# a launch refuses.
+egress_proxy_brokers_credentials() {
+  if [[ "${EGRESS_PROXY}" -eq 1 ]] && [[ "$1" -eq 0 ]] && [[ "$2" -eq 0 ]] && [[ "$3" -eq 0 ]]; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
 }
 
 #

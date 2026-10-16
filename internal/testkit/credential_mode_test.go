@@ -16,6 +16,7 @@ import (
 func TestCredentialModeFollowsThePreparedPlaceholder(t *testing.T) {
 	body := launcherFunction(t, "prepare_injection_bundle") + launcherFunction(t, "credential_mode_label") + `
 prepare_colima_staging_cache_roots() { :; }
+egress_proxy_brokers_credentials() { printf '0\n'; }
 go_hostutil() {
   [[ -z "${PROBE_PLACEHOLDER}" ]] || printf 'INJECTION_CREDENTIAL_PLACEHOLDER=%s\n' "${PROBE_PLACEHOLDER}"
 }

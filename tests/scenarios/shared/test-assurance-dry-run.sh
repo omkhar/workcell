@@ -173,7 +173,7 @@ for agent in codex claude copilot gemini; do
   grep -q '^agent_autonomy=prompt$' "${TMP_DIR}/prompt-${agent}.stderr"
   grep -q '^autonomy_assurance=lower-assurance-prompt-autonomy$' "${TMP_DIR}/prompt-${agent}.stderr"
   grep -q '^workspace_control_plane=masked$' "${TMP_DIR}/prompt-${agent}.stderr"
-  grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/prompt-${agent}.stderr"
+  grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/prompt-${agent}.stderr"
   grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/prompt-${agent}.stderr"
 done
 
@@ -304,7 +304,7 @@ done
 # A1 egress-policy [network] surface: allow_endpoints extend the allowlist and
 # deny_endpoints tighten it (deny wins). Assert the operator allow endpoint is
 # present in the printed endpoints= list, the denied endpoint is absent, and the
-# colima+strict path reports egress_enforcement=allowlist.
+# colima+strict path with --egress-proxy=off reports egress_enforcement=allowlist.
 NETWORK_POLICY_FILE="${TMP_DIR}/network-policy.toml"
 cat >"${NETWORK_POLICY_FILE}" <<'EOF'
 version = 1
@@ -317,6 +317,7 @@ HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
   --agent codex \
   --injection-policy "${NETWORK_POLICY_FILE}" \
   --workspace "${WORKSPACE}" \
+  --egress-proxy=off \
   --dry-run \
   >"${TMP_DIR}/network-endpoints.stdout" 2>"${TMP_DIR}/network-endpoints.stderr"
 grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/network-endpoints.stderr"
@@ -416,6 +417,11 @@ egress_proxy_route_tokens_ok "${TMP_DIR}/egress-proxy-quoted.stdout" || {
   exit 1
 }
 grep -q -- '--add-host api.openai.com:egress-proxy-ip ' "${TMP_DIR}/egress-proxy-codex.stdout"
+# The proxy is the default for strict Colima: the same route with no flag.
+run_dry_run "egress-proxy-default-codex" --agent codex
+grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/egress-proxy-default-codex.stderr"
+egress_proxy_route_tokens_ok "${TMP_DIR}/egress-proxy-default-codex.stdout"
+grep -q -- '--add-host api.openai.com:egress-proxy-ip ' "${TMP_DIR}/egress-proxy-default-codex.stdout"
 # Docker accepts both "--add-host VALUE" and "--add-host=VALUE"; collect every
 # value in either spelling and require each one to point at the proxy.
 egress_proxy_add_hosts_ok() {
@@ -490,6 +496,10 @@ run_dry_run "egress-proxy-off-development" --agent codex --egress-proxy=off --mo
 grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/egress-proxy-off-development.stderr"
 run_dry_run_expect_failure 2 "egress-proxy-bad-value" --agent codex --egress-proxy=maybe
 grep -q '^--egress-proxy takes on or off: maybe$' "${TMP_DIR}/egress-proxy-bad-value.stderr"
+# The value goes after =: a bare flag followed by off would otherwise turn the
+# proxy on and pass off to the agent.
+run_dry_run_expect_failure 2 "egress-proxy-space-off" --agent codex --egress-proxy off
+grep -q '^--egress-proxy takes its value after =: --egress-proxy=off$' "${TMP_DIR}/egress-proxy-space-off.stderr"
 for repeated in "--egress-proxy --egress-proxy" "--egress-proxy --egress-proxy=off" "--egress-proxy=off --egress-proxy=on"; do
   read -r -a repeated_flags <<<"${repeated}"
   run_dry_run_expect_failure 2 "egress-proxy-repeated" --agent codex "${repeated_flags[@]}"

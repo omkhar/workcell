@@ -7250,6 +7250,8 @@ fi
 grep -q 'provider_e2e_auth_status_cmd=.*--auth-status' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--prepare-only' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_prepare_only_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-codex.out
+grep -q 'provider_e2e_probe_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-codex.out

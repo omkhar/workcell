@@ -282,7 +282,7 @@ Options:
   --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
   --egress-proxy[=on|off]       Route strict Colima egress only through a per-session SNI proxy sidecar
-                                (the bare flag means on; give it once)
+                                (default on for strict Colima; off keeps the allowlist alone)
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
   --vm-memory GIB               Colima VM memory in GiB (default: profile value)
@@ -3026,7 +3026,7 @@ workspace_repo_mcp_state() {
 # credential_mode_label reports how the agent holds its provider API key:
 # brokered when the session stages only a placeholder and the egress proxy
 # swaps in the key from the host credential broker, and direct otherwise
-# (OAuth flows, Copilot tokens, and every session without --egress-proxy).
+# (OAuth flows, Copilot tokens, and every session without the egress proxy).
 credential_mode_label() {
   if [[ -n "${INJECTION_CREDENTIAL_PLACEHOLDER}" ]]; then
     printf 'brokered\n'
@@ -5759,6 +5759,7 @@ prepare_injection_bundle() {
   local value=""
   local synthetic_codex="0"
   local synthetic_claude="0"
+  local broker_credentials=""
 
   case "${SELF_STAGING_PROBE_SYNTHETIC_CODEX_AUTH:-0}" in
     1 | true) synthetic_codex="1" ;;
@@ -5768,6 +5769,7 @@ prepare_injection_bundle() {
   esac
 
   prepare_colima_staging_cache_roots || return $?
+  broker_credentials="$(egress_proxy_brokers_credentials "${AUTH_STATUS:-0}" "${DOCTOR:-0}" "${INSPECT:-0}")" || return $?
 
   DIRECT_SOURCE_MOUNTS=()
   INJECTION_BUNDLE_ROOT=""
@@ -5805,7 +5807,7 @@ prepare_injection_bundle() {
     "--doctor=${DOCTOR:-0}" \
     "--inspect=${INSPECT:-0}" \
     "--dry-run=${DRY_RUN:-0}" \
-    "--broker-credentials=${EGRESS_PROXY:-0}" \
+    "--broker-credentials=${broker_credentials}" \
     "--synthetic-codex-auth=${synthetic_codex}" \
     "--synthetic-claude-export=${synthetic_claude}" \
     "--real-home=${REAL_HOME}" \
@@ -9119,7 +9121,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --egress-proxy | --egress-proxy=*)
-      set_egress_proxy_setting "$1"
+      set_egress_proxy_setting "$1" "${2-}"
       shift
       ;;
     --ack-breakglass)
@@ -9956,7 +9958,7 @@ if [[ "${EGRESS_PROXY}" -eq 1 ]] && [[ "${NEEDS_REBUILD}" -eq 0 ]] &&
   NEEDS_REBUILD=1
   if [[ "${PREPARE}" -eq 0 ]]; then
     announce_strict_auto_prepare \
-      "--egress-proxy needs a runtime image prepared from this checkout for profile ${COLIMA_PROFILE}." \
+      "The egress proxy needs a runtime image prepared from this checkout for profile ${COLIMA_PROFILE}." \
       "The prepared image was built from other inputs, so its egress proxy sidecar may not match."
   fi
 fi

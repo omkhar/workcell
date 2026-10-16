@@ -153,7 +153,8 @@ The supported resolvers are:
 The Claude resolver records the intended source. It stops the launch because
 Workcell does not provide a supported export path.
 
-The `keychain-broker` resolver is for `--egress-proxy` sessions. The agent gets
+The `keychain-broker` resolver is for egress proxy sessions, the default for
+strict Colima. The agent gets
 only a `wcph-<32 hex>` placeholder at the usual credential path. For
 `gemini_env`, the staged file holds only `GEMINI_API_KEY=<placeholder>`. For
 `codex_auth`, it holds only `{"OPENAI_API_KEY":"<placeholder>"}`, the
@@ -173,9 +174,12 @@ brokers credentials, a `claude_api_key` or a Gemini API key from `source`
 stops the render (`internal/injection/render_credentials.go`). A `codex_auth`
 file that sets `OPENAI_API_KEY` also stops it, from `source` or from
 `codex-home-auth-file`. The message names both ways out: the Keychain item, or
-a launch without `--egress-proxy`. Gemini OAuth, Vertex settings and Codex
+a launch with `--egress-proxy=off`. Gemini OAuth, Vertex settings and Codex
 ChatGPT OAuth stay direct. In such a session, a Codex `auth.json` that repeats
 a key also stops the render, because the decoder reads only the last copy.
+
+`--auth-status`, `--doctor` and `--inspect` launch nothing. They stage the
+policy without the broker, so a key from `source` does not stop them.
 
 A session that brokers a key lists the session CA as `egress_ca_cert` in the
 manifest. It also lists the CA bundle as `egress_ca_bundle`: the system roots
@@ -381,8 +385,9 @@ denied host stays reachable at the IP layer.
 
 Host-side rebuild downloads do not use the Colima firewall.
 
-With `--egress-proxy`, the agent container joins only an internal network with
-no resolver. A sidecar proxy is its only route out, and it admits a TLS
+In an egress proxy session, the agent container joins only an internal
+network with no resolver. The proxy is the default for strict Colima, and
+`--egress-proxy=off` turns it off. A sidecar proxy is its only route out, and it admits a TLS
 connection only when the SNI is on the session allowlist. The proxy routes by
 name, so an IP literal endpoint stops the launch.
 
@@ -391,8 +396,8 @@ Other targets do not receive this allowlist. Their launch summary reports
 
 | Target state | `egress_enforcement` | Workcell enforcement |
 |---|---|---|
-| Colima with allowlist | `allowlist` | Profile-wide IPv4 and IPv6 rules |
-| Colima strict with `--egress-proxy` | `proxy` | Per-session SNI proxy sidecar, plus the profile-wide rules |
+| Colima strict (the default) | `proxy` | Per-session SNI proxy sidecar, plus the profile-wide rules |
+| Colima with allowlist (strict with `--egress-proxy=off`, or another mode) | `allowlist` | Profile-wide IPv4 and IPv6 rules |
 | Colima with unrestricted network | `none` | None |
 | Docker Desktop | `none` | None |
 | `aws-ec2-ssm` preview | `none` | None |
