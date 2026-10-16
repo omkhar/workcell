@@ -4524,6 +4524,9 @@ session_delete_main() {
   local audit_seal_path=""
   local remove_egress_deny_log=0
   local egress_deny_log_path=""
+  local remove_broker_ledger=0
+  local broker_ledger_path=""
+  local broker_state_path=""
   local proxy_network=""
   local session_audit_dir=""
   local -a removed=()
@@ -4630,6 +4633,28 @@ session_delete_main() {
       fi
     fi
   fi
+  # A launch that died after the broker start and before the network create
+  # leaves only the credential broker, so look for it apart from the network.
+  # stop_credential_broker only warns, so a broker that is still there after
+  # it fails the delete.
+  broker_state_path="${record_path%.json}.broker"
+  if [[ "${record_only}" -eq 0 ]]; then
+    credential_broker_find "${session_id}" || {
+      echo "session delete could not list processes to find the credential broker: ${session_id}" >&2
+      exit 1
+    }
+    if [[ -n "${CREDENTIAL_BROKER_FOUND_PID}" || -e "${broker_state_path}" ]]; then
+      planned_remove+=("credential_broker")
+      if [[ "${dry_run}" -eq 0 ]]; then
+        stop_credential_broker "${SESSION_META_PROFILE}" "${session_id}" no-audit
+        if ! credential_broker_find "${session_id}" ||
+          [[ -n "${CREDENTIAL_BROKER_FOUND_PID}" || -e "${broker_state_path}" ]]; then
+          echo "session delete could not confirm the credential broker cleanup: ${session_id}" >&2
+          exit 1
+        fi
+      fi
+    fi
+  fi
   if session_audit_dir="$(session_delete_resolve_dir_artifact "session_audit_dir" "${SESSION_META_SESSION_AUDIT_DIR}")"; then
     if [[ -e "${session_audit_dir}" ]]; then
       if [[ "${record_only}" -eq 1 ]]; then
@@ -4702,6 +4727,16 @@ session_delete_main() {
       planned_remove+=("egress_deny_log")
     fi
   fi
+  # The credential broker ledger follows the same rule.
+  broker_ledger_path="${broker_state_path}.jsonl"
+  if [[ -e "${broker_ledger_path}" ]]; then
+    if [[ "${record_only}" -eq 1 ]]; then
+      kept+=("credential_broker_ledger")
+    else
+      remove_broker_ledger=1
+      planned_remove+=("credential_broker_ledger")
+    fi
+  fi
 
   if [[ "${#planned_remove[@]}" -eq 0 ]]; then
     planned_remove=("record")
@@ -4766,6 +4801,12 @@ session_delete_main() {
   if [[ "${remove_egress_deny_log}" -eq 1 ]]; then
     rm -f -- "${egress_deny_log_path}" || {
       echo "session delete failed to remove the recorded egress_deny_log artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  if [[ "${remove_broker_ledger}" -eq 1 ]]; then
+    rm -f -- "${broker_ledger_path}" || {
+      echo "session delete failed to remove the recorded credential_broker_ledger artifact: ${session_id}" >&2
       exit 1
     }
   fi

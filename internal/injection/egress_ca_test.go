@@ -55,14 +55,16 @@ func TestCredentialBrokerPlanComesFromTheGrants(t *testing.T) {
 	got, err := CredentialBrokerPlan(claude.InjectionBundleRoot, p)
 	want := "terminate=api.anthropic.com=x-api-key=" + p + "\n" +
 		"terminate=api.anthropic.com=authorization=" + p + "\n" +
-		"credential=claude_api_key=keychain:workcell-claude-api-key\n"
+		"credential=claude_api_key=keychain:workcell-claude-api-key\n" +
+		"audit=credential_broker_start key=claude_api_key item=workcell-claude-api-key\n"
 	if err != nil || got != want {
 		t.Fatalf("CredentialBrokerPlan = %q, %v; want %q", got, err, want)
 	}
 	gemini := brokerBundle(t, "gemini", "[credentials.gemini_env]\nresolver = \"keychain-broker\"\n", true)
 	got, err = CredentialBrokerPlan(gemini.InjectionBundleRoot, gemini.CredentialPlaceholder)
 	want = "terminate=generativelanguage.googleapis.com=x-goog-api-key=" + gemini.CredentialPlaceholder + "\n" +
-		"credential=gemini_env=keychain:workcell-gemini-api-key\n"
+		"credential=gemini_env=keychain:workcell-gemini-api-key\n" +
+		"audit=credential_broker_start key=gemini_env item=workcell-gemini-api-key\n"
 	if err != nil || got != want {
 		t.Fatalf("CredentialBrokerPlan = %q, %v; want %q", got, err, want)
 	}

@@ -372,7 +372,9 @@ The launcher records the PID and the private directory in `<session>.broker`.
 It waits up to 150 seconds for the guest socket, then gives the socket to the
 sidecar uid `65532` with mode `0600`. It reads the owner and mode back with
 `stat`, because the sshd bind mask sets the first mode. A failure or a mismatch
-stops the launch.
+stops the launch. Then it appends one `credential_broker_start key= item=`
+record for each brokered key, from the plan. A failed append also stops the
+launch.
 
 For a brokered session, the sidecar create adds a `noexec` tmpfs at
 `/run/workcell-egress`, the guest socket at `/run/workcell-broker.sock` and
@@ -397,6 +399,12 @@ The stop removes the guest socket and publishes the ledger as
 `<sessions-dir>/<session>.broker.jsonl`. Then it removes the private directory.
 A failure only warns. The broker also exits when its ssh forward ends.
 
+When the stop found a broker, it appends one `credential_broker_summary` record.
+The `credential-broker-audit-records` helper reads the saved ledger as
+untrusted input. A missing or unreadable ledger appends
+`credential_broker_summary status=unreadable`. The proxy stop runs before each
+seal, so the seal covers the record. Session delete passes `no-audit`.
+
 `WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN` points the broker at a keychain file
 for an allowed harness only.
 
@@ -406,6 +414,14 @@ a session without a proxy network. A failed network lookup fails the command in 
 `session stop` calls it when the monitor is dead. `session delete` calls it
 before it plans the artifacts, and fails when the network is still there after
 the cleanup. `session delete --dry-run` only lists `egress_proxy`.
+
+`session delete` also looks for the broker apart from the network, because a
+launch that died before the network create leaves only the broker. It stops a
+broker that `credential_broker_find` or the `<session>.broker` file names.
+`session_delete_main` in `scripts/workcell` fails when either is still there
+after the stop. It removes
+`<session>.broker.jsonl` as `credential_broker_ledger` and keeps it under
+`--record-only`.
 
 ## Change Rule
 

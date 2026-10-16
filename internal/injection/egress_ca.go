@@ -45,8 +45,9 @@ func BrokeredCredentialKeys(bundleRoot string) ([]string, error) {
 
 // CredentialBrokerPlan returns, as shell fields, what the launcher needs to
 // broker the session's keys: one terminate=<rule> field per egress proxy
-// rule, and one credential=<key>=keychain:<item> field per key for
-// credential-broker-cli serve.
+// rule, one credential=<key>=keychain:<item> field per key for
+// credential-broker-cli serve, and one audit=<credential_broker_start record>
+// field per key.
 func CredentialBrokerPlan(bundleRoot, placeholder string) (string, error) {
 	if !egressproxy.IsPlaceholder(placeholder) {
 		return "", errors.New("credential broker plan: the placeholder must be wcph-<32 hex>")
@@ -66,6 +67,7 @@ func CredentialBrokerPlan(bundleRoot, placeholder string) (string, error) {
 	}
 	for _, key := range keys {
 		fields = append(fields, shellproto.Field{Key: "credential", Value: key + "=keychain:" + credbroker.KeychainItem(key)})
+		fields = append(fields, shellproto.Field{Key: "audit", Value: credbroker.StartAuditRecord(key)})
 	}
 	var b strings.Builder
 	if err := shellproto.WriteFields(&b, fields); err != nil {
