@@ -183,7 +183,7 @@ credential_broker_guest_socket() {
 # token stays in a shell variable: the broker reads it from fd 3, and the docker
 # client passes it to the sidecar from its environment, never in argv.
 start_credential_broker() {
-  local plan="" key="" value="" guest="" pid="" deadline=0
+  local plan="" key="" value="" guest="" pid="" deadline=0 mode=""
   local -a sources=() keychain=()
 
   EGRESS_PROXY_BROKER_DOCKER_ARGS=()
@@ -288,6 +288,18 @@ start_credential_broker() {
     abort_credential_broker "${pid}" "${guest}"
     return 1
   }
+  # The sshd bind mask decides the mode the forward creates, so set it and
+  # read back the owner and mode before the sidecar mounts the socket.
+  run_host_colima ssh --profile "${COLIMA_PROFILE}" -- sudo chmod 0600 -- "${guest}" || {
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  }
+  mode="$(run_host_colima ssh --profile "${COLIMA_PROFILE}" -- stat -c %u:%g:%a -- "${guest}")" || mode=""
+  if [[ "${mode}" != 65532:65532:600 ]]; then
+    echo "workcell: the credential broker socket ${guest} is not 0600 for the sidecar uid: ${mode}" >&2
+    abort_credential_broker "${pid}" "${guest}"
+    return 1
+  fi
 }
 
 # abort_credential_broker undoes a start that failed after the private

@@ -31,7 +31,11 @@ go_hostutil() {
   esac
 }
 go_tool_bin() { GO_TOOL_BIN="$DIR/broker"; }
-run_host_colima() { printf '%s\n' "$*" >>"$DIR/colima"; [[ "$1" != ssh-config ]] || printf 'Host colima-prof\n'; }
+run_host_colima() {
+  printf '%s\n' "$*" >>"$DIR/colima"
+  [[ "$1" != ssh-config ]] || printf 'Host colima-prof\n'
+  [[ "$*" != *" -- stat "* ]] || printf '%s\n' "${STAT:-65532:65532:600}"
+}
 ` + body
 	cmd := exec.Command("bash", "-c", script)
 	cmd.Env = append(os.Environ(), append([]string{"ROOT=" + root, "DIR=" + dir, "TMPDIR=" + dir}, env...)...)
@@ -87,7 +91,8 @@ printf 'proxy=%s\n' "${EGRESS_PROXY_BROKER_PROXY_ARGS[*]}"
 	}
 	colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
 	want := "ssh-config --profile prof\nssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n" +
-		"ssh --profile prof -- test -S /tmp/workcell-broker-S1.sock\nssh --profile prof -- sudo chown 65532:65532 -- /tmp/workcell-broker-S1.sock\n"
+		"ssh --profile prof -- test -S /tmp/workcell-broker-S1.sock\nssh --profile prof -- sudo chown 65532:65532 -- /tmp/workcell-broker-S1.sock\n" +
+		"ssh --profile prof -- sudo chmod 0600 -- /tmp/workcell-broker-S1.sock\nssh --profile prof -- stat -c %u:%g:%a -- /tmp/workcell-broker-S1.sock\n"
 	if string(colima) != want {
 		t.Fatalf("colima calls = %q, want %q", colima, want)
 	}
@@ -207,7 +212,7 @@ if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; k
 // token, so a failed launch leaves no forward and no resolved key behind.
 func TestStartCredentialBrokerRollsBackEveryFailure(t *testing.T) {
 	broker := "#!/bin/bash\n[[ ! -f \"${0%/*}/exit-now\" ]] || exit 3\nexec -a \"fakebroker ${0%/*} \" sleep 30\n"
-	for _, fail := range []string{"ssh-config", "state", "publish", "exit", "timeout", "chown"} {
+	for _, fail := range []string{"ssh-config", "state", "publish", "exit", "timeout", "chown", "chmod", "stat", "mode", "owner"} {
 		t.Run(fail, func(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.MkdirAll(filepath.Join(dir, "sessions"), 0o700); err != nil {
@@ -238,6 +243,10 @@ run_host_colima() {
   printf '%s\n' "$*" >>"$DIR/colima"
   case "$FAIL $*" in
     "ssh-config ssh-config"* | "timeout ssh --profile prof -- test -S"* | "exit ssh --profile prof -- test -S"* | "chown ssh --profile prof -- sudo chown"*) return 1 ;;
+    "chmod ssh --profile prof -- sudo chmod"* | "stat ssh --profile prof -- stat"*) return 1 ;;
+    "mode ssh --profile prof -- stat"*) printf '65532:65532:660\n' ;;
+    "owner ssh --profile prof -- stat"*) printf '0:0:600\n' ;;
+    *" -- stat "*) printf '65532:65532:600\n' ;;
   esac
   [[ "$1" != ssh-config ]] || printf 'Host colima-prof\n'
 }
