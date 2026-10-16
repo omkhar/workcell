@@ -411,6 +411,7 @@ internal/testkit	TestRepoPrePushGatesPushedBranchAfterSignatureWalk	eac43190	unr
 internal/testkit	TestRunCodespellPrintsOffendingLines	e39abc3c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestRuntimeUserKeepsNoShellBrokerState	b320fcfa	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestSafePathDocDocumentsRepoPublishWrapperBeforeLowerLevelHelper	135686ee,5eba53e0,d9108578	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestSessionDeleteStopsAnOrphanBrokerWithoutANetwork	3c6624f5,6745b0ff,872c6fb3,89bf8925,ae9c242e,fb501117	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStartAptBrokerDelegatesToTheServerBinary	514a97c9	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestStartCredentialBrokerKeepsTheTokenOutOfArgv	0632cc2e,4f007e97,b1471bd1,e2d4f54b	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStartCredentialBrokerRollsBackEveryFailure	10de7dda,29448914,85ca1424	the pattern checks the output of a stubbed launcher function run, not script text

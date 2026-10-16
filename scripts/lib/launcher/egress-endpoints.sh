@@ -181,10 +181,12 @@ credential_broker_guest_socket() {
 # start_credential_broker starts the broker for a session whose bundle holds a
 # placeholder, and fills the fixed sidecar arguments of start_egress_proxy. The
 # token stays in a shell variable: the broker reads it from fd 3, and the docker
-# client passes it to the sidecar from its environment, never in argv.
+# client passes it to the sidecar from its environment, never in argv. After
+# the guest socket check it appends the plan's credential_broker_start records;
+# a failed append stops the launch, so no broker serves a session unaudited.
 start_credential_broker() {
-  local plan="" key="" value="" guest="" pid="" deadline=0 mode=""
-  local -a sources=() keychain=()
+  local plan="" key="" value="" guest="" pid="" deadline=0 mode="" start=""
+  local -a sources=() keychain=() starts=() fields=()
 
   EGRESS_PROXY_BROKER_DOCKER_ARGS=()
   EGRESS_PROXY_BROKER_PROXY_ARGS=()
@@ -203,6 +205,7 @@ start_credential_broker() {
     case "${key}" in
       terminate) EGRESS_PROXY_BROKER_PROXY_ARGS+=(-terminate "${value}") ;;
       credential) sources+=(--credential "${value}") ;;
+      audit) starts+=("${value}") ;;
       *)
         echo "workcell: unexpected credential broker plan field: ${key}" >&2
         return 1
@@ -300,6 +303,14 @@ start_credential_broker() {
     abort_credential_broker "${pid}" "${guest}"
     return 1
   fi
+  for start in ${starts[@]+"${starts[@]}"}; do
+    read -r -a fields <<<"${start}"
+    append_session_control_audit_record "${COLIMA_PROFILE}" "${SESSION_ID}" "${fields[@]}" || {
+      echo "workcell: could not audit the credential broker start for ${SESSION_ID}." >&2
+      abort_credential_broker "${pid}" "${guest}"
+      return 1
+    }
+  done
 }
 
 # abort_credential_broker undoes a start that failed after the private
@@ -396,10 +407,17 @@ credential_broker_terminate() {
 # alone, so the monitor, stop and delete paths need no launcher state. The
 # process scan finds a broker even when no state file was written; the state
 # file still names the private directory of a broker that already exited.
+# Then it appends the credential_broker_summary record of the saved ledger,
+# or status=unreadable when the ledger cannot be read. The seal signs the last
+# session record, so a caller stops the broker before it seals. A third
+# argument no-audit appends nothing.
 stop_credential_broker() {
   local profile="$1"
   local session="$2"
+  local audit="${3:-audit}"
   local record="" pid="" dir=""
+  local records="credential_broker_summary status=unreadable"
+  local -a fields=()
 
   record="$(profile_sessions_dir_path "${profile}")/${session}.broker" || {
     echo "workcell: warning: could not find the credential broker state of ${session}." >&2
@@ -415,6 +433,14 @@ stop_credential_broker() {
   credential_broker_terminate "${profile}" "${CREDENTIAL_BROKER_FOUND_PID}" \
     "$(credential_broker_guest_socket "${session}")" "${dir}" "${record}"
   [[ -z "${record}" ]] || rm -f "${record}"
+  [[ "${audit}" != "no-audit" ]] || return 0
+  if [[ -n "${record}" ]] && ! records="$(go_hostutil helper credential-broker-audit-records "${record}.jsonl")"; then
+    records="credential_broker_summary status=unreadable"
+  fi
+  while read -r -a fields; do
+    append_session_control_audit_record "${profile}" "${session}" "${fields[@]}" ||
+      echo "workcell: warning: could not audit the credential broker ledger for ${session}." >&2
+  done <<<"${records}"
 }
 
 # start_egress_proxy creates the internal network and runs the sidecar from the
@@ -548,7 +574,7 @@ stop_egress_proxy() {
     records="egress_summary status=unreadable"
   fi
   [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
-  stop_credential_broker "${profile}" "${SESSION_ID}"
+  stop_credential_broker "${profile}" "${SESSION_ID}" "${audit}"
   [[ "${audit}" == "no-audit" ]] || while read -r -a record; do
     append_session_control_audit_record "${profile}" "${SESSION_ID}" "${record[@]}" ||
       echo "workcell: warning: could not audit the egress proxy deny log for ${SESSION_ID}." >&2
@@ -593,7 +619,7 @@ stop_egress_proxy_for_session() {
   if [[ -z "${network}" ]]; then
     # A launch that died after the broker start and before the network
     # create leaves only the broker.
-    stop_credential_broker "${profile}" "${SESSION_ID}"
+    stop_credential_broker "${profile}" "${SESSION_ID}" "${3:-audit}"
     return 0
   fi
   egress_proxy_names
