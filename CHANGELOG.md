@@ -52,6 +52,8 @@ The GitHub Releases page contains old details that are not in this file.
   `audit.key`, `audit.item`, `audit.granted` and `audit.denied`. The mapping
   version moved to `7`. The `credential-broker-audit-records` host helper
   reads a saved broker ledger as untrusted input and prints one summary record.
+- `--egress-proxy` sessions append `credential_broker_start` after the broker
+  starts and `credential_broker_summary` when it stops, before the seal.
 
 ### Security hardening
 
@@ -70,6 +72,12 @@ The fixes are below.
 - Session capture now fails closed when it cannot copy a container file (#761).
 - Provider wrappers now trust only root-owned runtime state files (#749).
 - The decoder for audit records now rejects NUL bytes (#739).
+- `session delete` now stops a credential broker that a failed launch left
+  without a proxy network, and removes its state file and ledger (#862).
+- `publish-egress-ca` now refuses a session CA whose own validity period is
+  longer than 24 hours plus the one-minute backdate. It checks the period, not
+  the host clock, so VM clock skew does not refuse a valid CA
+  (`internal/injection/egress_ca.go`).
 
 ### Added
 

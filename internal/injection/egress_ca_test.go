@@ -154,6 +154,19 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 			selfSigned(t, p, c)
 			return nil
 		},
+		"lifetime one minute over the cap": func(p string) error {
+			c := constrained(&x509.Certificate{})
+			c.NotBefore = now.Add(-egressproxy.CABackdate)
+			c.NotAfter = now.Add(egressproxy.MaxCALifetime + time.Minute)
+			selfSigned(t, p, c)
+			return nil
+		},
+		"over a day": func(p string) error {
+			c := constrained(&x509.Certificate{})
+			c.NotAfter = now.Add(egressproxy.MaxCALifetime + time.Minute)
+			selfSigned(t, p, c)
+			return nil
+		},
 		"unconstrained": func(p string) error {
 			c := constrained(&x509.Certificate{})
 			c.PermittedDNSDomainsCritical, c.PermittedDNSDomains = false, nil
@@ -211,6 +224,17 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 			return nil
 		},
 	}
+	// A CA from a VM clock ten minutes ahead of the host: the full 24-hour
+	// lifetime plus the backdate, all of it later than the host clock.
+	skewed := constrained(&x509.Certificate{})
+	skewed.NotBefore = now.Add(10*time.Minute - egressproxy.CABackdate)
+	skewed.NotAfter = now.Add(10*time.Minute + egressproxy.MaxCALifetime)
+	skewedPath := filepath.Join(dir, "skewed.pem")
+	selfSigned(t, skewedPath, skewed)
+	if err := PublishEgressCA(skewedPath, bundle); err != nil {
+		t.Errorf("PublishEgressCA refused a full-lifetime CA from a clock ahead of the host: %v", err)
+	}
+
 	for name, write := range bad {
 		src := filepath.Join(dir, name+".pem")
 		if err := write(src); err != nil {

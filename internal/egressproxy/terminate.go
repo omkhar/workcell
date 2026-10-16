@@ -32,6 +32,10 @@ import (
 // MaxCALifetime caps the session CA lifetime.
 const MaxCALifetime = 24 * time.Hour
 
+// CABackdate is how far NewSessionCA sets NotBefore before its clock, so a
+// peer whose clock is a little behind still accepts the CA.
+const CABackdate = time.Minute
+
 var discardLog = log.New(io.Discard, "", 0)
 
 var (
@@ -95,11 +99,26 @@ type SessionCA struct {
 	leaves map[string]*tls.Certificate
 }
 
+// ValidCAExpiry reports whether a session CA that expires at notAfter is
+// unexpired at now and expires within MaxCALifetime of now.
+func ValidCAExpiry(notAfter, now time.Time) bool {
+	return notAfter.After(now) && notAfter.Sub(now) <= MaxCALifetime
+}
+
+// ValidCALifetime reports whether a CA's own validity period, NotAfter minus
+// NotBefore, is positive and at most MaxCALifetime plus CABackdate. Unlike
+// ValidCAExpiry it needs no clock, so a host can check a CA that another
+// clock (the VM's) issued without skew between the two.
+func ValidCALifetime(notBefore, notAfter time.Time) bool {
+	d := notAfter.Sub(notBefore)
+	return d > 0 && d <= MaxCALifetime+CABackdate
+}
+
 // NewSessionCA returns a CA whose critical name constraints permit only hosts
 // and no IP address. notAfter must be in the future and within MaxCALifetime.
 func NewSessionCA(hosts []string, notAfter time.Time) (*SessionCA, error) {
 	now := time.Now()
-	if !notAfter.After(now) || notAfter.Sub(now) > MaxCALifetime {
+	if !ValidCAExpiry(notAfter, now) {
 		return nil, fmt.Errorf("session CA expiry must be within %s from now", MaxCALifetime)
 	}
 	if len(hosts) == 0 {
@@ -111,7 +130,7 @@ func NewSessionCA(hosts []string, notAfter time.Time) (*SessionCA, error) {
 	}
 	template := &x509.Certificate{
 		Subject:                     pkix.Name{CommonName: "Workcell session CA"},
-		NotBefore:                   now.Add(-time.Minute),
+		NotBefore:                   now.Add(-CABackdate),
 		NotAfter:                    notAfter,
 		KeyUsage:                    x509.KeyUsageCertSign,
 		BasicConstraintsValid:       true,

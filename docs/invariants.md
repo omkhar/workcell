@@ -276,6 +276,56 @@ keychain knob to an allowed harness.
 `internal/metadatautil/egress_proxy_sidecar.go` pins the sidecar create and
 `start_credential_broker`.
 
+`phantom-no-real-secret`: a brokered key never reaches the agent container.
+The agent environment, its processes, the injection bundle and the provider
+home hold only the `wcph-` placeholder. The sidecar swaps it for the key on the
+wire, and only for the brokered host and header.
+
+`internal/injection/prepare_bundle_test.go` enforces that the bundle stages
+only the placeholder (`TestPrepareBundleBrokersAPIKeys`).
+`internal/testkit/credential_broker_launch_test.go` enforces that the agent
+command gets neither the token nor the broker socket.
+`internal/egressproxy/terminate_test.go` enforces the exact swap.
+
+The live canary check is in `tests/scenarios/shared/test-egress-proxy-smoke.sh`.
+It stores a random `sk-canary-` key in a throwaway keychain. A brokered Claude
+run then counts the canary in its environment, in each readable
+`/proc/*/environ`, in the bundle and in the provider home. It must count 0. The
+smoke is a certification scenario, so only the local certification lane of
+`scripts/run-scenario-tests.sh` runs it. No CI or pre-merge lane runs it.
+
+`session-ca-constrained`: the session CA that reaches the agent is a CA with
+path length 0. Its critical DNS name constraints name only the brokered hosts,
+and it excludes every IPv4 and IPv6 address. An X.509 DNS name constraint also
+permits subdomains of a named host. The sidecar signs leaves only for the
+exact terminate hosts, and the CA key stays in the sidecar's memory.
+
+The CA's own validity period, from `NotBefore` to `NotAfter`, is at most 24
+hours plus a one-minute backdate. It must be unexpired on the host clock. The
+period check needs no clock, so skew between the host and the VM does not
+refuse a valid CA.
+
+`internal/injection/egress_ca.go` (`PublishEgressCA`) refuses any other CA from
+the sidecar before the launcher publishes it, and
+`internal/injection/egress_ca_test.go` enforces each refusal.
+`internal/egressproxy/terminate.go` owns the 24-hour bound for both the sidecar
+and the publisher.
+
+`broker-host-socket-private`: the host broker socket lives in a private
+directory that the launcher makes with `mktemp -d`. In
+`internal/credbroker/server.go`, `listen` refuses a socket directory that
+another uid owns or can write, or that carries an extended ACL. Each ancestor
+belongs to root or the user and carries no ACL. Only a sticky ancestor can
+admit other writers. The walk uses no-follow opens. The socket gets mode `0600`.
+
+`internal/credbroker/credbroker_test.go` covers a shared directory, an ACL, a
+symlinked ancestor and an ancestor that another uid could replace.
+
+The broker audits its use. The launcher appends `credential_broker_start` after
+the broker starts and `credential_broker_summary` when it stops, before the
+seal. `internal/testkit/credential_broker_launch_test.go` enforces the order on
+the launcher, monitor and session stop paths.
+
 `egress-deny-audited`: each denied proxy connection reaches the audit chain of
 its session, under the session seal. When the proxy stops, the launcher appends bounded `egress_deny`
 records and one `egress_summary` record before it seals the session. A failed

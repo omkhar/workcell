@@ -79,8 +79,9 @@ func CredentialBrokerPlan(bundleRoot, placeholder string) (string, error) {
 // PublishEgressCA checks the session CA certificate at srcPath and publishes
 // it into the bundle at bundleRoot as the file the manifest lists. The file
 // comes back from the sidecar, so it is untrusted: it must be exactly one
-// unexpired CA certificate that may issue only end-entity certificates, with
-// critical name constraints that permit only the hosts of the brokered keys.
+// unexpired CA certificate that expires within egressproxy.MaxCALifetime and
+// may issue only end-entity certificates, with critical name constraints that
+// permit only the hosts of the brokered keys.
 func PublishEgressCA(srcPath, bundleRoot string) error {
 	manifestData, err := rootio.ReadFileNoFollow(filepath.Join(bundleRoot, "manifest.json"), "injection manifest", rootio.MaxManifestBytes)
 	if err != nil {
@@ -109,8 +110,8 @@ func PublishEgressCA(srcPath, bundleRoot string) error {
 	if err != nil {
 		return fmt.Errorf("session CA: %w", err)
 	}
-	if !cert.IsCA || !cert.MaxPathLenZero || time.Now().After(cert.NotAfter) {
-		return errors.New("the session CA must be an unexpired CA with path length 0")
+	if !cert.IsCA || !cert.MaxPathLenZero || !cert.NotAfter.After(time.Now()) || !egressproxy.ValidCALifetime(cert.NotBefore, cert.NotAfter) {
+		return fmt.Errorf("the session CA must be a CA with path length 0 that expires within %s", egressproxy.MaxCALifetime)
 	}
 	keys, err := BrokeredCredentialKeys(bundleRoot)
 	if err != nil {
