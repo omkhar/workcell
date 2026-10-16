@@ -25,9 +25,7 @@ The GitHub Releases page contains old details that are not in this file.
   `claude_api_key` and `gemini_env` in place of the key. The injection
   manifest lists the session CA file `egress-ca.pem` for a session that brokers
   a key. The egress proxy now asks the host credential broker for each
-  brokered value with the session token from `WORKCELL_BROKER_TOKEN`. The
-  launcher wiring for `--egress-proxy` comes in a later change, so a launch
-  with this resolver stops until then.
+  brokered value with the session token from `WORKCELL_BROKER_TOKEN`.
 - The provider wrapper trusts the session CA that the injection manifest lists
   as `egress_ca_cert`, through `NODE_EXTRA_CA_CERTS` for Claude and Gemini. A
   listed CA that is absent stops the provider.
@@ -38,6 +36,11 @@ The GitHub Releases page contains old details that are not in this file.
   to `6`.
 - The launcher writes `credential_mode` to the launch summary, the session
   record and the `launch` audit record.
+- `--egress-proxy` activates the credential broker for a `keychain-broker`
+  key. The launcher starts the host broker, gives the sidecar the guest socket,
+  the token and the session CA, and publishes the CA into the bundle. The CA
+  lives at most 24 hours, so a session that runs longer loses TLS to the
+  brokered host. A Claude or Gemini API key from `source` stops such a launch.
 - The `credential-broker-plan` host helper prints the egress proxy rules and
   the Keychain sources for the brokered keys of a bundle. The
   `publish-egress-ca` host helper checks the session CA from the sidecar and

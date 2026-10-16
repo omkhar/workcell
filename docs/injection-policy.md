@@ -153,11 +153,6 @@ The supported resolvers are:
 The Claude resolver records the intended source. It stops the launch because
 Workcell does not provide a supported export path.
 
-The `keychain-broker` resolver is not available yet. The launcher does not
-yet pass a placeholder to the bundle, so a launch that uses this resolver
-stops. A later part of E-4c connects it. The rest of this section describes
-the design.
-
 The `keychain-broker` resolver is for `--egress-proxy` sessions. The agent gets
 only a `wcph-<32 hex>` placeholder at the usual credential path. For
 `gemini_env`, the staged file holds only `GEMINI_API_KEY=<placeholder>`. The
@@ -189,6 +184,18 @@ exactly one unexpired CA certificate with path length 0. The certificate must
 carry critical name constraints that permit only the hosts of the brokered
 keys. It must also exclude every IPv4 and IPv6 address. The
 `credential-broker-plan` helper derives the proxy rules and the Keychain sources from the broker grants table (`internal/credbroker/server.go`).
+
+The launcher starts the broker before the sidecar. The
+first read of a Keychain item can show a macOS prompt. Choose "Always Allow"
+once, or create the item with `-T /usr/bin/security` to avoid it:
+
+```sh
+security add-generic-password -s workcell-claude-api-key -a "$USER" -w -T /usr/bin/security
+```
+
+`-w` without a value asks for the key on the terminal, so the key stays out of
+the shell history. The session CA lives at most 24 hours. A session that runs
+longer loses TLS to the brokered host. Start a new session to recover.
 
 The launch summary, the session record and the `launch` audit record report
 `credential_mode=brokered` for such a session. Every other session reports

@@ -354,6 +354,50 @@ dead monitor calls `finish_stopped_session_fallback`. If a launch ends before
 the seal, the session has no seal. Its cleanup stops a proxy that still runs
 before it writes the `aborted` record, the last write of the session.
 
+### `start_credential_broker()` / `stop_credential_broker()`
+
+`start_credential_broker` runs only when the bundle holds a placeholder. It
+reads the proxy rules and the Keychain sources from `credential-broker-plan`.
+It makes a private directory with `mktemp -d` and writes the Colima
+`ssh-config` there. It removes a stale guest socket
+`/tmp/workcell-broker-<session>.sock` in the VM, because Colima sshd does not
+unlink one. It makes a 32-byte session token.
+
+Then it starts `credential-broker-cli serve` in the background. The broker
+reads the token on fd 3, never from argv. It writes the request ledger in the
+private directory, because a macOS home carries an ACL that the broker refuses
+(`internal/credbroker/cli.go`).
+
+The launcher records the PID and the private directory in `<session>.broker`.
+It waits up to 150 seconds for the guest socket, then gives the socket to the
+sidecar uid `65532` with mode `0600`. A failure stops the launch.
+
+For a brokered session, the sidecar create adds a `noexec` tmpfs at
+`/run/workcell-egress`, the guest socket at `/run/workcell-broker.sock` and
+`-e WORKCELL_BROKER_TOKEN`. The docker client reads the token from its
+environment. The proxy gets the `-terminate` rules, `-ca-out`, `-ca-ttl 24h` and
+`-broker-socket`. After the sidecar listens, `start_egress_proxy` copies the CA
+out and publishes it with `publish-egress-ca`.
+`internal/metadatautil/egress_proxy_sidecar.go` pins the create vector and the
+body of `start_credential_broker`.
+
+`stop_egress_proxy` calls `stop_credential_broker` before it removes the
+sidecar.
+
+`stop_credential_broker` needs no launcher state. `credential_broker_find`
+finds this session's broker from its argument words: the pinned
+`workcell-hostutil` binary, `credential-broker-cli serve`, and this session's
+guest socket. The `<session>.broker` state file is a fast path, so a broker
+whose launcher died before it wrote the file still stops. A failed start rolls
+back the same way.
+
+The stop removes the guest socket and publishes the ledger as
+`<sessions-dir>/<session>.broker.jsonl`. Then it removes the private directory.
+A failure only warns. The broker also exits when its ssh forward ends.
+
+`WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN` points the broker at a keychain file
+for an allowed harness only.
+
 `stop_egress_proxy_for_session` runs the same cleanup for a session whose
 monitor is gone. It derives both names from the session ID and does nothing for
 a session without a proxy network. A failed network lookup fails the command in `scripts/workcell`.
