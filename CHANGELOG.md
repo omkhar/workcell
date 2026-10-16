@@ -36,6 +36,8 @@ The GitHub Releases page contains old details that are not in this file.
   The OCSF export maps it to `session.credential_mode`, and an audit
   `credential_mode` key to `audit.credential_mode`. The mapping version moved
   to `6`.
+- The launcher writes `credential_mode` to the launch summary, the session
+  record and the `launch` audit record.
 
 ### Security hardening
 

@@ -201,6 +201,7 @@ INJECTION_EXTRA_ENDPOINTS=""
 INJECTION_DENY_ENDPOINTS=""
 INJECTION_SSH_ENABLED=0
 INJECTION_SECRET_COPY_TARGETS=""
+INJECTION_CREDENTIAL_PLACEHOLDER=""
 PROFILE_LOCK_DIR=""
 NO_SPINNER=0
 TARGET_BACKEND="colima"
@@ -3020,6 +3021,19 @@ workspace_repo_mcp_state() {
   printf 'denied\n'
 }
 
+# credential_mode_label reports how the agent holds its provider API key:
+# brokered when the session stages only a placeholder and the egress proxy
+# swaps in the key from the host credential broker, and direct otherwise
+# (OAuth flows, Codex and Copilot keys, and every session without
+# --egress-proxy).
+credential_mode_label() {
+  if [[ -n "${INJECTION_CREDENTIAL_PLACEHOLDER}" ]]; then
+    printf 'brokered\n'
+  else
+    printf 'direct\n'
+  fi
+}
+
 session_assurance_final() {
   local initial_assurance
   local final_assurance
@@ -3151,7 +3165,8 @@ append_launch_audit_record() {
     "provider_arg_count=$([[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] && printf '0' || printf '%s' "${#PROVIDER_ARGS[@]}")" \
     "target_provider=$(current_target_provider)" \
     "workspace_head=$(shellproto_field "$(session_git_metadata_lines "${WORKSPACE}")" git_head)" \
-    "session_assurance_initial=$(session_assurance_initial)"
+    "session_assurance_initial=$(session_assurance_initial)" \
+    "credential_mode=$(credential_mode_label)"
 }
 
 append_assurance_change_audit_record() {
@@ -3275,6 +3290,7 @@ write_session_record_initial() {
     "live_status=$([[ "${SESSION_DETACHED}" -eq 1 ]] && printf 'starting' || printf 'running')" \
     "workspace_control_plane=$(workspace_control_plane_state)" \
     "workspace_repo_mcp=$(workspace_repo_mcp_state)" \
+    "credential_mode=$(credential_mode_label)" \
     "parent_session_id=${SESSION_FORK_PARENT}"
   SESSION_RECORD_WRITTEN=1
 }
@@ -5731,6 +5747,7 @@ prepare_injection_bundle() {
   INJECTION_SSH_ENABLED=0
   INJECTION_SSH_CONFIG_ASSURANCE="off"
   INJECTION_SECRET_COPY_TARGETS=""
+  INJECTION_CREDENTIAL_PLACEHOLDER=""
 
   local stdout_capture stderr_capture rc trailer
   stdout_capture="$(mktemp "${TMPDIR:-/tmp}/workcell-injection-bundle-stdout.XXXXXX")"
@@ -5784,6 +5801,7 @@ prepare_injection_bundle() {
       INJECTION_SSH_ENABLED) INJECTION_SSH_ENABLED="${value}" ;;
       INJECTION_SSH_CONFIG_ASSURANCE) INJECTION_SSH_CONFIG_ASSURANCE="${value}" ;;
       INJECTION_SECRET_COPY_TARGETS) INJECTION_SECRET_COPY_TARGETS="${value}" ;;
+      INJECTION_CREDENTIAL_PLACEHOLDER) INJECTION_CREDENTIAL_PLACEHOLDER="${value}" ;;
     esac
   done <"${stdout_capture}"
   rm -f "${stdout_capture}" "${stderr_capture}"
@@ -9789,6 +9807,7 @@ fi
 printf 'workspace_control_plane=%s\n' "$(workspace_control_plane_state)" >&2
 printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
 printf 'egress_enforcement=%s\n' "$(egress_enforcement_label)" >&2
+printf 'credential_mode=%s\n' "$(credential_mode_label)" >&2
 printf 'execution_path=%s audit_log=%s\n' "${EXECUTION_PATH}" "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then

@@ -183,6 +183,10 @@ the CA only from the read-only bundle mount,
 elsewhere in `WORKCELL_INJECTION_MANIFEST` stops the provider, so the agent
 cannot add a trust root.
 
+The launch summary, the session record and the `launch` audit record report
+`credential_mode=brokered` for such a session. Every other session reports
+`credential_mode=direct`, which includes OAuth flows and Codex and Copilot keys.
+
 ### Rendered credential entry keys
 
 The resolver removes `resolver` and `materialization`. It writes a staged
