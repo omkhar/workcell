@@ -154,6 +154,12 @@ func TestPublishEgressCAAcceptsOnlyTheSessionCA(t *testing.T) {
 			selfSigned(t, p, c)
 			return nil
 		},
+		"over a day": func(p string) error {
+			c := constrained(&x509.Certificate{})
+			c.NotAfter = now.Add(egressproxy.MaxCALifetime + time.Minute)
+			selfSigned(t, p, c)
+			return nil
+		},
 		"unconstrained": func(p string) error {
 			c := constrained(&x509.Certificate{})
 			c.PermittedDNSDomainsCritical, c.PermittedDNSDomains = false, nil
