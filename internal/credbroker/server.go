@@ -65,6 +65,8 @@ type grant struct{ host, header string }
 var grants = map[string][]grant{
 	"claude_api_key": {{host: "api.anthropic.com", header: "x-api-key"}, {host: "api.anthropic.com", header: "authorization"}},
 	"gemini_env":     {{host: "generativelanguage.googleapis.com", header: "x-goog-api-key"}},
+	// Codex API-key mode only; Codex OAuth tokens stay direct.
+	"codex_auth": {{host: "api.openai.com", header: "authorization"}},
 }
 
 // keychainItems names the fixed login Keychain item (the generic password
@@ -72,6 +74,7 @@ var grants = map[string][]grant{
 var keychainItems = map[string]string{
 	"claude_api_key": "workcell-claude-api-key",
 	"gemini_env":     "workcell-gemini-api-key",
+	"codex_auth":     "workcell-codex-api-key",
 }
 
 // KeychainItem returns the login Keychain item that holds a brokered key, or

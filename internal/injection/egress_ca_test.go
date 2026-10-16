@@ -68,6 +68,14 @@ func TestCredentialBrokerPlanComesFromTheGrants(t *testing.T) {
 	if err != nil || got != want {
 		t.Fatalf("CredentialBrokerPlan = %q, %v; want %q", got, err, want)
 	}
+	codex := brokerBundle(t, "codex", "[credentials.codex_auth]\nresolver = \"keychain-broker\"\n", true)
+	got, err = CredentialBrokerPlan(codex.InjectionBundleRoot, codex.CredentialPlaceholder)
+	want = "terminate=api.openai.com=authorization=" + codex.CredentialPlaceholder + "\n" +
+		"credential=codex_auth=keychain:workcell-codex-api-key\n" +
+		"audit=credential_broker_start key=codex_auth item=workcell-codex-api-key\n"
+	if err != nil || got != want {
+		t.Fatalf("CredentialBrokerPlan = %q, %v; want %q", got, err, want)
+	}
 	if _, err := CredentialBrokerPlan(claude.InjectionBundleRoot, "wcph-short"); err == nil {
 		t.Error("a bad placeholder was accepted")
 	}

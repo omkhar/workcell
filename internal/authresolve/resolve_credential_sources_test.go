@@ -827,7 +827,8 @@ func TestRunKeychainBrokerStagesOnlyAPlaceholder(t *testing.T) {
 		{"bad placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", "wcph-short"}, 2, "--credential-placeholder must be", "", false},
 		{"duplicate placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", placeholder, "--credential-placeholder", zero}, 2, "duplicate flag: --credential-placeholder", "", false},
 		{"duplicate policy", "claude", "claude_api_key", "launch", []string{"--policy", "/nonexistent", "--credential-placeholder", placeholder}, 2, "duplicate flag: --policy", "", false},
-		{"unbrokered key", "codex", "codex_auth", "launch", []string{"--credential-placeholder", placeholder}, 1, "resolver is unsupported", "", false},
+		{"codex launch", "codex", "codex_auth", "launch", []string{"--credential-placeholder", placeholder}, 0, "", `{"OPENAI_API_KEY":"` + placeholder + `"}` + "\n", true},
+		{"unbrokered key", "copilot", "copilot_github_token", "launch", []string{"--credential-placeholder", placeholder}, 1, "resolver is unsupported", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2,8 +2,9 @@
 # Real Colima smoke for --egress-proxy: an allowlisted host works through the
 # sidecar, and a denied SNI, an IP literal and a DNS lookup all fail. The
 # per-session network and sidecar are gone after an attached run and after a
-# detached session stops. A brokered Claude key reaches the upstream only
-# through the sidecar: the agent holds a placeholder, never the key.
+# detached session stops. A brokered Claude key and a brokered Codex API key
+# reach the upstream only through the sidecar: the agent holds a placeholder,
+# never the key.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -22,7 +23,8 @@ cleanup() {
 
   if [[ "${status}" -ne 0 ]]; then
     for file in prepare.stderr probe.stdout probe.stderr detached.stdout detached.stderr \
-      broker.stdout broker.stderr broker-missing.stderr; do
+      broker.stdout broker.stderr codex.stdout codex.stderr codex-exec.stdout codex-exec.stderr \
+      broker-missing.stderr; do
       [[ -f "${TMP_DIR}/${file}" ]] || continue
       printf -- '--- %s ---\n' "${file}" >&2
       cat "${TMP_DIR}/${file}" >&2
@@ -201,6 +203,64 @@ if grep -q "${canary}" "${ledger}" || grep -q placeholder_unswapped "${ledger%.b
   exit 1
 fi
 assert_no_proxy_residue "a brokered run"
+
+# A brokered Codex API key. The probe checks the staged auth.json and the CA
+# bundle with curl: the brokered host, and a spliced host that must still
+# verify with the image roots in the bundle. Then the real Codex binary runs
+# as the managed provider, so its own TLS stack (rustls) must trust the sidecar
+# leaf through CODEX_CA_CERTIFICATE; neither the system roots nor NODE_EXTRA_CA_CERTS
+# hold the session CA for it. The canary is not a real key, so OpenAI answers
+# 401 to the swapped request.
+security add-generic-password -s workcell-codex-api-key -a smoke -w "${canary}" \
+  -T /usr/bin/security "${TMP_DIR}/smoke.keychain-db"
+printf 'version = 1\n\n[credentials.codex_auth]\nresolver = "keychain-broker"\n' >"${TMP_DIR}/codex-policy.toml"
+codex_flags=(--agent codex --workspace "${WORKSPACE}" --colima-profile "${PROFILE}"
+  --injection-policy "${TMP_DIR}/codex-policy.toml" --egress-proxy)
+cat >"${TMP_DIR}/codex-probe.sh" <<'EOF'
+bundle=/opt/workcell/host-injections
+auth="$(cat "$(jq -r '.credentials.codex_auth.mount_path' "${bundle}/manifest.json")")"
+echo "auth=${auth}"
+placeholder="$(jq -r .OPENAI_API_KEY <<<"${auth}")"
+curl -sS -o /dev/null -w 'status=%{http_code}\n' --max-time 30 --cacert "${bundle}/egress-ca-bundle.pem" \
+  -H "Authorization: Bearer ${placeholder}" https://api.openai.com/v1/models || echo "status=fail"
+curl -sS -o /dev/null -w 'spliced=%{http_code}\n' --max-time 30 --cacert "${bundle}/egress-ca-bundle.pem" \
+  https://chatgpt.com/ || echo "spliced=fail"
+echo "canary_hits=$({ env; cat /proc/[0-9]*/environ; grep -rs . "${bundle}" "${HOME}/.codex"; } 2>/dev/null | grep -c sk-canary)"
+EOF
+brokered_workcell "${TMP_DIR}/smoke.keychain-db" "${codex_flags[@]}" \
+  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+  -- bash -c "$(cat "${TMP_DIR}/codex-probe.sh")" >"${TMP_DIR}/codex.stdout" 2>"${TMP_DIR}/codex.stderr"
+grep -q '^credential_mode=brokered$' "${TMP_DIR}/codex.stderr"
+grep -Eq '^auth=\{"OPENAI_API_KEY":"wcph-[0-9a-f]{32}"\}$' "${TMP_DIR}/codex.stdout"
+grep -q '^status=401$' "${TMP_DIR}/codex.stdout"
+grep -Eq '^spliced=[1-5][0-9][0-9]$' "${TMP_DIR}/codex.stdout"
+grep -q '^canary_hits=0$' "${TMP_DIR}/codex.stdout"
+assert_no_proxy_residue "a brokered Codex probe"
+
+codex_exec_status=0
+brokered_workcell "${TMP_DIR}/smoke.keychain-db" "${codex_flags[@]}" \
+  --agent-arg exec --agent-arg 'Reply with one word.' >"${TMP_DIR}/codex-exec.stdout" 2>"${TMP_DIR}/codex-exec.stderr" ||
+  codex_exec_status=$?
+echo "codex_exec_status=${codex_exec_status}"
+grep -q '^credential_mode=brokered$' "${TMP_DIR}/codex-exec.stderr"
+grep -Eiq '401|unauthorized|invalid_api_key|incorrect api key' "${TMP_DIR}/codex-exec.stdout" "${TMP_DIR}/codex-exec.stderr"
+if grep -Eiq 'certificate|unknownissuer|invalid peer' "${TMP_DIR}/codex-exec.stdout" "${TMP_DIR}/codex-exec.stderr"; then
+  echo "Codex did not trust the session CA" >&2
+  exit 1
+fi
+codex_audit_log="$(sed -n 's/^execution_path=.* audit_log=//p' "${TMP_DIR}/codex-exec.stderr")"
+codex_session="$(grep 'event=launch' "${codex_audit_log}" | grep 'agent=codex' | grep 'credential_mode=brokered' | tail -n 1 |
+  sed -n 's/.*session_id=\([^ ]*\).*/\1/p')"
+[[ -n "${codex_session}" && "${codex_session}" != "${broker_session}" ]]
+codex_ledger="$(find "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets" \
+  -path "*/${PROFILE}/sessions/${codex_session}.broker.jsonl" -type f)"
+grep '"result":"granted"' "${codex_ledger}" | grep '"credential":"codex_auth"' | grep -q '"host":"api.openai.com"'
+if grep -q "${canary}" "${codex_ledger}" || grep -q placeholder_unswapped "${codex_ledger%.broker.jsonl}.egress-deny.jsonl" ||
+  [[ -e "${codex_ledger%.jsonl}" ]]; then
+  echo "the brokered Codex run left the key, an unswapped placeholder or the broker state" >&2
+  exit 1
+fi
+assert_no_proxy_residue "a brokered Codex run"
 
 # Without the Keychain item the broker stops the launch before the agent runs.
 if brokered_workcell "${TMP_DIR}/empty.keychain-db" "${broker_flags[@]}" -- true >/dev/null 2>"${TMP_DIR}/broker-missing.stderr"; then
