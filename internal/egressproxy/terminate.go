@@ -184,7 +184,8 @@ func (ca *SessionCA) issue(host string, key *ecdsa.PrivateKey) (*x509.Certificat
 
 // Terminate makes p terminate TLS for each rule host, which must be on the
 // SNI allowlist, and swap each rule's placeholder header via broker. A host
-// can have one rule per header.
+// can have one rule per header. Header names are stored lowercase, the form
+// the credential broker's grants use, since HTTP header names ignore case.
 func (p *Proxy) Terminate(ca *SessionCA, broker Broker, rules []TerminateRule) error {
 	terminate := map[string][]TerminateRule{}
 	seen := map[string]bool{}
@@ -192,7 +193,8 @@ func (p *Proxy) Terminate(ca *SessionCA, broker Broker, rules []TerminateRule) e
 		if !p.allow.sni[r.Host] {
 			return fmt.Errorf("terminate host %s is not on the port 443 allowlist", r.Host)
 		}
-		key := r.Host + " " + strings.ToLower(r.Header)
+		r.Header = strings.ToLower(r.Header)
+		key := r.Host + " " + r.Header
 		if seen[key] {
 			return fmt.Errorf("terminate host %s has more than one rule for header %s", r.Host, r.Header)
 		}

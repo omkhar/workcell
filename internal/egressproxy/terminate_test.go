@@ -68,9 +68,11 @@ func terminateFixture(t *testing.T, broker Broker) (proxyAddr string, ca *Sessio
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Mixed-case header names: the broker must still get the lowercase form
+	// its grants use (TestTerminateSwapsOnlyExactPlaceholder checks the call).
 	if err := p.Terminate(ca, broker, []TerminateRule{
-		{Host: "example.com", Header: "x-api-key", Placeholder: testPlaceholder},
-		{Host: "example.com", Header: "authorization", Placeholder: testAuthPlaceholder},
+		{Host: "example.com", Header: "X-Api-Key", Placeholder: testPlaceholder},
+		{Host: "example.com", Header: "Authorization", Placeholder: testAuthPlaceholder},
 	}); err != nil {
 		t.Fatal(err)
 	}
