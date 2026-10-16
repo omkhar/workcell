@@ -71,6 +71,10 @@ type Options struct {
 	// ApprovedLargeCertifiedAdapter allows a larger but still bounded
 	// PR-shape gate for reviewed, live-certified adapter support PRs.
 	ApprovedLargeCertifiedAdapter bool
+	// FullShapeBudget gives a first publication the full PR-shape budget.
+	// Only a publication whose content is fixed before it publishes, such
+	// as a verified upstream-refresh candidate, may pass it.
+	FullShapeBudget bool
 	// DryRun, when true, prints the planned host commands instead of
 	// executing them; output shape is asserted by
 	// tests/scenarios/shared/test-publish-pr-dry-run.sh.
@@ -186,6 +190,8 @@ func ParseArgs(args []string) (*Options, error) {
 			opts.Ready = true
 		case "--approved-large-certified-adapter":
 			opts.ApprovedLargeCertifiedAdapter = true
+		case "--full-shape-budget":
+			opts.FullShapeBudget = true
 		case "--dry-run":
 			opts.DryRun = true
 		case "-h", "--help":

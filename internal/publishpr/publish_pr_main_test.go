@@ -183,6 +183,11 @@ func TestShapeMarginFromLookups(t *testing.T) {
 			t.Parallel()
 			got, err := shapeMarginFromLookups(tc.repoView, tc.prList, opts)
 			if tc.wantSubstring == "" {
+				full := *opts
+				full.FullShapeBudget = true
+				if gotFull, fullErr := shapeMarginFromLookups(tc.repoView, tc.prList, &full); fullErr != nil || gotFull != "1.0" {
+					t.Fatalf("shapeMarginFromLookups(full budget) = %q, %v; want 1.0", gotFull, fullErr)
+				}
 				if err != nil || got != tc.want {
 					t.Fatalf("shapeMarginFromLookups() = %q, %v; want %q", got, err, tc.want)
 				}
@@ -375,6 +380,7 @@ func TestParseArgsAcceptsAllSupportedFlags(t *testing.T) {
 		"--commit-message-file", "/tmp/commit.txt",
 		"--ready",
 		"--approved-large-certified-adapter",
+		"--full-shape-budget",
 		"--dry-run",
 	}
 	opts, err := ParseArgs(args)
@@ -396,6 +402,7 @@ func TestParseArgsAcceptsAllSupportedFlags(t *testing.T) {
 		CommitMessageFile:             "/tmp/commit.txt",
 		Ready:                         true,
 		ApprovedLargeCertifiedAdapter: true,
+		FullShapeBudget:               true,
 		DryRun:                        true,
 	}
 	got := *opts

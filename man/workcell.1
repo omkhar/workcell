@@ -589,6 +589,11 @@ label together with
 .BR --approved-large-certified-adapter ;
 binary changes and changes beyond the certified-adapter size budget still
 fail closed.
+A first publication normally gets 0.66 of the PR shape budget, so review
+fixes still fit.
+.B --full-shape-budget
+gives it the full budget; use it only when the content is fixed before
+publication, as for a verified upstream-refresh candidate.
 Dry-run output reports whether repo-owned PR checks are expected for the chosen
 base.
 Use

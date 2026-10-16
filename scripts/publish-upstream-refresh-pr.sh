@@ -311,7 +311,9 @@ if [[ "${local_changed_files}" != "${candidate_changed_files}" ]]; then
 fi
 
 branch_name="codex/upstream-refresh-${CANDIDATE_KIND}-${RUN_ID}"
-"${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty --publish-branch "${branch_name}"
+# The candidate identity checks above fix the content, so no review fix can
+# grow it: the refresh gets the full PR shape budget on first publication.
+"${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty --publish-branch "${branch_name}" --shape-margin 1.0
 
 title="Refresh pinned upstreams (${CANDIDATE_KIND})"
 
@@ -356,4 +358,5 @@ EOF
   --base "${BASE_BRANCH}" \
   --title-file "${title_file}" \
   --body-file "${body_file}" \
-  --commit-message-file "${commit_file}"
+  --commit-message-file "${commit_file}" \
+  --full-shape-budget
