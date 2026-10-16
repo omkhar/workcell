@@ -263,10 +263,10 @@ The launch summary reports
 .BR egress_enforcement=proxy .
 A
 .B keychain-broker
-Claude or Gemini key stays on the host: a host broker reads it from the login
+Claude, Gemini or Codex API key stays on the host: a host broker reads it from the login
 Keychain, and the sidecar puts it into each request in place of the
 placeholder that the agent holds. The session CA lives at most 24 hours.
-A Claude or Gemini API key from
+A Claude, Gemini or Codex API key from
 .B source
 stops such a launch.
 Other modes and targets stop with status 2.

@@ -308,6 +308,12 @@ refuse a valid CA.
 `internal/injection/egress_ca.go` (`PublishEgressCA`) refuses any other CA from
 the sidecar before the launcher publishes it, and
 `internal/injection/egress_ca_test.go` enforces each refusal.
+
+The CA bundle for `SSL_CERT_FILE` holds the image system roots and this CA.
+The launcher reads the roots from the read-only sidecar, not from the agent
+container. `PublishEgressCA` accepts only PEM certificates there, and
+`TestPublishEgressCAWritesTheRootsBundle` in
+`internal/injection/egress_ca_test.go` enforces it.
 `internal/egressproxy/terminate.go` owns the 24-hour bound for both the sidecar
 and the publisher.
 

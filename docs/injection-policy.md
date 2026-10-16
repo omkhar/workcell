@@ -148,41 +148,62 @@ The supported resolvers are:
 
 - `codex-home-auth-file` for `codex_auth`
 - `claude-macos-keychain` for `claude_auth`
-- `keychain-broker` for `claude_api_key` and `gemini_env`
+- `keychain-broker` for `claude_api_key`, `gemini_env` and `codex_auth`
 
 The Claude resolver records the intended source. It stops the launch because
 Workcell does not provide a supported export path.
 
 The `keychain-broker` resolver is for `--egress-proxy` sessions. The agent gets
 only a `wcph-<32 hex>` placeholder at the usual credential path. For
-`gemini_env`, the staged file holds only `GEMINI_API_KEY=<placeholder>`. The
-host credential broker reads the real key from a fixed item in the macOS login
-Keychain: `workcell-claude-api-key` for `claude_api_key` and
-`workcell-gemini-api-key` for `gemini_env`. The egress proxy puts the key into
-the request in place of the placeholder.
+`gemini_env`, the staged file holds only `GEMINI_API_KEY=<placeholder>`. For
+`codex_auth`, it holds only `{"OPENAI_API_KEY":"<placeholder>"}`, the
+`auth.json` of Codex API-key mode. The host credential broker reads the real
+key from a fixed item in the macOS login Keychain:
+
+- `workcell-claude-api-key` for `claude_api_key`
+- `workcell-gemini-api-key` for `gemini_env`
+- `workcell-codex-api-key` for `codex_auth`
+
+The egress proxy puts the key into the request in place of the placeholder.
+The Codex key goes only into the `Authorization` header to `api.openai.com`.
 
 A launch without a placeholder stops
 (`internal/authresolve/resolve_provider_credentials.go`). When a session
 brokers credentials, a `claude_api_key` or a Gemini API key from `source`
-stops the render (`internal/injection/render_credentials.go`). The message
-names both ways out: the Keychain item, or a launch without `--egress-proxy`.
-Gemini OAuth and Vertex settings stay direct.
+stops the render (`internal/injection/render_credentials.go`). A `codex_auth`
+file that sets `OPENAI_API_KEY` also stops it, from `source` or from
+`codex-home-auth-file`. The message names both ways out: the Keychain item, or
+a launch without `--egress-proxy`. Gemini OAuth, Vertex settings and Codex
+ChatGPT OAuth stay direct. In such a session, a Codex `auth.json` that repeats
+a key also stops the render, because the decoder reads only the last copy.
 
 A session that brokers a key lists the session CA as `egress_ca_cert` in the
-manifest. The provider wrapper sets `NODE_EXTRA_CA_CERTS` to that bundle file
-after it clears the provider environment. Claude and Gemini then trust the CA
-and the system roots. A listed CA that is absent or a symbolic link stops
-the provider (`runtime/container/home-control-plane.sh`). The wrapper reads
-the CA only from the read-only bundle mount,
+manifest. It also lists the CA bundle as `egress_ca_bundle`: the system roots
+of the image, then the session CA.
+
+The provider wrapper clears the provider
+environment, including `CODEX_CA_CERTIFICATE`. Then it sets
+`NODE_EXTRA_CA_CERTS` to the CA and `SSL_CERT_FILE` to the CA bundle. Claude
+and Gemini read `NODE_EXTRA_CA_CERTS`, which adds to the system roots. Codex
+reads `SSL_CERT_FILE`, which replaces them, so the bundle holds both. A listed
+file that is absent or a symbolic link stops the provider
+(`runtime/container/home-control-plane.sh`).
+
+The wrapper reads
+the CA files only from the read-only bundle mount,
 `/opt/workcell/host-injections/manifest.json`. A manifest that the agent names
 elsewhere in `WORKCELL_INJECTION_MANIFEST` stops the provider, so the agent
 cannot add a trust root.
 
-The `publish-egress-ca` host helper writes that file. It treats the CA from
+The `publish-egress-ca` host helper writes both files. It treats the CA from
 the sidecar as untrusted input (`internal/injection/egress_ca.go`). It accepts
 exactly one unexpired CA certificate with path length 0. The certificate must
 carry critical name constraints that permit only the hosts of the brokered
-keys. It must also exclude every IPv4 and IPv6 address. The
+keys. It must also exclude every IPv4 and IPv6 address.
+
+The launcher reads
+the system roots from the read-only sidecar, which runs the verified image.
+The helper accepts only PEM certificates there and writes the CA bundle. The
 `credential-broker-plan` helper derives the proxy rules and the Keychain sources from the broker grants table (`internal/credbroker/server.go`).
 
 The launcher starts the broker before the sidecar. The
@@ -199,7 +220,9 @@ longer loses TLS to the brokered host. Start a new session to recover.
 
 The launch summary, the session record and the `launch` audit record report
 `credential_mode=brokered` for such a session. Every other session reports
-`credential_mode=direct`, which includes OAuth flows and Codex and Copilot keys.
+`credential_mode=direct`, which includes OAuth flows and Copilot tokens.
+[Credential broker residual risk](security/credential-broker-residual-risk.md)
+lists what the broker does not cover.
 
 ### Rendered credential entry keys
 

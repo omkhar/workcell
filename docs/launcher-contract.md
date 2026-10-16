@@ -381,7 +381,8 @@ For a brokered session, the sidecar create adds a `noexec` tmpfs at
 `-e WORKCELL_BROKER_TOKEN`. The docker client reads the token from its
 environment. The proxy gets the `-terminate` rules, `-ca-out`, `-ca-ttl 24h` and
 `-broker-socket`. After the sidecar listens, `start_egress_proxy` copies the CA
-out and publishes it with `publish-egress-ca`.
+and the image system roots out of the sidecar. It publishes both with
+`publish-egress-ca`, which writes the CA and the CA bundle.
 `internal/metadatautil/egress_proxy_sidecar.go` pins the create vector and the
 body of `start_credential_broker`.
 
