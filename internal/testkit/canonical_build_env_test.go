@@ -62,10 +62,14 @@ func canonicalBuildEnvProbeWithHelper(
 
 	argv := []string{"--noprofile", "--norc", "-p", "-c", script, "canonical-build-env-probe", helper}
 	argv = append(argv, args...)
-	cmd := exec.Command("/bin/bash", argv...)
-	cmd.Env = canonicalBuildEnv(extraEnv)
-
-	output, err := cmd.CombinedOutput()
+	// The probe's bash execs a just-written fixture entrypoint, so the
+	// golang/go#22315 race surfaces as exit 126 "text file busy"; a probe
+	// that fails there never started the fixture, so a retry is safe.
+	output, err := execRetryETXTBSYOrNestedBusy(func() *exec.Cmd {
+		cmd := exec.Command("/bin/bash", argv...)
+		cmd.Env = canonicalBuildEnv(extraEnv)
+		return cmd
+	})
 	if err == nil {
 		return 0, string(output)
 	}
