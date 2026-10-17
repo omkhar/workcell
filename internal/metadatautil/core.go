@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/providerid"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 var hexDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -159,12 +161,50 @@ func gitRootMatches(rootDir string) bool {
 	return filepath.Clean(topLevel) == filepath.Clean(rootDir)
 }
 
+// maxGitIndexBytes bounds the index snapshot that gitLsFiles reads.
+const maxGitIndexBytes = 256 << 20
+
+// gitLsFiles runs git ls-files on a private copy of the index of rootDir. Git
+// reads a missing index as an empty one, so git ls-files would succeed with no
+// paths when another process replaces the index during the read, and every
+// tracked input would look untracked (#880). The copy is read once, so a
+// missing index stops here, and git reads exactly the bytes that were read.
+func gitLsFiles(rootDir string, args ...string) (string, error) {
+	indexPath, err := gitOutput(rootDir, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return "", err
+	}
+	data, err := rootio.ReadFileNoFollow(strings.TrimSpace(indexPath), "git index", maxGitIndexBytes)
+	if err != nil {
+		return "", fmt.Errorf("git index for %s is unreadable, so the tracked file list cannot be trusted: %w", rootDir, err)
+	}
+	snapshot, err := os.CreateTemp("", "workcell-git-index-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(snapshot.Name())
+	if _, err := snapshot.Write(data); err != nil {
+		snapshot.Close()
+		return "", err
+	}
+	if err := snapshot.Close(); err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", append([]string{"-C", rootDir, "ls-files"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+snapshot.Name(), "GIT_OPTIONAL_LOCKS=0")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
 func gitTrackedFiles(rootDir string) ([]string, bool, error) {
 	if !gitRootMatches(rootDir) {
 		return nil, false, nil
 	}
 
-	output, err := gitOutput(rootDir, "ls-files", "-z", "--cached", "--modified", "--deduplicate")
+	output, err := gitLsFiles(rootDir, "-z", "--cached", "--modified", "--deduplicate")
 	if err != nil {
 		return nil, false, err
 	}
@@ -208,8 +248,8 @@ func gitTrackedSubset(rootDir string, paths []string, requireTracked bool) ([]st
 		return unique, nil
 	}
 
-	args := append([]string{"ls-files", "--"}, unique...)
-	output, err := gitOutput(rootDir, args...)
+	args := append([]string{"--"}, unique...)
+	output, err := gitLsFiles(rootDir, args...)
 	if err != nil {
 		return nil, err
 	}
