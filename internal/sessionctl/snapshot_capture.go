@@ -103,9 +103,9 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 	// .git/index are untouched. The workspace objects are a read-only
 	// alternate; the store fetch rehashes them, so a forged object fails closed.
 	scratchGit := func(args ...string) (string, error) {
-		return runSnapshotGit(opts, scratch, append([]string{"--git-dir=" + scratch, "--work-tree=" + opts.Workspace}, args...)...)
+		return runSnapshotGit(opts.GitBin, scratch, append([]string{"--git-dir=" + scratch, "--work-tree=" + opts.Workspace}, args...)...)
 	}
-	if _, err := runSnapshotGit(opts, scratch, snapshotInitArgs(opts.GitHead, scratch)...); err != nil {
+	if _, err := runSnapshotGit(opts.GitBin, scratch, snapshotInitArgs(opts.GitHead, scratch)...); err != nil {
 		return "", "", err
 	}
 	if err := writeSnapshotAlternates(scratch, filepath.Join(gitDir, "objects")); err != nil {
@@ -170,14 +170,14 @@ func publishSnapshot(opts snapshotCaptureOptions, scratch string) error {
 	if err := check(); err != nil {
 		return err
 	}
-	if _, err := runSnapshotGit(opts, storePath, snapshotInitArgs(opts.GitHead, storePath)...); err != nil {
+	if _, err := runSnapshotGit(opts.GitBin, storePath, snapshotInitArgs(opts.GitHead, storePath)...); err != nil {
 		return err
 	}
 	if err := check(); err != nil {
 		return err
 	}
 	ref := "refs/workcell/snapshots/" + opts.SessionID + "/" + opts.SnapshotID
-	if _, err := runSnapshotGit(opts, storePath, "--git-dir="+storePath,
+	if _, err := runSnapshotGit(opts.GitBin, storePath, "--git-dir="+storePath,
 		"-c", "core.fsync=all", "-c", "core.fsyncMethod=fsync",
 		"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", scratch,
 		"refs/workcell/snapshot:"+ref); err != nil {
@@ -226,7 +226,7 @@ func requireSameDirectory(dir *os.File, path string) error {
 
 // runSnapshotGit runs git with a scrubbed environment and no hooks, system or
 // global config, fsmonitor, or external diff.
-func runSnapshotGit(opts snapshotCaptureOptions, dir string, args ...string) (string, error) {
+func runSnapshotGit(gitBin, dir string, args ...string) (string, error) {
 	home := os.Getenv("HOME")
 	if home == "" {
 		home = "/"
@@ -237,10 +237,10 @@ func runSnapshotGit(opts snapshotCaptureOptions, dir string, args ...string) (st
 		"-c", "diff.external=",
 		"-c", "color.ui=false",
 	}, args...)
-	cmd := exec.Command(opts.GitBin, full...)
+	cmd := exec.Command(gitBin, full...)
 	cmd.Dir = dir
 	cmd.Env = []string{
-		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:" + filepath.Dir(opts.GitBin),
+		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:" + filepath.Dir(gitBin),
 		"HOME=" + home,
 		"LC_ALL=C",
 		"LANG=C",

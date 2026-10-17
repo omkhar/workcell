@@ -17,7 +17,6 @@ import (
 	"github.com/omkhar/workcell/internal/host/auditseal"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
-	"github.com/omkhar/workcell/internal/ocsf"
 	"github.com/omkhar/workcell/internal/shellproto"
 )
 
@@ -99,7 +98,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		_, sealErr := auditseal.ReadSeal(auditseal.SealPathForRecord(recordPath))
 		switch {
 		case sealErr == nil:
-			launch, _, err := sealedForkRecords(opts, record, recordPath)
+			launch, _, _, err := sealedSnapshotRecords("session fork", opts.signingDir, opts.sessionID, "", record, recordPath)
 			if err != nil {
 				return err
 			}
@@ -123,7 +122,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		})
 	}
 
-	launch, snapshot, err := sealedForkRecords(opts, record, recordPath)
+	launch, snapshot, _, err := sealedSnapshotRecords("session fork", opts.signingDir, opts.sessionID, opts.snapshotID, record, recordPath)
 	if err != nil {
 		return err
 	}
@@ -138,7 +137,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	// The signed snapshot record names the workspace and head that capture
 	// really used. They must be the signed launch values, because the unsigned
 	// session record can change between the check and the capture.
-	if snapshot["snapshot_workspace"] != launch["workspace"] || snapshot["snapshot_head"] != launch["workspace_head"] {
+	if !snapshotMatchesSignedLaunch(snapshot, launch) {
 		return fmt.Errorf("session fork: the snapshot did not capture the signed launch workspace and head: %s", opts.sessionID)
 	}
 	originHash := sha256.Sum256([]byte(origin))
@@ -245,47 +244,6 @@ func validateForkArgs(opts forkArgs) error {
 	return nil
 }
 
-// sealedForkRecords returns the parent launch record and the named snapshot
-// record from the signed prefix of the parent audit chain.
-func sealedForkRecords(opts forkArgs, record sessions.SessionRecord, recordPath string) (launch, snapshot map[string]string, err error) {
-	auditLog, ok := canonicalSessionAuditLog(record, recordPath)
-	if !ok {
-		return nil, nil, fmt.Errorf("session fork: recorded audit log path does not match the profile's canonical location: %s", opts.sessionID)
-	}
-	seal, err := auditseal.ReadSeal(auditseal.SealPathForRecord(recordPath))
-	if err != nil {
-		return nil, nil, fmt.Errorf("session fork requires a signed audit chain for %s: %w", opts.sessionID, err)
-	}
-	records, err := auditseal.SealedSessionRecords(opts.signingDir, auditLog, record.TargetProvider, opts.sessionID, seal)
-	if err != nil {
-		return nil, nil, fmt.Errorf("session fork: audit verification failed for %s: %w", opts.sessionID, err)
-	}
-	for _, fields := range records {
-		values := auditFieldMap(fields)
-		switch {
-		case values["event"] == "launch" && launch == nil:
-			launch = values
-		case values["event"] == "session_snapshot" && values["snapshot_id"] == opts.snapshotID:
-			snapshot = values
-		}
-	}
-	if launch == nil || launch["agent"] == "" || launch["mode"] == "" {
-		return nil, nil, fmt.Errorf("session fork: no signed launch record for %s", opts.sessionID)
-	}
-	if opts.snapshotID != "" && (snapshot == nil || !gitObjectIDPattern.MatchString(snapshot["commit"]) || !gitObjectIDPattern.MatchString(snapshot["tree"])) {
-		return nil, nil, fmt.Errorf("session fork: no signed session_snapshot record %s for %s", opts.snapshotID, opts.sessionID)
-	}
-	return launch, snapshot, nil
-}
-
-func auditFieldMap(fields []ocsf.AuditField) map[string]string {
-	values := make(map[string]string, len(fields))
-	for _, field := range fields {
-		values[field.Key] = field.Value
-	}
-	return values
-}
-
 // checkForkExecutionPath keeps each child on the parent execution path. A
 // debug-command parent needs the operator to acknowledge the arbitrary
 // command again and to give it after --; any other parent refuses those flags.
@@ -339,7 +297,7 @@ func validateForkLaunch(opts forkArgs, record sessions.SessionRecord, origin str
 	}
 	// The snapshot step already captured the unsigned workspace and git head,
 	// so they must match the signed launch before any child starts.
-	if launch["workspace"] != record.Workspace || launch["workspace_head"] != record.GitHead || !gitObjectIDPattern.MatchString(launch["workspace_head"]) {
+	if !recordMatchesSignedLaunch(record, launch) {
 		return "", fmt.Errorf("session fork: the session record workspace or git head does not match the signed launch record: %s", opts.sessionID)
 	}
 	// A child replays the parent rootfs posture. Without it a readonly parent
