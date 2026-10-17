@@ -9,7 +9,7 @@ workcell \- bounded runtime launcher for coding agents
 [\fIoptions\fR]
 .br
 .B workcell session
-\fIstart|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork\fR [\fIoptions\fR]
+\fIstart|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork|restore\fR [\fIoptions\fR]
 .br
 .B workcell auth
 \fIinit|set|unset|status\fR [\fIoptions\fR]
@@ -128,6 +128,24 @@ give
 and the command after
 .BR -- .
 Fork refuses a parent on another lower-assurance execution path.
+.B workcell session restore
+.RB ( --id
+.I SESSION_ID
+.B --snapshot
+.IR SNAPSHOT_ID )
+makes the worktree of a stopped isolated session match one of its snapshots.
+It reads the snapshot commit and tree only from audit records that the host
+seal covers, never from a store ref. It refuses a session without a signed
+exit record, a direct workspace, and a snapshot without a signed record. It
+first takes a new snapshot of the worktree, so the output field
+.B pre_restore_snapshot_id
+names a snapshot that holds the work before the restore. Git runs in a
+scratch directory and never reads the session clone
+.IR .git .
+The restore does not change the git history, branch, or index of the clone,
+and it does not remove files that git ignores. It appends one
+.B session_restore
+audit record and signs the audit head again.
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.
@@ -884,6 +902,7 @@ workcell session show --id SESSION_ID --text
 workcell session verify --id SESSION_ID
 workcell session snapshot --id SESSION_ID
 workcell session fork --id SESSION_ID [--snapshot SNAPSHOT_ID] --count N
+workcell session restore --id SESSION_ID --snapshot SNAPSHOT_ID
 workcell session delete --id SESSION_ID
 .EE
 .PP

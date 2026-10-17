@@ -227,7 +227,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork> [options]
+       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork|restore> [options]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]
@@ -5143,6 +5143,79 @@ session_fork_main() {
   exit "${status}"
 }
 
+# session_restore_main is dispatch glue. The Go owner (RestoreMain and
+# RestoreApplyMain in internal/sessionctl) reads the snapshot from the signed
+# audit chain and applies its tree to the worktree. This shell first snapshots
+# the worktree, so a restore never loses work that no snapshot holds. Then it
+# appends the session_restore audit record and signs the audit head again.
+session_restore_main() {
+  local plan=""
+  local cli_status=0
+  local session_id=""
+  local profile=""
+  local workspace=""
+  local snapshot_id=""
+  local backup_id=""
+  local applied=""
+  local apply_status=0
+  local record_path=""
+
+  reject_session_trusted_flags restore "$@"
+  set +e
+  plan="$(session_run_cli_with_roots session-restore-cli "$@" "--signing-dir=${WORKCELL_STATE_ROOT}/signing")"
+  cli_status="$?"
+  set -e
+  [[ "${cli_status}" -eq 0 ]] || exit "${cli_status}"
+  session_id="$(shellproto_field "${plan}" session_id)"
+  [[ -n "${session_id}" ]] || exit 0
+  profile="$(shellproto_field "${plan}" profile)"
+  workspace="$(shellproto_field "${plan}" workspace)"
+  snapshot_id="$(shellproto_field "${plan}" snapshot_id)"
+
+  reject_snapshot_store_overlap "${workspace}"
+  if [[ -z "${HOST_GIT_BIN}" ]]; then
+    HOST_GIT_BIN="$(resolve_host_tool git /usr/bin/git /opt/homebrew/bin/git /usr/local/bin/git)"
+  fi
+  backup_id="$(shellproto_field "$(session_snapshot_main --id "${session_id}")" snapshot_id)"
+  [[ -n "${backup_id}" ]] || {
+    echo "session restore could not snapshot the worktree before the restore: ${session_id}" >&2
+    exit 1
+  }
+  set +e
+  applied="$(run_go_hostutil_preserve_exit session-restore-apply-cli \
+    --git-bin "${HOST_GIT_BIN}" \
+    --store-root "$(session_snapshot_store_root)" \
+    --workspace "${workspace}" \
+    --origin-hash "$(shellproto_field "${plan}" origin_hash)" \
+    --commit "$(shellproto_field "${plan}" commit)" \
+    --tree "$(shellproto_field "${plan}" tree)" \
+    --head "$(shellproto_field "${plan}" launch_head)")"
+  apply_status="$?"
+  set -e
+  if [[ "${apply_status}" -ne 0 ]]; then
+    echo "session restore failed. Snapshot ${backup_id} holds the worktree from before the restore: ${session_id}" >&2
+    exit 1
+  fi
+
+  load_session_runtime_metadata "${session_id}"
+  append_session_control_audit_record "${profile}" "${session_id}" "session_restore" \
+    "source=host-cli" \
+    "snapshot_id=${snapshot_id}" \
+    "tree=$(shellproto_field "${applied}" tree)" \
+    "commit=$(shellproto_field "${applied}" commit)"
+  record_path="${SESSION_META_RECORD_PATH:-$(session_record_path_for "${profile}" "${session_id}")}"
+  sign_session_audit_head_explicit "${profile}" "${session_id}" "${record_path}" strict || {
+    echo "session restore recorded the restore but could not re-sign the audit chain: ${session_id}" >&2
+    exit 1
+  }
+  printf 'session_id=%s\n' "${session_id}"
+  printf 'snapshot_id=%s\n' "${snapshot_id}"
+  printf 'pre_restore_snapshot_id=%s\n' "${backup_id}"
+  printf 'tree=%s\n' "$(shellproto_field "${applied}" tree)"
+  printf 'commit=%s\n' "$(shellproto_field "${applied}" commit)"
+  exit 0
+}
+
 session_monitor_main() {
   local plan=""
   local monitor_cli_status=0
@@ -5391,6 +5464,9 @@ session_main() {
       ;;
     fork)
       session_fork_main "$@"
+      ;;
+    restore)
+      session_restore_main "$@"
       ;;
     diff)
       while [[ $# -gt 0 ]]; do
