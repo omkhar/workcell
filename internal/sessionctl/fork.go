@@ -106,6 +106,9 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 			if _, err := validateForkLaunch(opts, record, origin, launch); err != nil {
 				return err
 			}
+			if _, err := forkEgressProxy(opts, launch); err != nil {
+				return err
+			}
 		case !errors.Is(sealErr, os.ErrNotExist):
 			return fmt.Errorf("session fork requires a signed audit chain for %s: %w", opts.sessionID, sealErr)
 		case record.ExecutionPath != "":
@@ -128,6 +131,10 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	egressProxy, err := forkEgressProxy(opts, launch)
+	if err != nil {
+		return err
+	}
 	// The signed snapshot record names the workspace and head that capture
 	// really used. They must be the signed launch values, because the unsigned
 	// session record can change between the check and the capture.
@@ -144,6 +151,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		{Key: "mode", Value: launch["mode"]},
 		{Key: "agent_autonomy", Value: launch["agent_autonomy"]},
 		{Key: "container_mutability", Value: containerMutability},
+		{Key: "egress_proxy", Value: egressProxy},
 		{Key: "launch_head", Value: launch["workspace_head"]},
 		{Key: "vm_cpu", Value: launch["vm_cpu"]},
 		{Key: "vm_memory_gib", Value: launch["vm_memory_gib"]},
@@ -157,6 +165,23 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		{Key: "count", Value: opts.count},
 		{Key: "ack_arbitrary_command", Value: opts.ackArbitrary},
 	})
+}
+
+// forkEgressProxy maps the signed egress_enforcement of the parent launch to
+// the --egress-proxy value that a child replays: on for a proxy parent, off for
+// an allowlist parent. A parent record from before the field, or with no
+// enforcement, gives no value, so the child takes the default of its mode. An
+// unknown value is refused, not defaulted.
+func forkEgressProxy(opts forkArgs, launch map[string]string) (string, error) {
+	switch launch["egress_enforcement"] {
+	case "proxy":
+		return "on", nil
+	case "allowlist":
+		return "off", nil
+	case "", "none":
+		return "", nil
+	}
+	return "", fmt.Errorf("session fork does not support the parent egress enforcement %q: %s", launch["egress_enforcement"], opts.sessionID)
 }
 
 func parseForkArgs(args []string) (forkArgs, error) {

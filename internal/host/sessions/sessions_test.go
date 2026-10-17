@@ -936,6 +936,7 @@ func TestSessionShowLines(t *testing.T) {
 		WorkspaceControlPlane: "masked",
 		WorkspaceRepoMcp:      "denied",
 		CredentialMode:        "brokered",
+		EgressEnforcement:     "proxy",
 	})
 
 	want := []string{
@@ -983,6 +984,7 @@ func TestSessionShowLines(t *testing.T) {
 		"workspace_control_plane=masked",
 		"workspace_repo_mcp=denied",
 		"credential_mode=brokered",
+		"egress_enforcement=proxy",
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("SessionShowLines() len = %d, want %d", len(lines), len(want))

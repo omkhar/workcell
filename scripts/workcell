@@ -3167,7 +3167,8 @@ append_launch_audit_record() {
     "target_provider=$(current_target_provider)" \
     "workspace_head=$(shellproto_field "$(session_git_metadata_lines "${WORKSPACE}")" git_head)" \
     "session_assurance_initial=$(session_assurance_initial)" \
-    "credential_mode=$(credential_mode_label)"
+    "credential_mode=$(credential_mode_label)" \
+    "egress_enforcement=$(egress_enforcement_label)"
 }
 
 append_assurance_change_audit_record() {
@@ -3292,7 +3293,8 @@ write_session_record_initial() {
     "workspace_control_plane=$(workspace_control_plane_state)" \
     "workspace_repo_mcp=$(workspace_repo_mcp_state)" \
     "credential_mode=$(credential_mode_label)" \
-    "parent_session_id=${SESSION_FORK_PARENT}"
+    "parent_session_id=${SESSION_FORK_PARENT}" \
+    "egress_enforcement=$(egress_enforcement_label)"
   SESSION_RECORD_WRITTEN=1
 }
 
@@ -5088,6 +5090,9 @@ session_fork_main() {
   [[ -n "${SESSION_FORK_POLICY_SHA256}" ]] || child_args+=(--no-default-injection-policy)
   if [[ "$(shellproto_field "${plan}" container_mutability)" == "readonly" ]]; then
     child_args+=(--container-mutability readonly)
+  fi
+  if [[ -n "$(shellproto_field "${plan}" egress_proxy)" ]]; then
+    child_args+=("--egress-proxy=$(shellproto_field "${plan}" egress_proxy)")
   fi
   child_args+=(
     --vm-cpu "$(shellproto_field "${plan}" vm_cpu)"

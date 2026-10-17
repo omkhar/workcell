@@ -136,6 +136,7 @@ var knownAuditFields = map[string]struct{}{
 	"container_name":                     {},
 	"count":                              {},
 	"credential_mode":                    {},
+	"egress_enforcement":                 {},
 	"deny_keys":                          {},
 	"deny_total":                         {},
 	"debug_log_enabled":                  {},

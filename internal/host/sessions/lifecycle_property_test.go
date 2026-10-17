@@ -313,6 +313,7 @@ var newlineBaseUpdates = map[string]string{
 	"workspace_control_plane": "masked",
 	"workspace_repo_mcp":      "denied",
 	"credential_mode":         "brokered",
+	"egress_enforcement":      "proxy",
 	"bootstrap_id":            "boot-1",
 	"image_ref":               "img@sha256:aaa",
 	"parent_session_id":       "parent-1",
@@ -486,6 +487,7 @@ func recordToUpdates(r SessionRecord) map[string]string {
 	add("workspace_control_plane", r.WorkspaceControlPlane)
 	add("workspace_repo_mcp", r.WorkspaceRepoMcp)
 	add("credential_mode", r.CredentialMode)
+	add("egress_enforcement", r.EgressEnforcement)
 	add("bootstrap_id", r.BootstrapID)
 	add("image_ref", r.ImageRef)
 	return updates

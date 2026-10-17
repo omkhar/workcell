@@ -123,7 +123,7 @@ func TestForkMainEmitsPlanFromSignedRecords(t *testing.T) {
 	want := strings.Join([]string{
 		"session_id=parent-1", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo",
 		"origin_hash=" + hex.EncodeToString(origin[:]), "agent=codex", "mode=strict",
-		"agent_autonomy=yolo", "container_mutability=ephemeral", "launch_head=" + forkFixtureHead, "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "container_cpu=unmanaged", "container_memory=8g", "injection_policy_sha256=", "snapshot_id=snap-1",
+		"agent_autonomy=yolo", "container_mutability=ephemeral", "egress_proxy=", "launch_head=" + forkFixtureHead, "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "container_cpu=unmanaged", "container_memory=8g", "injection_policy_sha256=", "snapshot_id=snap-1",
 		"commit=" + forkFixtureCommit, "tree=" + forkFixtureTree, "count=2", "ack_arbitrary_command=",
 	}, "\n") + "\n"
 	if out != want {
@@ -273,6 +273,40 @@ func TestForkMainReplaysContainerPosture(t *testing.T) {
 	if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
 		!strings.Contains(err.Error(), "container assurance") {
 		t.Fatalf("unknown assurance error = %v", err)
+	}
+}
+
+// TestForkMainReplaysEgressProxy proves that a child keeps the egress posture
+// of its parent: a proxy parent forks with --egress-proxy=on, an allowlist
+// parent with --egress-proxy=off, and an older record without the field gives
+// no value. An unknown value is refused.
+func TestForkMainReplaysEgressProxy(t *testing.T) {
+	for _, tc := range []struct{ field, want string }{
+		{"egress_enforcement=proxy", "egress_proxy=on\n"},
+		{"egress_enforcement=allowlist", "egress_proxy=off\n"},
+		{"egress_enforcement=none", "egress_proxy=\n"},
+		{"", "egress_proxy=\n"},
+	} {
+		vm := []string{"vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "container_cpu=unmanaged", "container_memory=8g"}
+		if tc.field != "" {
+			vm = append(vm, tc.field)
+		}
+		f := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", vm...)
+		out, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1")
+		if err != nil || !strings.Contains(out, tc.want) {
+			t.Fatalf("%q: plan = %q, %v; want %q", tc.field, out, err, tc.want)
+		}
+	}
+	f := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80",
+		"container_cpu=unmanaged", "container_memory=8g", "egress_enforcement=open")
+	if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "parent egress enforcement") {
+		t.Fatalf("unknown egress enforcement error = %v", err)
+	}
+	// Without --snapshot, the sealed parent refuses before the snapshot step.
+	if out, err := f.run("--id", "parent-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "parent egress enforcement") || strings.Contains(out, "needs_snapshot") {
+		t.Fatalf("unknown egress enforcement without --snapshot: plan = %q, %v; want a refusal", out, err)
 	}
 }
 
