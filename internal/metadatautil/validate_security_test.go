@@ -1015,8 +1015,9 @@ func TestCheckPinnedInputsRejectsMarkdownlintAdvisoryFloorRegression(t *testing.
 	for _, tc := range []struct{ name, old, new string }{
 		{"brace-expansion", `"version": "5.0.12"`, `"version": "5.0.9"`},
 		{"markdown-it", `"version": "14.3.2"`, `"version": "14.3.0"`},
-		{"smol-toml", `"version": "1.7.2"`, `"version": "1.7.0"`},
+		{"smol-toml", `"version": "1.9.0"`, `"version": "1.8.0"`},
 		{"js-yaml", `"version": "5.4.1"`, `"version": "5.2.2"`},
+		{"katex", `"version": "0.18.2"`, `"version": "0.18.1"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
