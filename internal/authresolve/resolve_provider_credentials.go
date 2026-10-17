@@ -18,7 +18,7 @@ import (
 const testClaudeExportEnv = "WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE"
 
 // BrokerResolver names the resolver for an API key that the host credential
-// broker serves from the macOS Keychain under --egress-proxy.
+// broker serves from the macOS Keychain under the egress proxy.
 const BrokerResolver = "keychain-broker"
 
 func resolveCredential(key, resolverName string, outputRoot *os.Root, relativeDestination, resolutionMode, placeholder string) (string, error) {
@@ -166,7 +166,7 @@ func resolveClaudeMacosKeychain(outputRoot *os.Root, relativeDestination, resolu
 func resolveBrokerPlaceholder(key string, outputRoot *os.Root, relativeDestination, resolutionMode, placeholder string) (string, error) {
 	if placeholder == "" {
 		if resolutionMode != "metadata" {
-			return "", fmt.Errorf("credentials.%s resolver %s needs --egress-proxy: the credential broker serves the key and the agent gets only a placeholder", key, BrokerResolver)
+			return "", fmt.Errorf("credentials.%s resolver %s needs the egress proxy of a strict Colima session without --egress-proxy=off: the credential broker serves the key and the agent gets only a placeholder", key, BrokerResolver)
 		}
 		placeholder = "wcph-" + strings.Repeat("0", 32)
 	}

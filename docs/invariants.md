@@ -252,9 +252,21 @@ atomic for each address family. The old default-deny chain stays in force until
 the complete new chain replaces it. Other targets use their own network
 controls. The launch summary states the result in `egress_enforcement=`.
 
-`--egress-proxy` routes a strict Colima session through a per-session proxy
-sidecar. Two sections of `policy/hardening-profile.toml` gate it, and the
-`hardening-profile-conformance` check, which `scripts/verify-invariants.sh` runs, enforces them:
+A strict Colima session routes its egress through a per-session proxy sidecar
+by default. `--egress-proxy=off` keeps such a session on the profile-wide
+allowlist alone, with the resolver of the VM, as before the proxy.
+
+- `egress-proxy-default-strict-colima`: the proxy is on for the Colima target
+  in strict mode unless the launch passes `--egress-proxy=off`. Every other
+  target and mode runs without it. `resolve_egress_proxy` owns the decision.
+  `TestEgressProxySetting` in `internal/testkit/egress_proxy_setting_test.go`
+  enforces each target, mode and flag. The dry-run rows in
+  `tests/scenarios/shared/test-assurance-dry-run.sh` enforce the launch
+  summary and the agent route.
+
+Two sections of `policy/hardening-profile.toml` gate the proxy route. The
+`hardening-profile-conformance` check, which `scripts/verify-invariants.sh`
+runs, enforces them:
 
 - `egress-proxy-sole-route` (`[egress_proxy_sole_route]`): the agent joins only
   the internal network `wc-<session>` with `--dns 127.0.0.1`. Each allowlisted

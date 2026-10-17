@@ -822,7 +822,7 @@ func TestRunKeychainBrokerStagesOnlyAPlaceholder(t *testing.T) {
 	}{
 		{"claude launch", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", placeholder}, 0, "", placeholder + "\n", true},
 		{"gemini launch", "gemini", "gemini_env", "launch", []string{"--credential-placeholder", placeholder}, 0, "", "GEMINI_API_KEY=" + placeholder + "\n", true},
-		{"launch without placeholder", "claude", "claude_api_key", "launch", nil, 1, "needs --egress-proxy", "", false},
+		{"launch without placeholder", "claude", "claude_api_key", "launch", nil, 1, "needs the egress proxy of a strict Colima session without --egress-proxy=off", "", false},
 		{"metadata without placeholder", "gemini", "gemini_env", "metadata", nil, 0, "", "GEMINI_API_KEY=" + zero + "\n", false},
 		{"bad placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", "wcph-short"}, 2, "--credential-placeholder must be", "", false},
 		{"duplicate placeholder", "claude", "claude_api_key", "launch", []string{"--credential-placeholder", placeholder, "--credential-placeholder", zero}, 2, "duplicate flag: --credential-placeholder", "", false},

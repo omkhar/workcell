@@ -50,6 +50,9 @@ type PrepareBundleOptions struct {
 	Inspect bool
 	// DryRun, when true, plans the bundle without writing any files.
 	DryRun bool
+	// PrepareOnly, when true, prepares the runtime image and launches no
+	// session, so the bundle is never mounted.
+	PrepareOnly bool
 	// SelfStagingProbeSyntheticCodexAuth is a test-only flag that
 	// stages a synthetic ~/.codex/auth.json credential to exercise the
 	// self-staging probe code path.  Production callers MUST leave
@@ -157,6 +160,17 @@ func DefaultInjectionBundleParent(realHome string) string {
 // or the default policy file does not exist), the result has empty string
 // fields and an SSH-enabled marker of "0", mirroring the bash early-return
 // branch.
+// resolutionModeFor returns "metadata" for a run that launches no session
+// (--auth-status, --doctor, --inspect, --dry-run and --prepare-only), else
+// "launch". Metadata resolution accepts a keychain-broker key without a
+// broker placeholder.
+func resolutionModeFor(opts PrepareBundleOptions) string {
+	if opts.AuthStatus || opts.Doctor || opts.Inspect || opts.DryRun || opts.PrepareOnly {
+		return "metadata"
+	}
+	return "launch"
+}
+
 func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 	if opts.Agent == "" || opts.Mode == "" {
 		return nil, errors.New("agent and mode are required")
@@ -214,10 +228,7 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		return nil, err
 	}
 
-	resolutionMode := "launch"
-	if opts.AuthStatus || opts.Doctor || opts.Inspect || opts.DryRun {
-		resolutionMode = "metadata"
-	}
+	resolutionMode := resolutionModeFor(opts)
 	resolvedPolicyPath := filepath.Join(bundleRoot, "resolved-policy.toml")
 	resolverMetadataPath := filepath.Join(bundleRoot, "resolver-metadata.json")
 

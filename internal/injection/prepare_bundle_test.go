@@ -265,6 +265,28 @@ func TestPrepareBundleAuthStatusAllowsMissingWorkspaceAndReadsMetadata(t *testin
 	}
 }
 
+// TestResolutionModeFor proves that every run that launches no session
+// resolves credentials in metadata mode, and that only a launch uses launch
+// mode.
+func TestResolutionModeFor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts PrepareBundleOptions
+		want string
+	}{
+		{"launch", PrepareBundleOptions{}, "launch"},
+		{"auth-status", PrepareBundleOptions{AuthStatus: true}, "metadata"},
+		{"doctor", PrepareBundleOptions{Doctor: true}, "metadata"},
+		{"inspect", PrepareBundleOptions{Inspect: true}, "metadata"},
+		{"dry-run", PrepareBundleOptions{DryRun: true}, "metadata"},
+		{"prepare-only", PrepareBundleOptions{PrepareOnly: true}, "metadata"},
+	} {
+		if got := resolutionModeFor(tc.opts); got != tc.want {
+			t.Errorf("%s: resolutionModeFor = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestPrepareBundleRequiresAgentAndMode(t *testing.T) {
 	if _, err := PrepareBundle(PrepareBundleOptions{Agent: "", Mode: "strict", RealHome: "/tmp"}); err == nil {
 		t.Fatalf("expected error for empty agent")
@@ -506,11 +528,11 @@ func TestPrepareBundleBrokersAPIKeys(t *testing.T) {
 	}{
 		{name: "claude brokered", agent: "claude", policy: "[credentials.claude_api_key]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: "%s\n"},
 		{name: "gemini brokered", agent: "gemini", policy: "[credentials.gemini_env]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: "GEMINI_API_KEY=%s\n"},
-		{name: "claude source", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n", broker: true, wantErr: `--egress-proxy brokers credentials.claude_api_key: store the key in the macOS login Keychain item "workcell-claude-api-key" and set resolver = "keychain-broker" in place of source, or launch without --egress-proxy`},
-		{name: "gemini key source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GEMINI_API_KEY=sk-real\n", broker: true, wantErr: `--egress-proxy brokers credentials.gemini_env: store the key in the macOS login Keychain item "workcell-gemini-api-key"`},
+		{name: "claude source", agent: "claude", policy: "[credentials.claude_api_key]\nsource = \"key.txt\"\n", broker: true, wantErr: `the egress proxy brokers credentials.claude_api_key: store the key in the macOS login Keychain item "workcell-claude-api-key" and set resolver = "keychain-broker" in place of source, or launch with --egress-proxy=off`},
+		{name: "gemini key source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GEMINI_API_KEY=sk-real\n", broker: true, wantErr: `the egress proxy brokers credentials.gemini_env: store the key in the macOS login Keychain item "workcell-gemini-api-key"`},
 		{name: "gemini oauth source", agent: "gemini", policy: "[credentials.gemini_env]\nsource = \"key.txt\"\n", gemini: "GOOGLE_GENAI_USE_GCA=true\n", broker: true},
 		{name: "codex brokered", agent: "codex", policy: "[credentials.codex_auth]\nresolver = \"keychain-broker\"\n", broker: true, wantStaged: `{"OPENAI_API_KEY":"%s"}` + "\n"},
-		{name: "codex key source", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":"sk-real"}`, broker: true, wantErr: `--egress-proxy brokers credentials.codex_auth: store the key in the macOS login Keychain item "workcell-codex-api-key" and set resolver = "keychain-broker" in place of source, or launch without --egress-proxy`},
+		{name: "codex key source", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":"sk-real"}`, broker: true, wantErr: `the egress proxy brokers credentials.codex_auth: store the key in the macOS login Keychain item "workcell-codex-api-key" and set resolver = "keychain-broker" in place of source, or launch with --egress-proxy=off`},
 		{name: "codex key and tokens", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":"sk-real","tokens":{"access_token":"a"}}`, broker: true, wantErr: "workcell-codex-api-key"},
 		{name: "codex escaped key name", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_\u004bEY":"sk-real"}`, broker: true, wantErr: "workcell-codex-api-key"},
 		{name: "codex empty key", agent: "codex", policy: "[credentials.codex_auth]\nsource = \"key.txt\"\n", gemini: `{"OPENAI_API_KEY":""}`, broker: true, wantErr: "workcell-codex-api-key"},

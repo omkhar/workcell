@@ -1,10 +1,13 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
-# Real Colima smoke for --egress-proxy: an allowlisted host works through the
-# sidecar, and a denied SNI, an IP literal and a DNS lookup all fail. The
-# per-session network and sidecar are gone after an attached run and after a
-# detached session stops. A brokered Claude key and a brokered Codex API key
-# reach the upstream only through the sidecar: the agent holds a placeholder,
-# never the key.
+# Real Colima smoke for the egress proxy, the default for strict Colima: an
+# allowlisted host works through the sidecar, and a denied SNI, an IP literal
+# and a DNS lookup all fail. The per-session network and sidecar are gone after
+# an attached run and after a detached session stops. A brokered Claude key and
+# a brokered Codex API key reach the upstream only through the sidecar: the
+# agent holds a placeholder, never the key. Copilot stays direct and reaches its
+# hosts through a spliced connection. --egress-proxy=off keeps the allowlist
+# session with the VM resolver, where the real Codex binary uses a key from
+# source that the default refuses.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -24,7 +27,8 @@ cleanup() {
   if [[ "${status}" -ne 0 ]]; then
     for file in prepare.stderr probe.stdout probe.stderr detached.stdout detached.stderr \
       broker.stdout broker.stderr codex.stdout codex.stderr codex-exec.stdout codex-exec.stderr \
-      broker-missing.stderr; do
+      broker-missing.stderr off.stdout off.stderr copilot.stdout copilot.stderr \
+      plain-default.stderr plain-off.stdout plain-off.stderr; do
       [[ -f "${TMP_DIR}/${file}" ]] || continue
       printf -- '--- %s ---\n' "${file}" >&2
       cat "${TMP_DIR}/${file}" >&2
@@ -73,7 +77,7 @@ printf 'scenario workspace\n' >"${WORKSPACE}/README.md"
   >/dev/null 2>"${TMP_DIR}/prepare.stderr"
 
 # A prepared image built from other inputs may carry an older proxy binary.
-# Replace the marker's build-input digest; the --egress-proxy launch below must
+# Replace the marker's build-input digest; the default proxy launch below must
 # refresh the image automatically and record the current digest again.
 image_marker="$(find "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets" \
   -path "*/${PROFILE}/*" -name workcell.image-ready -type f | head -n 1)"
@@ -93,12 +97,12 @@ getent hosts example.com >/dev/null && echo "dns=open" || echo "dns=blocked"
 EOF
 
 "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKSPACE}" \
-  --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy \
+  --colima-profile "${PROFILE}" --no-default-injection-policy \
   --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
   -- bash -c "$(cat "${TMP_DIR}/probe.sh")" \
   >"${TMP_DIR}/probe.stdout" 2>"${TMP_DIR}/probe.stderr"
 grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/probe.stderr"
-grep -q -- '^--egress-proxy needs a runtime image prepared from this checkout' "${TMP_DIR}/probe.stderr"
+grep -q '^The egress proxy needs a runtime image prepared from this checkout' "${TMP_DIR}/probe.stderr"
 grep -q "^build_inputs_sha256=${prepared_digest}$" "${image_marker}"
 grep -Eq '^allowed=[1-5][0-9][0-9]$' "${TMP_DIR}/probe.stdout"
 grep -q '^denied_sni=blocked$' "${TMP_DIR}/probe.stdout"
@@ -106,9 +110,42 @@ grep -q '^ip_literal=blocked$' "${TMP_DIR}/probe.stdout"
 grep -q '^dns=blocked$' "${TMP_DIR}/probe.stdout"
 assert_no_proxy_residue "an attached run"
 
+# --egress-proxy=off keeps the allowlist session: the agent uses the VM
+# resolver, the allowlisted host works, and an IP literal stays blocked by the
+# profile-wide rules. No sidecar or session network is created.
+"${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKSPACE}" \
+  --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy=off \
+  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+  -- bash -c "$(cat "${TMP_DIR}/probe.sh")" \
+  >"${TMP_DIR}/off.stdout" 2>"${TMP_DIR}/off.stderr"
+grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/off.stderr"
+grep -Eq '^allowed=[1-5][0-9][0-9]$' "${TMP_DIR}/off.stdout"
+grep -q '^ip_literal=blocked$' "${TMP_DIR}/off.stdout"
+grep -q '^dns=open$' "${TMP_DIR}/off.stdout"
+assert_no_proxy_residue "an --egress-proxy=off run"
+
+# Copilot stays direct under the default proxy. Its hosts are spliced, not
+# terminated, so the image system roots verify the real certificates.
+cat >"${TMP_DIR}/copilot-probe.sh" <<'EOF'
+for host in api.githubcopilot.com api.github.com github.com; do
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "https://${host}/")" && echo "${host}=${code}" || echo "${host}=fail"
+done
+EOF
+"${ROOT_DIR}/scripts/workcell" --agent copilot --workspace "${WORKSPACE}" \
+  --colima-profile "${PROFILE}" --no-default-injection-policy \
+  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+  -- bash -c "$(cat "${TMP_DIR}/copilot-probe.sh")" \
+  >"${TMP_DIR}/copilot.stdout" 2>"${TMP_DIR}/copilot.stderr"
+grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/copilot.stderr"
+grep -q '^credential_mode=direct$' "${TMP_DIR}/copilot.stderr"
+for host in api.githubcopilot.com api.github.com github.com; do
+  grep -Eq "^${host}=[1-5][0-9][0-9]$" "${TMP_DIR}/copilot.stdout"
+done
+assert_no_proxy_residue "a Copilot run"
+
 # The detached session makes one denied request, so its deny log is not empty.
 "${ROOT_DIR}/scripts/workcell" session start --session-workspace direct --agent codex --workspace "${WORKSPACE}" \
-  --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy \
+  --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy=on \
   --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
   -- bash -c 'curl -sS -o /dev/null --max-time 15 --connect-to example.com:443:api.openai.com:443 https://example.com/; exec sleep 600' \
   >"${TMP_DIR}/detached.stdout" 2>"${TMP_DIR}/detached.stderr"
@@ -165,7 +202,7 @@ security add-generic-password -s workcell-claude-api-key -a smoke -w "${canary}"
   -T /usr/bin/security "${TMP_DIR}/smoke.keychain-db"
 printf 'version = 1\n\n[credentials.claude_api_key]\nresolver = "keychain-broker"\n' >"${TMP_DIR}/broker-policy.toml"
 broker_flags=(--agent claude --workspace "${WORKSPACE}" --colima-profile "${PROFILE}"
-  --injection-policy "${TMP_DIR}/broker-policy.toml" --egress-proxy
+  --injection-policy "${TMP_DIR}/broker-policy.toml"
   --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}")
 brokered_workcell() {
   local keychain="$1"
@@ -215,7 +252,7 @@ security add-generic-password -s workcell-codex-api-key -a smoke -w "${canary}" 
   -T /usr/bin/security "${TMP_DIR}/smoke.keychain-db"
 printf 'version = 1\n\n[credentials.codex_auth]\nresolver = "keychain-broker"\n' >"${TMP_DIR}/codex-policy.toml"
 codex_flags=(--agent codex --workspace "${WORKSPACE}" --colima-profile "${PROFILE}"
-  --injection-policy "${TMP_DIR}/codex-policy.toml" --egress-proxy)
+  --injection-policy "${TMP_DIR}/codex-policy.toml")
 cat >"${TMP_DIR}/codex-probe.sh" <<'EOF'
 bundle=/opt/workcell/host-injections
 auth="$(cat "$(jq -r '.credentials.codex_auth.mount_path' "${bundle}/manifest.json")")"
@@ -261,6 +298,29 @@ if grep -q "${canary}" "${codex_ledger}" || grep -q placeholder_unswapped "${cod
   exit 1
 fi
 assert_no_proxy_residue "a brokered Codex run"
+
+# A Codex API key from source stops a default launch before anything starts,
+# and the message names --egress-proxy=off. With --egress-proxy=off the real
+# Codex binary holds the key directly and reaches OpenAI, which answers 401.
+printf '{"OPENAI_API_KEY":"%s"}\n' "${canary}" >"${TMP_DIR}/plain-auth.json"
+chmod 0600 "${TMP_DIR}/plain-auth.json"
+printf 'version = 1\n\n[credentials.codex_auth]\nsource = "%s"\n' "${TMP_DIR}/plain-auth.json" >"${TMP_DIR}/plain-policy.toml"
+plain_flags=(--agent codex --workspace "${WORKSPACE}" --colima-profile "${PROFILE}"
+  --injection-policy "${TMP_DIR}/plain-policy.toml" --agent-arg exec --agent-arg 'Reply with one word.')
+if "${ROOT_DIR}/scripts/workcell" "${plain_flags[@]}" >/dev/null 2>"${TMP_DIR}/plain-default.stderr"; then
+  echo "a default launch accepted a Codex API key from source" >&2
+  exit 1
+fi
+grep -q 'or launch with --egress-proxy=off$' "${TMP_DIR}/plain-default.stderr"
+assert_no_proxy_residue "a refused launch"
+plain_off_status=0
+"${ROOT_DIR}/scripts/workcell" "${plain_flags[@]}" --egress-proxy=off \
+  >"${TMP_DIR}/plain-off.stdout" 2>"${TMP_DIR}/plain-off.stderr" || plain_off_status=$?
+echo "plain_off_status=${plain_off_status}"
+grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/plain-off.stderr"
+grep -q '^credential_mode=direct$' "${TMP_DIR}/plain-off.stderr"
+grep -Eiq '401|unauthorized|invalid_api_key|incorrect api key' "${TMP_DIR}/plain-off.stdout" "${TMP_DIR}/plain-off.stderr"
+assert_no_proxy_residue "an --egress-proxy=off Codex run"
 
 # Without the Keychain item the broker stops the launch before the agent runs.
 if brokered_workcell "${TMP_DIR}/empty.keychain-db" "${broker_flags[@]}" -- true >/dev/null 2>"${TMP_DIR}/broker-missing.stderr"; then
