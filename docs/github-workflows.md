@@ -250,6 +250,8 @@ The tracking issue and the audit comment then show the host command for that can
 ./scripts/publish-upstream-refresh-pr.sh --run-id <run id> --candidate toolchain
 ```
 
+This command gives the refresh PR the full PR shape budget on first publication (`--shape-margin 1.0` and `--full-shape-budget`). The candidate identity checks fix its content, so no review fix can grow it.
+
 `publish` also fails closed if GitHub drops the mode of a changed executable file, because the tree check then fails. Publish such a candidate on the host.
 
 The scope guard allows only these changes:

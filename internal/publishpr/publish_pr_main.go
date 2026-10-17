@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
@@ -71,6 +72,10 @@ type Options struct {
 	// ApprovedLargeCertifiedAdapter allows a larger but still bounded
 	// PR-shape gate for reviewed, live-certified adapter support PRs.
 	ApprovedLargeCertifiedAdapter bool
+	// FullShapeBudget gives a first publication the full PR-shape budget.
+	// Only a publication whose content is fixed before it publishes, such
+	// as a verified upstream-refresh candidate, may pass it.
+	FullShapeBudget bool
 	// DryRun, when true, prints the planned host commands instead of
 	// executing them; output shape is asserted by
 	// tests/scenarios/shared/test-publish-pr-dry-run.sh.
@@ -98,6 +103,11 @@ func DefaultOptions() *Options {
 // ParseArgs does NOT run --branch / --base / --snapshot validators;
 // callers compose ParseArgs with Validate to keep the responsibilities
 // separated and the unit tests focused.
+// upstreamRefreshBranch matches the branch that publish-upstream-refresh-pr.sh
+// creates for a verified candidate, the only publication that may pass
+// --full-shape-budget.
+var upstreamRefreshBranch = regexp.MustCompile(`^codex/upstream-refresh-(provider|toolchain)-[0-9]+$`)
+
 func ParseArgs(args []string) (*Options, error) {
 	opts := DefaultOptions()
 	for i := 0; i < len(args); i++ {
@@ -186,6 +196,8 @@ func ParseArgs(args []string) (*Options, error) {
 			opts.Ready = true
 		case "--approved-large-certified-adapter":
 			opts.ApprovedLargeCertifiedAdapter = true
+		case "--full-shape-budget":
+			opts.FullShapeBudget = true
 		case "--dry-run":
 			opts.DryRun = true
 		case "-h", "--help":
@@ -381,6 +393,9 @@ func Preflight(opts *Options, checkRefFormat CheckRefFormatFunc, fileReader func
 	}
 	if err := ValidateBaseName(opts.Base, opts.AllowNonMainBase, checkRefFormat); err != nil {
 		return nil, err
+	}
+	if opts.FullShapeBudget && !upstreamRefreshBranch.MatchString(opts.Branch) {
+		return nil, exit2("--full-shape-budget is limited to upstream-refresh candidate branches (codex/upstream-refresh-<provider|toolchain>-<run id>): %s", opts.Branch)
 	}
 	titleText, err := LoadTextArg(opts.Title, opts.TitleFile, "title", true, fileReader)
 	if err != nil {

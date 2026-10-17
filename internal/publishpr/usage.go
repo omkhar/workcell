@@ -24,6 +24,7 @@ const usageText = "Usage: workcell publish-pr [options]\n" +
 	"  --ready                       Create a ready PR instead of a draft PR\n" +
 	"  --approved-large-certified-adapter\n" +
 	"                                Allow the bounded large certified-adapter PR shape\n" +
+	"  --full-shape-budget           Use the full PR shape budget on first publication\n" +
 	"  --dry-run                     Print the planned host commands and exit\n" +
 	"  -h, --help                    Show this help text\n" +
 	"\n" +
@@ -36,6 +37,9 @@ const usageText = "Usage: workcell publish-pr [options]\n" +
 	"  - --approved-large-certified-adapter is limited to reviewed adapter PRs\n" +
 	"    with live certification evidence and still rejects binaries and changes\n" +
 	"    beyond the certified-adapter size budget.\n" +
+	"  - --full-shape-budget is for a verified upstream-refresh candidate, whose\n" +
+	"    content is fixed before publication. It stops unless the branch is\n" +
+	"    codex/upstream-refresh-<provider|toolchain>-<run id>.\n" +
 	"  - By default publish-pr only supports --base main because repo-owned PR\n" +
 	"    workflows and hosted controls only cover main-based review units.\n" +
 	"  - --allow-non-main-base is an explicit lower-assurance escape hatch: the PR\n" +
