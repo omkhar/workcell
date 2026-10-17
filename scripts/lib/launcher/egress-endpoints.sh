@@ -185,12 +185,12 @@ resolve_egress_proxy() {
 }
 
 # egress_proxy_brokers_credentials prints 1 when the session brokers its API
-# keys: a proxy session that prepares a launch. --auth-status, --doctor and
-# --inspect launch nothing and read the policy in metadata mode, so they
-# stage it without the broker and still report on a key from source, which
-# a launch refuses.
+# keys: a proxy session that prepares a launch. --auth-status, --doctor,
+# --inspect and --prepare-only launch nothing, so they stage the policy
+# without the broker and do not stop on a key from source, which a launch
+# refuses. --dry-run still brokers, so it shows that refusal.
 egress_proxy_brokers_credentials() {
-  if [[ "${EGRESS_PROXY}" -eq 1 ]] && [[ "$1" -eq 0 ]] && [[ "$2" -eq 0 ]] && [[ "$3" -eq 0 ]]; then
+  if [[ "${EGRESS_PROXY}" -eq 1 ]] && [[ "$1" -eq 0 ]] && [[ "$2" -eq 0 ]] && [[ "$3" -eq 0 ]] && [[ "$4" -eq 0 ]]; then
     printf '1\n'
   else
     printf '0\n'

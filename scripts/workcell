@@ -5769,7 +5769,7 @@ prepare_injection_bundle() {
   esac
 
   prepare_colima_staging_cache_roots || return $?
-  broker_credentials="$(egress_proxy_brokers_credentials "${AUTH_STATUS:-0}" "${DOCTOR:-0}" "${INSPECT:-0}")" || return $?
+  broker_credentials="$(egress_proxy_brokers_credentials "${AUTH_STATUS:-0}" "${DOCTOR:-0}" "${INSPECT:-0}" "${PREPARE_ONLY:-0}")" || return $?
 
   DIRECT_SOURCE_MOUNTS=()
   INJECTION_BUNDLE_ROOT=""

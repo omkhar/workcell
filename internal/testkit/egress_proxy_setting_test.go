@@ -68,28 +68,29 @@ echo "EGRESS_PROXY=${EGRESS_PROXY}"
 }
 
 // TestEgressProxyBrokersCredentials checks that only a proxy session that
-// prepares a launch brokers its API keys. --auth-status, --doctor and
-// --inspect stage the policy without the broker, so a key from source does
-// not stop them.
+// prepares a launch brokers its API keys. --auth-status, --doctor, --inspect
+// and --prepare-only stage the policy without the broker, so a key from
+// source does not stop them.
 func TestEgressProxyBrokersCredentials(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "egress-endpoints.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ proxy, authStatus, doctor, inspect, want string }{
-		{"1", "0", "0", "0", "1\n"},
-		{"0", "0", "0", "0", "0\n"},
-		{"1", "1", "0", "0", "0\n"},
-		{"1", "0", "1", "0", "0\n"},
-		{"1", "0", "0", "1", "0\n"},
+	for _, tc := range []struct{ proxy, authStatus, doctor, inspect, prepareOnly, want string }{
+		{"1", "0", "0", "0", "0", "1\n"},
+		{"0", "0", "0", "0", "0", "0\n"},
+		{"1", "1", "0", "0", "0", "0\n"},
+		{"1", "0", "1", "0", "0", "0\n"},
+		{"1", "0", "0", "1", "0", "0\n"},
+		{"1", "0", "0", "0", "1", "0\n"},
 	} {
 		code, out := runBashProbe(t, `set -euo pipefail
 source "$LIB"
 EGRESS_PROXY="$PROXY"
-egress_proxy_brokers_credentials "$AUTH" "$DOCTOR" "$INSPECT"
-`, map[string]string{"LIB": lib, "PROXY": tc.proxy, "AUTH": tc.authStatus, "DOCTOR": tc.doctor, "INSPECT": tc.inspect})
+egress_proxy_brokers_credentials "$AUTH" "$DOCTOR" "$INSPECT" "$PREPARE_ONLY"
+`, map[string]string{"LIB": lib, "PROXY": tc.proxy, "AUTH": tc.authStatus, "DOCTOR": tc.doctor, "INSPECT": tc.inspect, "PREPARE_ONLY": tc.prepareOnly})
 		if code != 0 || out != tc.want {
-			t.Errorf("proxy %s auth-status %s doctor %s inspect %s: code %d, output %q; want %q", tc.proxy, tc.authStatus, tc.doctor, tc.inspect, code, out, tc.want)
+			t.Errorf("proxy %s auth-status %s doctor %s inspect %s prepare-only %s: code %d, output %q; want %q", tc.proxy, tc.authStatus, tc.doctor, tc.inspect, tc.prepareOnly, code, out, tc.want)
 		}
 	}
 }
