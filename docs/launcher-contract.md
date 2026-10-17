@@ -306,18 +306,28 @@ still launch when the session endpoint set is not empty.
 an inherited value never counts. The bare flag means `on`, and
 `--egress-proxy=on` and `--egress-proxy=off` set the value. Any other value
 stops with status `2`. A second flag in any spelling stops with
-status `2`.
+status `2`. A bare `--egress-proxy` followed by `on` or `off` stops with status
+`2`, because the value goes after `=`.
 
 `resolve_egress_proxy` takes the target and the mode and owns the decision
-whether the session uses the proxy. It sets `EGRESS_PROXY` to `1` only for
-`on` with the Colima target and the strict mode. `on` with another target or
-mode stops with status `2`.
+whether the session uses the proxy. The proxy is the default for the Colima
+target in strict mode: it sets `EGRESS_PROXY` to `1` there unless the value is
+`off`. It sets `0` for every other target and mode, where `on` stops with
+status `2`.
+
+`egress_proxy_brokers_credentials` prints `1` for a proxy session that
+prepares a launch, and the launcher passes it to `injection-prepare-bundle` as
+`--broker-credentials`. `--auth-status`, `--doctor`, `--inspect` and `--prepare-only` get `0`.
+They launch nothing, so a key from `source` does not stop them.
 
 ### `egress_enforcement_label()`
 
-`egress_enforcement_label` returns `proxy` for an `--egress-proxy` launch. It
+`egress_enforcement_label` returns `proxy` for an egress proxy launch. It
 returns `allowlist` for another Colima target with the allowlist policy. It returns `none` for Docker Desktop and the blocked remote
-preview targets.
+preview targets. The launch summary, the session record and the `launch` audit
+record carry the label as `egress_enforcement`. It is the last field of the
+`launch` audit record. `session fork` replays it: a `proxy` parent forks with
+`--egress-proxy=on`, and an `allowlist` parent with `--egress-proxy=off`.
 
 ### `build_runtime_host_aliases()`
 
@@ -326,7 +336,7 @@ Docker `--add-host` arguments. It does nothing when the network policy is not
 `allowlist`. These aliases support deterministic resolution. The rule set in
 the Colima VM supplies the actual managed egress enforcement.
 
-With `--egress-proxy`, it calls `egress_proxy_agent_network_args`. The agent
+In an egress proxy session, it calls `egress_proxy_agent_network_args`. The agent
 gets `--network wc-<session> --dns 127.0.0.1`, and each host maps to the token
 `egress-proxy-ip`. No host resolves on the host side.
 

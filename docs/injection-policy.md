@@ -221,11 +221,13 @@ first read of a Keychain item can show a macOS prompt. Choose "Always Allow"
 once, or create the item with `-T /usr/bin/security` to avoid it:
 
 ```sh
-security add-generic-password -s workcell-claude-api-key -a "$USER" -w -T /usr/bin/security
+security add-generic-password -U -s workcell-claude-api-key -a "$USER" -T /usr/bin/security -w
 ```
 
-`-w` without a value asks for the key on the terminal, so the key stays out of
-the shell history. The session CA lives at most 24 hours. A session that runs
+`-w` comes last, with no value, so `security` asks for the key on the
+terminal and the key stays out of the shell history. An option after `-w`
+would become the stored value. `-U` replaces an existing item, so the same
+command also rotates the key. The session CA lives at most 24 hours. A session that runs
 longer loses TLS to the brokered host. Start a new session to recover.
 
 The launch summary, the session record and the `launch` audit record report

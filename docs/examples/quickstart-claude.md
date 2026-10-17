@@ -24,15 +24,31 @@ workcell auth set \
   --source /Users/example/.config/workcell/claude-auth.json
 ```
 
-Reviewed API key helper path:
+Reviewed API key path, served from the login Keychain item
+`workcell-claude-api-key`:
 
 ```bash
 workcell auth init
+security add-generic-password -U -s workcell-claude-api-key -a "$USER" -T /usr/bin/security -w
 workcell auth set \
   --agent claude \
   --credential claude_api_key \
-  --source /Users/example/.config/workcell/claude-api-key.txt
+  --resolver keychain-broker \
+  --ack-host-resolver
 ```
+
+A strict Colima launch uses the egress proxy by default. It refuses a Claude,
+Gemini or Codex API key from a file
+(`internal/injection/render_credentials.go`). The agent must hold only a
+placeholder. Store the key in its macOS login Keychain item and use the
+`keychain-broker` resolver, as
+[the injection policy guide](../injection-policy.md) shows. A launch with
+`--egress-proxy=off` still accepts a key from a file.
+
+The `keychain-broker` resolver works only in a strict Colima session that uses
+the egress proxy. A `--mode development` launch, or a launch with
+`--egress-proxy=off`, has no broker placeholder and stops on it. For those
+launches, set `claude_api_key` from a file with `--source`.
 
 Optional fail-closed macOS resolver scaffold:
 
@@ -95,7 +111,8 @@ Prompt-mode autonomy:
 workcell --agent claude --agent-autonomy prompt --workspace /path/to/repo
 ```
 
-Managed development lane:
+Managed development lane. It needs a Claude key from a file or `claude_auth`,
+not the `keychain-broker` resolver:
 
 ```bash
 workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
