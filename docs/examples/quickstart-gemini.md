@@ -31,6 +31,11 @@ a placeholder. For an API key, store it in the login Keychain item
 shows. A launch with `--egress-proxy=off` still accepts the file. GCA and Vertex
 files stay direct.
 
+The `keychain-broker` resolver works only in a strict Colima session that uses
+the egress proxy. A `--mode development` launch, or a launch with
+`--egress-proxy=off`, has no broker placeholder and stops on it. For those
+launches, keep the API key in the `gemini_env` file.
+
 Cached OAuth path:
 
 ```bash
@@ -81,7 +86,8 @@ workcell --agent gemini --workspace /path/to/repo
 Gemini's trusted-folders registry is seeded on the managed path so `/workspace`
 is already trusted inside the ephemeral session home.
 
-Managed development lane:
+Managed development lane. It needs the API key in the `gemini_env` file, not
+the `keychain-broker` resolver:
 
 ```bash
 workcell --agent gemini --mode development --workspace /path/to/repo -- bash -lc 'npm test'

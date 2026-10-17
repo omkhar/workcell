@@ -45,6 +45,11 @@ placeholder. Store the key in its macOS login Keychain item and use the
 [the injection policy guide](../injection-policy.md) shows. A launch with
 `--egress-proxy=off` still accepts a key from a file.
 
+The `keychain-broker` resolver works only in a strict Colima session that uses
+the egress proxy. A `--mode development` launch, or a launch with
+`--egress-proxy=off`, has no broker placeholder and stops on it. For those
+launches, set `claude_api_key` from a file with `--source`.
+
 Optional fail-closed macOS resolver scaffold:
 
 ```bash
@@ -106,7 +111,8 @@ Prompt-mode autonomy:
 workcell --agent claude --agent-autonomy prompt --workspace /path/to/repo
 ```
 
-Managed development lane:
+Managed development lane. It needs a Claude key from a file or `claude_auth`,
+not the `keychain-broker` resolver:
 
 ```bash
 workcell --agent claude --mode development --workspace /path/to/repo -- bash -lc 'rg TODO'
