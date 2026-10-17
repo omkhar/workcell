@@ -109,8 +109,8 @@ starts 1 to 8 detached isolated child sessions from one snapshot of a colima
 session. Without
 .BR --snapshot ,
 it takes a new snapshot first. It reads the snapshot commit and the parent
-agent, mode, agent autonomy, container mutability, VM resources, container
-limits, and injection policy hash only from audit records
+agent, mode, agent autonomy, container mutability, egress proxy setting, VM
+resources, container limits, and injection policy hash only from audit records
 that the host seal covers, never from a store ref. Each child clones the
 workspace origin, checks out the parent launch commit, and applies the snapshot
 tree to the worktree, so the parent changes stay uncommitted. A child stops when
@@ -252,10 +252,11 @@ Set an explicit memory limit for the inner runtime container, for example
 .TP
 .B --egress-proxy[=on|off]
 Route the egress of a strict Colima session only through a per-session proxy
-sidecar. The bare flag means
-.BR on .
+sidecar. This is the default for strict Colima.
 .B --egress-proxy=off
-keeps the session on the profile-wide allowlist alone.
+keeps such a session on the profile-wide allowlist alone, with the resolver
+of the VM. The bare flag means
+.BR on .
 Give the flag once: a second copy in any spelling, or another value, stops
 with status 2.
 The agent container joins only an internal Docker network and has no
@@ -275,7 +276,14 @@ of the placeholder that the agent holds. The session CA lives at most 24
 hours.
 A Claude, Gemini or Codex API key from
 .B source
-stops such a launch.
+stops such a launch; the message names
+.BR --egress-proxy=off .
+.BR --auth-status ,
+.BR --doctor ,
+.B --inspect
+and
+.B --prepare-only
+do not stop on such a key.
 .B --egress-proxy=on
 with another mode or target stops with status 2.
 .TP

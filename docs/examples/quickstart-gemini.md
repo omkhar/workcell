@@ -22,6 +22,15 @@ workcell auth set \
   --source /Users/example/.config/workcell/gemini.env
 ```
 
+A strict Colima launch uses the egress proxy by default. It refuses an
+environment file that holds `GEMINI_API_KEY`
+(`internal/injection/render_credentials.go`), because the agent must hold only
+a placeholder. For an API key, store it in the login Keychain item
+`workcell-gemini-api-key` and use `--resolver keychain-broker
+--ack-host-resolver`, as [the injection policy guide](../injection-policy.md)
+shows. A launch with `--egress-proxy=off` still accepts the file. GCA and Vertex
+files stay direct.
+
 Cached OAuth path:
 
 ```bash

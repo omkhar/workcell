@@ -64,6 +64,29 @@ The GitHub Releases page contains old details that are not in this file.
   and the session CA, and the manifest lists it as `egress_ca_bundle`. The
   provider wrapper clears any agent `CODEX_CA_CERTIFICATE` and sets it to the
   bundle. `publish-egress-ca` now takes the roots file too.
+- `--egress-proxy` also takes `=on` or `=off`. The bare flag means `on`.
+  Another value, or a second `--egress-proxy` flag in any spelling, stops the
+  launch with status 2.
+
+### Changed
+
+- The egress proxy is now the default for strict Colima sessions. The agent
+  container has no resolver, and the launch summary reports
+  `egress_enforcement=proxy`. `--egress-proxy=off` keeps the old strict
+  session: the profile-wide allowlist and the resolver of the VM. Other modes
+  and targets do not change.
+- A strict Colima launch now stops on a Claude, Gemini or Codex API key from
+  `source`. Store the key in its Keychain item with `resolver =
+  "keychain-broker"`, or launch with `--egress-proxy=off`. `--auth-status`,
+  `--doctor`, `--inspect` and `--prepare-only` do not stop on such a key.
+- A strict Colima launch now refreshes a prepared image that was built from
+  other inputs, as `--egress-proxy` launches did before.
+- The session record has an `egress_enforcement` field, and `session show`
+  prints it. The `launch` audit record carries it as its last field. The OCSF
+  export maps both, and the mapping version moved to `8`.
+- `session fork` replays the egress proxy setting of the parent from its
+  signed launch record. Before, a child of an `--egress-proxy` parent ran
+  without the proxy.
 
 ### Security hardening
 

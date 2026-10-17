@@ -26,7 +26,7 @@
     },
     {
       "id": "shared/egress-proxy-smoke",
-      "description": "macOS secretless smoke launches strict Codex with --egress-proxy on Colima: an allowlisted host works through the sidecar, a denied SNI, an IP literal and DNS fail, and the network and sidecar are removed after an attached run and a detached stop",
+      "description": "macOS secretless smoke launches strict Codex on Colima with the default egress proxy: an allowlisted host works through the sidecar, a denied SNI, an IP literal and DNS fail, and the network and sidecar are removed after an attached run and a detached stop; --egress-proxy=off keeps the allowlist session",
       "lane": "secretless",
       "platform": "macos",
       "validation_tier": "certification",

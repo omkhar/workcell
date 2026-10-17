@@ -145,14 +145,24 @@ workcell auth set \
   --source /Users/example/.config/workcell/codex-auth.json
 ```
 
-Claude API key:
+Claude API key, served from the login Keychain item `workcell-claude-api-key`:
 
 ```bash
+security add-generic-password -U -s workcell-claude-api-key -a "$USER" -T /usr/bin/security -w
 workcell auth set \
   --agent claude \
   --credential claude_api_key \
-  --source /Users/example/.config/workcell/claude-api-key.txt
+  --resolver keychain-broker \
+  --ack-host-resolver
 ```
+
+A strict Colima launch uses the egress proxy by default. It refuses a Claude,
+Gemini or Codex API key from a file
+(`internal/injection/render_credentials.go`). The agent must hold only a
+placeholder. Store the key in its macOS login Keychain item and use the
+`keychain-broker` resolver, as
+[the injection policy guide](injection-policy.md) shows. A launch with
+`--egress-proxy=off` still accepts a key from a file.
 
 Gemini env file:
 

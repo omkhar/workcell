@@ -11,6 +11,9 @@ gemini = "/Users/example/.config/workcell/gemini-extra.md"
 # its adapter support lands.
 
 [credentials]
+# A strict Colima launch uses the egress proxy by default and refuses a Claude,
+# Gemini or Codex API key from a file. Use resolver = "keychain-broker" for an
+# API key (see docs/injection-policy.md), or launch with --egress-proxy=off.
 codex_auth = "/Users/example/.config/workcell/codex-auth.json"
 claude_api_key = "/Users/example/.config/workcell/claude-api-key.txt"
 claude_mcp = "/Users/example/.config/workcell/claude-mcp.json"
