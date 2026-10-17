@@ -26,9 +26,10 @@ const firstPublicationShapeMargin = "0.66"
 
 // shapeMargin is the PR shape margin for a publication: first publication
 // keeps a smaller budget so review fixes still fit, and an open PR (prURL)
-// gets the full budget.
-func shapeMargin(prURL string) string {
-	if prURL != "" {
+// gets the full budget. A full-budget publication (fullBudget) gets it too:
+// its content is fixed before publication, so no review fix can grow it.
+func shapeMargin(prURL string, fullBudget bool) string {
+	if prURL != "" || fullBudget {
 		return "1.0"
 	}
 	return firstPublicationShapeMargin
@@ -159,7 +160,7 @@ func shapeMarginFromLookups(repoViewJSON, prListJSON string, opts *Options) (str
 	if err != nil {
 		return "", err
 	}
-	return shapeMargin(prURL), nil
+	return shapeMargin(prURL, opts.FullShapeBudget), nil
 }
 
 // ShapeMarginMain prints the PR shape margin that publish-pr would apply to
@@ -518,7 +519,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		shapeCmd = append(shapeCmd, "--allow-certified-adapter-shape")
 	}
 	// Dry run cannot query GitHub and plans for first publication.
-	shapeMarginArgs := []string{"--margin", shapeMargin("")}
+	shapeMarginArgs := []string{"--margin", shapeMargin("", opts.FullShapeBudget)}
 	pushCmd := clone("push", "--no-verify", "-u", "origin", opts.Branch)
 
 	draft := !preflight.Ready
@@ -626,7 +627,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	shapeMarginArgs = []string{"--margin", shapeMargin(prURL)}
+	shapeMarginArgs = []string{"--margin", shapeMargin(prURL, opts.FullShapeBudget)}
 	for _, step := range [][]string{slices.Concat(shapeCmd, shapeMarginArgs), pushCmd} {
 		if err := run(step, nil); err != nil {
 			return err
