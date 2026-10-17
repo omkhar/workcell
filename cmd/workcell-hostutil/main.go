@@ -1165,6 +1165,8 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 			opts.Inspect = value == "1" || value == "true"
 		case "--dry-run":
 			opts.DryRun = value == "1" || value == "true"
+		case "--prepare-only":
+			opts.PrepareOnly = value == "1" || value == "true"
 		case "--broker-credentials":
 			opts.BrokerCredentials = value == "1" || value == "true"
 		case "--synthetic-codex-auth":

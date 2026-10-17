@@ -812,6 +812,17 @@ func TestWriteCredentialBrokerAuditRecords(t *testing.T) {
 	}
 }
 
+// TestParsePrepareBundleArgsPrepareOnly maps --prepare-only onto the prepare
+// option; only 1 or true turns it on.
+func TestParsePrepareBundleArgsPrepareOnly(t *testing.T) {
+	for value, want := range map[string]bool{"1": true, "true": true, "0": false, "": false} {
+		opts, err := parsePrepareBundleArgs([]string{"--prepare-only=" + value})
+		if err != nil || opts.PrepareOnly != want {
+			t.Errorf("--prepare-only=%s: PrepareOnly = %v, %v; want %v", value, opts != nil && opts.PrepareOnly, err, want)
+		}
+	}
+}
+
 // TestParsePrepareBundleArgsBrokerCredentials maps --broker-credentials onto
 // the prepare option; only 1 or true turns it on.
 func TestParsePrepareBundleArgsBrokerCredentials(t *testing.T) {

@@ -5806,6 +5806,7 @@ prepare_injection_bundle() {
     "--auth-status=${AUTH_STATUS:-0}" \
     "--doctor=${DOCTOR:-0}" \
     "--inspect=${INSPECT:-0}" \
+    "--prepare-only=${PREPARE_ONLY:-0}" \
     "--dry-run=${DRY_RUN:-0}" \
     "--broker-credentials=${broker_credentials}" \
     "--synthetic-codex-auth=${synthetic_codex}" \

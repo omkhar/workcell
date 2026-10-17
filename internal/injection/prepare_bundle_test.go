@@ -265,6 +265,28 @@ func TestPrepareBundleAuthStatusAllowsMissingWorkspaceAndReadsMetadata(t *testin
 	}
 }
 
+// TestResolutionModeFor proves that every run that launches no session
+// resolves credentials in metadata mode, and that only a launch uses launch
+// mode.
+func TestResolutionModeFor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts PrepareBundleOptions
+		want string
+	}{
+		{"launch", PrepareBundleOptions{}, "launch"},
+		{"auth-status", PrepareBundleOptions{AuthStatus: true}, "metadata"},
+		{"doctor", PrepareBundleOptions{Doctor: true}, "metadata"},
+		{"inspect", PrepareBundleOptions{Inspect: true}, "metadata"},
+		{"dry-run", PrepareBundleOptions{DryRun: true}, "metadata"},
+		{"prepare-only", PrepareBundleOptions{PrepareOnly: true}, "metadata"},
+	} {
+		if got := resolutionModeFor(tc.opts); got != tc.want {
+			t.Errorf("%s: resolutionModeFor = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestPrepareBundleRequiresAgentAndMode(t *testing.T) {
 	if _, err := PrepareBundle(PrepareBundleOptions{Agent: "", Mode: "strict", RealHome: "/tmp"}); err == nil {
 		t.Fatalf("expected error for empty agent")
