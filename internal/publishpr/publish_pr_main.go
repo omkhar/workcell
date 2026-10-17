@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/cliexit"
@@ -102,6 +103,11 @@ func DefaultOptions() *Options {
 // ParseArgs does NOT run --branch / --base / --snapshot validators;
 // callers compose ParseArgs with Validate to keep the responsibilities
 // separated and the unit tests focused.
+// upstreamRefreshBranch matches the branch that publish-upstream-refresh-pr.sh
+// creates for a verified candidate, the only publication that may pass
+// --full-shape-budget.
+var upstreamRefreshBranch = regexp.MustCompile(`^codex/upstream-refresh-(provider|toolchain)-[0-9]+$`)
+
 func ParseArgs(args []string) (*Options, error) {
 	opts := DefaultOptions()
 	for i := 0; i < len(args); i++ {
@@ -387,6 +393,9 @@ func Preflight(opts *Options, checkRefFormat CheckRefFormatFunc, fileReader func
 	}
 	if err := ValidateBaseName(opts.Base, opts.AllowNonMainBase, checkRefFormat); err != nil {
 		return nil, err
+	}
+	if opts.FullShapeBudget && !upstreamRefreshBranch.MatchString(opts.Branch) {
+		return nil, exit2("--full-shape-budget is limited to upstream-refresh candidate branches (codex/upstream-refresh-<provider|toolchain>-<run id>): %s", opts.Branch)
 	}
 	titleText, err := LoadTextArg(opts.Title, opts.TitleFile, "title", true, fileReader)
 	if err != nil {

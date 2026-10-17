@@ -592,8 +592,9 @@ fail closed.
 A first publication normally gets 0.66 of the PR shape budget, so review
 fixes still fit.
 .B --full-shape-budget
-gives it the full budget; use it only when the content is fixed before
-publication, as for a verified upstream-refresh candidate.
+gives it the full budget. It is for a verified upstream-refresh candidate,
+whose content is fixed before publication, and it stops unless the branch is
+.BR codex/upstream-refresh-<provider|toolchain>-<run\ id> .
 Dry-run output reports whether repo-owned PR checks are expected for the chosen
 base.
 Use

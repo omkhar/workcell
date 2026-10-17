@@ -734,6 +734,34 @@ func TestPreflightHappyPathMain(t *testing.T) {
 	}
 }
 
+// TestPreflightLimitsFullShapeBudgetToRefreshBranches proves that only an
+// upstream-refresh candidate branch may take the full first-publication
+// shape budget.
+func TestPreflightLimitsFullShapeBudgetToRefreshBranches(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		branch string
+		ok     bool
+	}{
+		{"codex/upstream-refresh-toolchain-38965388267", true},
+		{"codex/upstream-refresh-provider-1", true},
+		{"feature/x", false},
+		{"codex/upstream-refresh-toolchain-", false},
+		{"codex/upstream-refresh-other-1", false},
+		{"codex/upstream-refresh-toolchain-1/x", false},
+		{"x/codex/upstream-refresh-toolchain-1", false},
+	} {
+		opts := &Options{Branch: tc.branch, Base: "main", Snapshot: "worktree", Title: "T", CommitMessage: "C", FullShapeBudget: true}
+		_, err := Preflight(opts, func(string) bool { return true }, nil)
+		if tc.ok && err != nil {
+			t.Errorf("Preflight(%q) err = %v, want nil", tc.branch, err)
+		}
+		if !tc.ok && (err == nil || !strings.Contains(err.Error(), "--full-shape-budget is limited")) {
+			t.Errorf("Preflight(%q) err = %v, want the full-shape-budget refusal", tc.branch, err)
+		}
+	}
+}
+
 func TestPreflightDowngradesLowerAssuranceNonMain(t *testing.T) {
 	t.Parallel()
 	opts := &Options{
