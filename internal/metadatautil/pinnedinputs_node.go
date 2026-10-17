@@ -19,8 +19,9 @@ import (
 var markdownlintAdvisoryFloors = []struct{ name, minimum string }{
 	{"brace-expansion", "5.0.12"},
 	{"markdown-it", "14.3.2"},
-	{"smol-toml", "1.7.2"},
+	{"smol-toml", "1.9.0"},
 	{"js-yaml", "5.4.1"},
+	{"katex", "0.18.2"},
 }
 
 var versionTriplePattern = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)$`)
