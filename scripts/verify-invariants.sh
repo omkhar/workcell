@@ -7250,8 +7250,19 @@ fi
 grep -q 'provider_e2e_auth_status_cmd=.*--auth-status' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--prepare-only' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
+# provider_e2e_egress_count LABEL FILE prints how many --egress-proxy tokens
+# the labeled dry-run command holds, so a duplicate flag is caught.
+provider_e2e_egress_count() {
+  grep "^provider_e2e_$1=" "$2" | grep -o -- '--egress-proxy[^ ]*' | wc -l | tr -d ' '
+}
 grep -q 'provider_e2e_prepare_only_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-codex.out
+if [[ "$(provider_e2e_egress_count prepare_only_cmd /tmp/workcell-provider-e2e-codex.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count probe_cmd /tmp/workcell-provider-e2e-codex.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count shell_probe_cmd /tmp/workcell-provider-e2e-codex.out)" != 0 ]]; then
+  echo "Expected exactly one --egress-proxy on each strict provider-e2e command and none on the shell probe" >&2
+  exit 1
+fi
 grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-codex.out
@@ -7276,8 +7287,10 @@ fi
   --injection-policy "${PROVIDER_E2E_EXPLICIT_POLICY}" --egress-proxy off --dry-run >/tmp/workcell-provider-e2e-explicit.out 2>&1
 grep -q 'provider_e2e_prepare_only_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-explicit.out
 grep -q 'provider_e2e_probe_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-explicit.out
-if grep -q 'provider_e2e_shell_probe_cmd=.*--egress-proxy' /tmp/workcell-provider-e2e-explicit.out; then
-  echo "provider-e2e must not pass --egress-proxy to the development shell probe" >&2
+if [[ "$(provider_e2e_egress_count prepare_only_cmd /tmp/workcell-provider-e2e-explicit.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count probe_cmd /tmp/workcell-provider-e2e-explicit.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count shell_probe_cmd /tmp/workcell-provider-e2e-explicit.out)" != 0 ]]; then
+  echo "Expected exactly one --egress-proxy on each strict provider-e2e command and none on the shell probe" >&2
   exit 1
 fi
 for provider_e2e_bad_egress in "--egress-proxy maybe" "--egress-proxy on --egress-proxy off"; do
