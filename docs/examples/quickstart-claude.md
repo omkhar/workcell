@@ -29,7 +29,7 @@ Reviewed API key path, served from the login Keychain item
 
 ```bash
 workcell auth init
-security add-generic-password -s workcell-claude-api-key -a "$USER" -w -T /usr/bin/security
+security add-generic-password -U -s workcell-claude-api-key -a "$USER" -T /usr/bin/security -w
 workcell auth set \
   --agent claude \
   --credential claude_api_key \

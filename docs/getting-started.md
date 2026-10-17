@@ -148,7 +148,7 @@ workcell auth set \
 Claude API key, served from the login Keychain item `workcell-claude-api-key`:
 
 ```bash
-security add-generic-password -s workcell-claude-api-key -a "$USER" -w -T /usr/bin/security
+security add-generic-password -U -s workcell-claude-api-key -a "$USER" -T /usr/bin/security -w
 workcell auth set \
   --agent claude \
   --credential claude_api_key \
