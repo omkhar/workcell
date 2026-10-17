@@ -76,7 +76,7 @@ require_tool() {
 require_clean_tree() {
   local status_output=""
 
-  status_output="$(git -C "${ROOT_DIR}" status --short --untracked-files=all)"
+  status_output="$(GIT_OPTIONAL_LOCKS=0 git -C "${ROOT_DIR}" status --short --untracked-files=all)"
   if [[ -n "${status_output}" ]]; then
     echo "pre-merge requires a clean worktree, including untracked files, by default." >&2
     echo "Commit or stash local changes first, or rerun with --allow-dirty when you intentionally want to validate the live worktree." >&2
@@ -224,7 +224,7 @@ compute_publish_snapshot_tree() {
 }
 
 compute_worktree_status_sha256() {
-  git -C "${ROOT_DIR}" status --short --untracked-files=all | shasum -a 256 | awk '{print $1}'
+  GIT_OPTIONAL_LOCKS=0 git -C "${ROOT_DIR}" status --short --untracked-files=all | shasum -a 256 | awk '{print $1}'
 }
 
 resolve_base_ref_for_evidence() {

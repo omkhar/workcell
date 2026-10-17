@@ -6,6 +6,7 @@ package metadatautil
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -108,4 +109,39 @@ func TestBuildInputManifestBindsBrokerSources(t *testing.T) {
 	if before.Verification.Inputs[unrelated] != sha256HexString("initial fixture\n") {
 		t.Fatal("unrelated Go source lost verification binding")
 	}
+}
+
+// TestGitTrackedListsStopWithoutAnIndex proves that a missing index file
+// stops both tracked-file lookups. Git reads a missing index as empty, so
+// without the check every tracked input would look untracked (#880).
+func TestGitTrackedListsStopWithoutAnIndex(t *testing.T) {
+	// gitRootMatches compares the resolved top level, so resolve /var links.
+	repo, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gitRootMatchesAfterInit(t, repo) {
+		t.Fatal("fixture repository is not its own git top level")
+	}
+	writeBuildInputFixture(t, repo, "go.mod", []byte("module example.invalid/x\n"))
+	runGitFixture(t, repo, "add", "go.mod")
+	runGitFixture(t, repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "x")
+	if got, err := gitTrackedSubset(repo, []string{"go.mod"}, true); err != nil || len(got) != 1 {
+		t.Fatalf("with an index: gitTrackedSubset = %v, %v; want [go.mod]", got, err)
+	}
+	if err := os.Remove(filepath.Join(repo, ".git", "index")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitTrackedSubset(repo, []string{"go.mod"}, true); err == nil || !strings.Contains(err.Error(), "git index") {
+		t.Fatalf("without an index: gitTrackedSubset err = %v; want the unreadable index error", err)
+	}
+	if _, _, err := gitTrackedFiles(repo); err == nil || !strings.Contains(err.Error(), "git index") {
+		t.Fatalf("without an index: gitTrackedFiles err = %v; want the unreadable index error", err)
+	}
+}
+
+func gitRootMatchesAfterInit(t *testing.T, repo string) bool {
+	t.Helper()
+	runGitFixture(t, repo, "init", "-q")
+	return gitRootMatches(repo)
 }

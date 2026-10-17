@@ -159,9 +159,27 @@ func gitRootMatches(rootDir string) bool {
 	return filepath.Clean(topLevel) == filepath.Clean(rootDir)
 }
 
+// requireGitIndex stops when the index file of rootDir does not exist. Git
+// reads a missing index as an empty one, so git ls-files then succeeds with no
+// paths, and every tracked input would look untracked or absent. That happens
+// when another process replaces the index while this one reads it (#880).
+func requireGitIndex(rootDir string) error {
+	indexPath, err := gitOutput(rootDir, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(strings.TrimSpace(indexPath)); err != nil {
+		return fmt.Errorf("git index for %s is unreadable, so the tracked file list cannot be trusted: %w", rootDir, err)
+	}
+	return nil
+}
+
 func gitTrackedFiles(rootDir string) ([]string, bool, error) {
 	if !gitRootMatches(rootDir) {
 		return nil, false, nil
+	}
+	if err := requireGitIndex(rootDir); err != nil {
+		return nil, true, err
 	}
 
 	output, err := gitOutput(rootDir, "ls-files", "-z", "--cached", "--modified", "--deduplicate")
@@ -206,6 +224,9 @@ func gitTrackedSubset(rootDir string, paths []string, requireTracked bool) ([]st
 
 	if !gitRootMatches(rootDir) {
 		return unique, nil
+	}
+	if err := requireGitIndex(rootDir); err != nil {
+		return nil, err
 	}
 
 	args := append([]string{"ls-files", "--"}, unique...)
