@@ -1,5 +1,5 @@
 # Option inventory for the PINNED runtime codex CLI. The stamp must equal the pin.
-# codex-version: 0.162.1
+# codex-version: 0.163.0
 # Regenerate: scripts/check-flag-inventory.sh --write. Classify: adapters/codex/adapter.toml [flags].
 --add-dir
 --all
