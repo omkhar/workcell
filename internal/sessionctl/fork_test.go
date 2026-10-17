@@ -64,8 +64,14 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	}
 	f.logPath = filepath.Join(profileDir, "workcell.audit.log")
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
-	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "workspace=/tmp/clone", "workspace_head=" + forkFixtureHead, "agent=codex", "agent_autonomy=yolo",
-		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}, vm...)...)
+	launch := []string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "workspace=/tmp/clone", "workspace_head=" + forkFixtureHead, "agent=codex", "agent_autonomy=yolo",
+		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}
+	// A field in vm replaces the default launch field with the same key.
+	launch = slices.DeleteFunc(launch, func(field string) bool {
+		key, _, _ := strings.Cut(field, "=")
+		return slices.ContainsFunc(vm, func(v string) bool { return strings.HasPrefix(v, key+"=") })
+	})
+	f.appendRecord(t, append(launch, vm...)...)
 	f.appendRecord(t, append([]string{"event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree=" + forkFixtureTree, "commit=" + forkFixtureCommit}, forkSnapshotCapture...)...)
 	if err := sessions.WriteSessionRecord(f.recordPath, map[string]string{
