@@ -303,6 +303,11 @@ func TestForkMainReplaysEgressProxy(t *testing.T) {
 		!strings.Contains(err.Error(), "parent egress enforcement") {
 		t.Fatalf("unknown egress enforcement error = %v", err)
 	}
+	// Without --snapshot, the sealed parent refuses before the snapshot step.
+	if out, err := f.run("--id", "parent-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "parent egress enforcement") || strings.Contains(out, "needs_snapshot") {
+		t.Fatalf("unknown egress enforcement without --snapshot: plan = %q, %v; want a refusal", out, err)
+	}
 }
 
 func TestForkMainRefusesBeforeAskingForSnapshot(t *testing.T) {

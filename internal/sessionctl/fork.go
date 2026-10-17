@@ -106,6 +106,9 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 			if _, err := validateForkLaunch(opts, record, origin, launch); err != nil {
 				return err
 			}
+			if _, err := forkEgressProxy(opts, launch); err != nil {
+				return err
+			}
 		case !errors.Is(sealErr, os.ErrNotExist):
 			return fmt.Errorf("session fork requires a signed audit chain for %s: %w", opts.sessionID, sealErr)
 		case record.ExecutionPath != "":

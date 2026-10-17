@@ -4747,7 +4747,8 @@ grep -q called "${fork_stale_snapshots}" || {
 
 # A readonly parent forks into readonly children, and an allowlist parent
 # into --egress-proxy=off children. The plan is a stub, so the check covers
-# only the child argument list.
+# only the child argument list. The .argv log holds one argument per line, so
+# the egress checks match whole arguments.
 fork_child_args_file="${TMP_DIR}/fork-child-args.log"
 fork_args_run() {
   FORK_STUB_MUTABILITY="$1" FORK_STUB_EGRESS="${2-}" FORK_STUB_LOG="${fork_child_args_file}" bash -c '
@@ -4756,7 +4757,7 @@ fork_args_run() {
     trap - EXIT
     session_run_cli_with_roots() { printf "session_id=p\nsnapshot_id=s\ncount=1\ncommit=c\ntree=t\nagent=codex\nmode=strict\nprofile=x\nworkspace_origin=/o\norigin_hash=h\ncontainer_mutability=%s\negress_proxy=%s\nvm_cpu=4\nvm_memory_gib=10\nvm_disk_gib=80\ncontainer_cpu=unmanaged\ncontainer_memory=8g\n" "${FORK_STUB_MUTABILITY}" "${FORK_STUB_EGRESS}"; }
     session_snapshot_store_root() { echo /nonexistent; }
-    session_fork_start_child() { echo "$*" >"${FORK_STUB_LOG}"; printf "session_id=child-1\n"; }
+    session_fork_start_child() { echo "$*" >"${FORK_STUB_LOG}"; printf "%s\n" "$@" >"${FORK_STUB_LOG}.argv"; printf "session_id=child-1\n"; }
     load_session_runtime_metadata() { SESSION_META_PROFILE=x SESSION_META_RECORD_PATH=/r; }
     append_session_control_audit_record() { return 0; }
     sign_session_audit_head_explicit() { return 0; }
@@ -4765,7 +4766,7 @@ fork_args_run() {
 }
 fork_args_run readonly off
 grep -q -- '--container-mutability readonly' "${fork_child_args_file}"
-grep -q -- ' --egress-proxy=off ' "${fork_child_args_file}"
+grep -qx -- '--egress-proxy=off' "${fork_child_args_file}.argv"
 grep -q -- '--vm-cpu 4 --vm-memory 10 --vm-disk 80 --container-memory 8g' "${fork_child_args_file}"
 # Negative control: unmanaged container CPU adds no CPU flag.
 if grep -q -- '--container-cpu' "${fork_child_args_file}"; then
@@ -4779,12 +4780,12 @@ if grep -q -- '--container-mutability' "${fork_child_args_file}"; then
   exit 1
 fi
 # Negative control: a parent record without egress_enforcement adds no flag.
-if grep -q -- '--egress-proxy' "${fork_child_args_file}"; then
+if grep -q -- '--egress-proxy' "${fork_child_args_file}.argv"; then
   echo "session fork added an egress proxy flag for a parent without one" >&2
   exit 1
 fi
 fork_args_run ephemeral on
-grep -q -- ' --egress-proxy=on ' "${fork_child_args_file}"
+grep -qx -- '--egress-proxy=on' "${fork_child_args_file}.argv"
 
 # A failed metadata reload or audit append still names the running children.
 fork_bookkeeping_run() {
