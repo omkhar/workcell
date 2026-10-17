@@ -7261,6 +7261,37 @@ grep -q 'provider_e2e_probe_cmd=.*--agent-arg exec' /tmp/workcell-provider-e2e-c
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg --json' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-codex.out
 
+# An explicit policy keeps the launcher egress default unless --egress-proxy
+# is given; the option reaches only the strict steps, and a bad or repeated
+# value stops with status 2.
+PROVIDER_E2E_EXPLICIT_POLICY="$(mktemp "${TMPDIR:-/tmp}/workcell-provider-e2e-policy.XXXXXX")"
+printf 'version = 1\n' >"${PROVIDER_E2E_EXPLICIT_POLICY}"
+"${ROOT_DIR}/scripts/provider-e2e.sh" --agent codex --workspace "${ROOT_DIR}" \
+  --injection-policy "${PROVIDER_E2E_EXPLICIT_POLICY}" --dry-run >/tmp/workcell-provider-e2e-explicit.out 2>&1
+if grep -q -- '--egress-proxy' /tmp/workcell-provider-e2e-explicit.out; then
+  echo "Expected provider-e2e with an explicit policy to keep the launcher egress default" >&2
+  exit 1
+fi
+"${ROOT_DIR}/scripts/provider-e2e.sh" --agent codex --workspace "${ROOT_DIR}" \
+  --injection-policy "${PROVIDER_E2E_EXPLICIT_POLICY}" --egress-proxy off --dry-run >/tmp/workcell-provider-e2e-explicit.out 2>&1
+grep -q 'provider_e2e_prepare_only_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-explicit.out
+grep -q 'provider_e2e_probe_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-explicit.out
+if grep -q 'provider_e2e_shell_probe_cmd=.*--egress-proxy' /tmp/workcell-provider-e2e-explicit.out; then
+  echo "provider-e2e must not pass --egress-proxy to the development shell probe" >&2
+  exit 1
+fi
+for provider_e2e_bad_egress in "--egress-proxy maybe" "--egress-proxy on --egress-proxy off"; do
+  provider_e2e_status=0
+  # shellcheck disable=SC2086 # each case is a list of separate arguments
+  "${ROOT_DIR}/scripts/provider-e2e.sh" --agent codex --workspace "${ROOT_DIR}" \
+    --injection-policy "${PROVIDER_E2E_EXPLICIT_POLICY}" ${provider_e2e_bad_egress} --dry-run >/dev/null 2>&1 || provider_e2e_status=$?
+  if [[ "${provider_e2e_status}" -ne 2 ]]; then
+    echo "Expected provider-e2e to stop with status 2 for: ${provider_e2e_bad_egress}" >&2
+    exit 1
+  fi
+done
+rm -f "${PROVIDER_E2E_EXPLICIT_POLICY}"
+
 if ! WORKCELL_E2E_CLAUDE_API_KEY='smoke-api-key' \
   "${ROOT_DIR}/scripts/provider-e2e.sh" \
   --agent claude \
