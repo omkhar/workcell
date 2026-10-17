@@ -57,6 +57,9 @@ GOOGLE_GENAI_USE_VERTEXAI=true
 GOOGLE_API_KEY=verify-google-key
 EOF
 chmod 0600 "${AUTH_ROOT}/gemini.env"
+# The launches below stage API keys from files, which a proxy session
+# refuses, so they pass --egress-proxy=off. The egress-proxy smoke covers the
+# proxy path.
 cat >"${AUTH_ROOT}/policy.toml" <<'EOF'
 version = 1
 
@@ -73,6 +76,7 @@ EOF
 prepare_runtime() {
   "${ROOT_DIR}/scripts/workcell" \
     --prepare-only \
+    --egress-proxy=off \
     --agent codex \
     --workspace "${WORKSPACE}" \
     --colima-profile "${PROFILE}" \
@@ -109,6 +113,7 @@ run_agent_version_smoke() {
   set +e
   perl -e 'alarm shift @ARGV; exec @ARGV' 120 \
     "${ROOT_DIR}/scripts/workcell" \
+    --egress-proxy=off \
     --agent "${agent}" \
     --workspace "${WORKSPACE}" \
     --colima-profile "${PROFILE}" \
