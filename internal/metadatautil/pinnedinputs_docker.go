@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -44,7 +45,10 @@ func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerf
 	if err := validator.validateAptBrokerBuildInputs(); err != nil {
 		return err
 	}
-	return validateRuntimeBuildPreload(runtimeDockerfile, cfg.RuntimeDockerfilePath)
+	if err := validateRuntimeBuildPreload(runtimeDockerfile, cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	return validateBuildTargetGuard(runtimeDockerfile)
 }
 
 type dockerPinnedInputValidator struct {
@@ -571,11 +575,68 @@ func (validator *dockerPinnedInputValidator) aptBrokerRuntimeStage() (string, er
 		return "", errors.New("runtime/container/Dockerfile must contain exactly one final runtime stage")
 	}
 	stage := strings.SplitN(validator.runtimeDockerfile, stageStart, 2)[1]
-	if regexp.MustCompile(`(?mi)^[\t ]*FROM[\t ]`).MatchString(stage) {
-		return "", errors.New("runtime/container/Dockerfile final runtime stage must be the last Docker stage")
+	// Only the uncertified stage and the no-target guard follow the runtime
+	// stage, so a build without --target fails instead of producing an image.
+	starts := dockerfileStageStarts(stage)
+	var got []string
+	for _, start := range starts {
+		got = append(got, start.header)
 	}
-	return stage, nil
+	if !slices.Equal(got, []string{uncertifiedStageStart, buildTargetGuardStart}) {
+		return "", fmt.Errorf("runtime/container/Dockerfile stages after the runtime stage must be exactly %q and %q, found %q", uncertifiedStageStart, buildTargetGuardStart, got)
+	}
+	return stage[:starts[0].offset], nil
 }
+
+// dockerfileStageStart is one real FROM instruction: its normalized header and
+// the byte offset where its line starts.
+type dockerfileStageStart struct {
+	header string
+	offset int
+}
+
+// dockerfileStageStarts returns the FROM instructions of text as Docker reads
+// them. A line that continues an instruction (the previous instruction line
+// ended with a backslash) is not an instruction, even when it reads like a
+// FROM line. Comment and blank lines do not end a continuation.
+func dockerfileStageStarts(text string) []dockerfileStageStart {
+	var starts []dockerfileStageStart
+	offset := 0
+	continued := false
+	for line := range strings.Lines(text) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if fields := strings.Fields(trimmed); !continued && strings.EqualFold(fields[0], "FROM") {
+				starts = append(starts, dockerfileStageStart{header: strings.Join(fields, " "), offset: offset})
+			}
+			continued = strings.HasSuffix(trimmed, `\`)
+		}
+		offset += len(line)
+	}
+	return starts
+}
+
+// validateBuildTargetGuard requires the last stage to fail, so a build without
+// --target gets no image. Comments do not count; any other instruction fails.
+func validateBuildTargetGuard(runtimeDockerfile string) error {
+	starts := dockerfileStageStarts(runtimeDockerfile)
+	ok := len(starts) > 0 && starts[len(starts)-1].header == buildTargetGuardStart
+	guard := ""
+	if ok {
+		_, guard, _ = strings.Cut(runtimeDockerfile[starts[len(starts)-1].offset:], "\n")
+	}
+	if !ok || strings.TrimSpace(dockerfileInstructions(guard)) != buildTargetGuard {
+		return errors.New("runtime/container/Dockerfile must end with the require-build-target guard stage that fails a build without --target")
+	}
+	return nil
+}
+
+const (
+	uncertifiedStageStart = "FROM runtime AS runtime-uncertified"
+	buildTargetGuardStart = "FROM runtime-base AS require-build-target"
+	buildTargetGuard      = `RUN echo "Build runtime/container/Dockerfile with --target runtime or --target runtime-uncertified." >&2 \
+  && exit 1`
+)
 
 func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeBinaries(runtimeStage string) error {
 	// Count instructions, not text: a comment naming a binary changes nothing.

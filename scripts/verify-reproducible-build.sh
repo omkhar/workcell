@@ -73,6 +73,7 @@ build_oci_layout() {
     --sbom=false \
     --output "type=oci,dest=${dest},tar=false,oci-mediatypes=true,rewrite-timestamp=true" \
     -f "${ROOT_DIR}/runtime/container/Dockerfile" \
+    --target runtime \
     "${ROOT_DIR}" >/dev/null
 }
 

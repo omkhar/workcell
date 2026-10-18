@@ -378,6 +378,7 @@ jobs:
             --platform linux/arm64 \
             --tag workcell:copilot-arm64-smoke \
             -f runtime/container/Dockerfile \
+            --target runtime \
             .
 
       - name: Verify upstream Copilot release inside arm64 runtime image
@@ -868,6 +869,7 @@ jobs:
           provenance: mode=max
           sbom: true
           tags: ${{ env.IMAGE_NAME }}
+          target: runtime
 
       - name: Bind amd64 image artifact
         env:
@@ -948,6 +950,7 @@ jobs:
           provenance: mode=max
           sbom: true
           tags: ${{ env.IMAGE_NAME }}
+          target: runtime
 
       - name: Bind arm64 image artifact
         env:

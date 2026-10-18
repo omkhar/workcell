@@ -100,12 +100,13 @@ internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe1138
 internal/metadatautil	definedName	0f1edc2e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	docClaimRule	3ac775b1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.aptBrokerBuilderStage	174cd5ff	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	dockerPinnedInputValidator.aptBrokerRuntimeStage	23121551,c4f09ac0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.aptBrokerRuntimeStage	23121551	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateAptBrokerRuntimeInstall	851e5f5b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateProviderVersions	2f0141d4	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateValidatorDeadcode	4a31dbf9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateValidatorHadolint	fa92ca1d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerfileInstructions	33adfa7b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerfileStageStarts	3f5cf821	reviewed: this is the Dockerfile stage decoder; the match reads the comment and continuation markers of each line as Docker does, so a FROM inside a continued instruction never counts
 internal/metadatautil	envOperands	ef3d60e0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	evaluates	08bbcfda,21e7aa8e,c914c99c	the matches read the parsed argv words of one command: the barrier names, and the $, backtick and brace spellings of its command word
 internal/metadatautil	exitCodeEmitted	859244aa,db0686c6,e4cb9292	unreviewed debt: review the subject, then port or justify

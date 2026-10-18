@@ -864,6 +864,7 @@ SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
   --load \
   -t "${IMAGE_TAG}" \
   -f "${ROOT_DIR}/runtime/container/Dockerfile" \
+  --target runtime \
   "${ROOT_DIR}" >/dev/null
 
 # Fail on a CLI flag that no adapter manifest classifies.
