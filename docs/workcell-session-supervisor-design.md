@@ -124,6 +124,8 @@ The shipped session plane does not provide:
 - A queue or warm pool.
 - Pause, resume, or checkpoint operations. `workcell session fork` starts
   new children from a signed snapshot of a parent session.
+  `workcell session restore` puts a signed snapshot back into the worktree of
+  a stopped isolated session. It does not restart the session.
 - Central multi-host inventory or analytics.
 - A GUI or IDE client with the Tier 1 boundary claim.
 - A remote worker fleet.

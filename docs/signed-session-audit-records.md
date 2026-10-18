@@ -135,7 +135,7 @@ tokenizable record for another session stays outside strict validation.
 Require `session_verify=verified` before you rely on signed integrity. A
 terminal session without a seal does not meet this requirement.
 
-## Snapshot and fork seals
+## Snapshot, fork, and restore seals
 
 `workcell session snapshot` signs the session head after it appends the
 `session_snapshot` record. It signs a running session too. A later record of a
@@ -152,6 +152,13 @@ one `session_fork` record and signs the parent head again.
 
 The snapshot record names the workspace and git head that the capture used.
 Fork (`internal/sessionctl/fork.go`) refuses a snapshot when they differ from the signed launch record.
+
+`workcell session restore` reads the `launch`, `session_snapshot`, and `exit`
+records from the same signed prefix. Restore (`internal/sessionctl/restore.go`)
+refuses a session without a signed `exit` record. It fetches the snapshot
+commit from the store by the signed object id and checks the signed tree and
+launch head. After the restore, it appends one `session_restore` record and
+signs the head again.
 
 ## Limits and provider coverage
 

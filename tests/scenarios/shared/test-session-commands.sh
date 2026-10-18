@@ -61,7 +61,7 @@ cleanup() {
 trap cleanup EXIT
 
 top_level_help="$("${ROOT_DIR}/scripts/workcell" --help)"
-grep -Fq 'workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork>' <<<"${top_level_help}"
+grep -Fq 'workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork|restore>' <<<"${top_level_help}"
 grep -Fq 'workcell session verify --id SESSION_ID' <<<"${top_level_help}"
 
 COLIMA_ROOT="${REAL_HOME}/.colima"
@@ -4851,9 +4851,49 @@ fork_child_policy_live="$(
 grep -q "session fork child injection policy does not match the parent launch policy: ${FORK_PARENT}" <<<"${fork_child_policy_live}"
 [[ "$(find "${FORK_ORIGIN}/.git/workcell-sessions" -mindepth 1 -maxdepth 1 2>/dev/null | sort | tr '\n' ' ')" == "${fork_sessions_before}" ]]
 
-# The primary help synopsis and the manual list fork.
-"${ROOT_DIR}/scripts/workcell" --help 2>&1 | grep -Fq 'export|verify|fork> [options]'
-grep -Fq 'export|verify|fork\fR' "${ROOT_DIR}/man/workcell.1"
+# session restore: the parent above is stopped, but no signed exit record
+# proves it yet, so restore refuses it and changes nothing.
+printf 'after\n' >"${FORK_CLONE}/tracked.txt"
+rm -f "${FORK_CLONE}/.fork-marker"
+printf 'late\n' >"${FORK_CLONE}/late.txt"
+restore_audit_lines="$(wc -l <"${FORK_AUDIT_LOG}")"
+if "${ROOT_DIR}/scripts/workcell" session restore --id "${FORK_PARENT}" --snapshot "${fork_snapshot_id}" >/dev/null 2>"${TMP_DIR}/restore-running.err"; then
+  echo "session restore accepted a session without a signed exit record" >&2
+  exit 1
+fi
+grep -q 'signed exit record' "${TMP_DIR}/restore-running.err"
+[[ "$(wc -l <"${FORK_AUDIT_LOG}")" == "${restore_audit_lines}" ]]
+[[ "$(cat "${FORK_CLONE}/tracked.txt")" == "after" ]]
+# An exit record and the seal of the next snapshot end the parent. The store
+# ref of the first snapshot still names FORK_BASE (moved above), so the restore
+# proves that the commit comes from the signed record.
+fork_append_record event=exit "session_id=${FORK_PARENT}" source=host-stop-fallback exit_status=0
+"${ROOT_DIR}/scripts/workcell" session snapshot --id "${FORK_PARENT}" >/dev/null
+restore_output="$("${ROOT_DIR}/scripts/workcell" session restore --id "${FORK_PARENT}" --snapshot "${fork_snapshot_id}")"
+restore_backup="$(sed -n 's/^pre_restore_snapshot_id=//p' <<<"${restore_output}")"
+[[ -n "${restore_backup}" ]]
+[[ "$(cat "${FORK_CLONE}/tracked.txt")" == "changed" ]]
+[[ "$(cat "${FORK_CLONE}/.fork-marker")" == "parent-only" ]]
+test ! -e "${FORK_CLONE}/late.txt"
+[[ "$(git -C "${FORK_CLONE}" rev-parse HEAD)" == "${FORK_BASE}" ]]
+# The snapshot before the restore holds the replaced worktree.
+git --git-dir="${FORK_STORE}" cat-file -e "refs/workcell/snapshots/${FORK_PARENT}/${restore_backup}:late.txt"
+grep -Fq "event=session_restore session_id=${FORK_PARENT} source=host-cli snapshot_id=${fork_snapshot_id} tree=${fork_tree} commit=${fork_commit}" "${FORK_AUDIT_LOG}"
+[[ "$("${ROOT_DIR}/scripts/workcell" session verify --id "${FORK_PARENT}" | sed -n 's/^session_verify=//p')" == "verified" ]]
+# Negative control: a snapshot record after the signed head is refused.
+fork_append_record event=session_snapshot "session_id=${FORK_PARENT}" source=host-cli snapshot_id=unsigned \
+  "tree=${fork_tree}" "commit=${fork_commit}" "snapshot_workspace=${FORK_CLONE}" "snapshot_head=${FORK_BASE}"
+printf 'after\n' >"${FORK_CLONE}/tracked.txt"
+if "${ROOT_DIR}/scripts/workcell" session restore --id "${FORK_PARENT}" --snapshot unsigned >/dev/null 2>"${TMP_DIR}/restore-unsigned.err"; then
+  echo "session restore accepted an unsigned snapshot record" >&2
+  exit 1
+fi
+grep -q 'no signed session_snapshot record unsigned' "${TMP_DIR}/restore-unsigned.err"
+[[ "$(cat "${FORK_CLONE}/tracked.txt")" == "after" ]]
+
+# The primary help synopsis and the manual list fork and restore.
+"${ROOT_DIR}/scripts/workcell" --help 2>&1 | grep -Fq 'export|verify|fork|restore> [options]'
+grep -Fq 'export|verify|fork|restore\fR' "${ROOT_DIR}/man/workcell.1"
 
 missing_output="$(
   "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true

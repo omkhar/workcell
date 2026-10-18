@@ -87,6 +87,13 @@ The GitHub Releases page contains old details that are not in this file.
 - `session fork` replays the egress proxy setting of the parent from its
   signed launch record. Before, a child of an `--egress-proxy` parent ran
   without the proxy.
+- `session restore --id SESSION_ID --snapshot SNAPSHOT_ID` puts a snapshot
+  back into the worktree of a session. The session must be stopped and
+  isolated. Restore reads the snapshot commit only from signed audit records,
+  never from a store ref.
+  It first snapshots the worktree and prints that id as
+  `pre_restore_snapshot_id`. It appends a `session_restore` audit record and
+  signs the audit head again.
 
 ### Security hardening
 

@@ -53,6 +53,14 @@ the store path still names the opened directory. It fsyncs the new objects, the
 ref, and each directory that gained an entry. It does this before it appends the
 audit record.
 
+`workcell session restore` fetches a snapshot by the object id in the signed
+`session_snapshot` record, never by a store ref. A store ref that names
+another commit does not change what restore applies. A commit that the store
+does not hold, or a commit with another tree or parent, stops the restore.
+`TestRestoreApplyUsesSignedObjectIDNotStoreRef` in
+`internal/sessionctl/restore_test.go` moves the ref and checks this. Restore
+runs git in a scratch directory, so it does not read the session clone `.git`.
+
 Snapshots stay until the operator removes them. Workcell does not
 prune the store. The command `workcell session delete` does not remove
 snapshots. The manual page gives the removal commands.

@@ -19,6 +19,7 @@ const usageText = `Usage: workcell session start [launch-options] [-- provider-a
        workcell session verify --id SESSION_ID
        workcell session snapshot --id SESSION_ID
        workcell session fork --id SESSION_ID [--snapshot SNAPSHOT_ID] --count N
+       workcell session restore --id SESSION_ID --snapshot SNAPSHOT_ID
 
 Commands:
   start
@@ -89,6 +90,10 @@ Commands:
     --allow-arbitrary-command --ack-arbitrary-command=YYYY-MM-DD -- COMMAND...
                               Required when the parent ran an arbitrary command
 
+  restore
+    --id SESSION_ID           Restore the worktree of a stopped isolated session
+    --snapshot SNAPSHOT_ID    The signed snapshot to apply
+
 Notes:
   - session commands run on the host and do not start the Workcell runtime.
   - records are durable host-side metadata for detached, completed, or aborted launches.
@@ -117,6 +122,10 @@ Notes:
   - ` + "`" + `session fork` + "`" + ` reads the snapshot commit and the parent launch settings
     only from signed audit records, never from a store ref. Each child records
     parent_session_id, and the parent gets one session_fork audit record.
+  - ` + "`" + `session restore` + "`" + ` works only on a stopped isolated session. It reads the
+    snapshot commit only from signed audit records, never from a store ref. It
+    snapshots the worktree first, then makes the worktree match the snapshot
+    tree. It does not change the git history, branch, or index of the clone.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.

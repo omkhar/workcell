@@ -30,6 +30,7 @@ func TestResolveSessionSubcommandAcceptsCanonical(t *testing.T) {
 		"verify",
 		"snapshot",
 		"fork",
+		"restore",
 		"monitor",
 	}
 	for _, name := range cases {
@@ -98,6 +99,7 @@ func TestDispatchMainEmitsCanonicalRoute(t *testing.T) {
 		"verify":   "subcommand=verify\n",
 		"snapshot": "subcommand=snapshot\n",
 		"fork":     "subcommand=fork\n",
+		"restore":  "subcommand=restore\n",
 		"monitor":  "subcommand=monitor\n",
 	}
 	for name, want := range cases {
