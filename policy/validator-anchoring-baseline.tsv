@@ -428,7 +428,7 @@ internal/testkit	TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient	3d
 internal/testkit	TestUninstallKeepsTrustedDockerSandboxOfRunningProcess	5a401a06	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUninstallRemovesWorkcellStateWithoutRequiringGo	daddad46,e22b4b4d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes	101eaa3c,675325b2,b4243935	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump	23e0dda8,44dfc196,7bce7e06,8a0a3452,938331d3,ab9cd680,bed2078b,d1c6b473,df17d8ee,ed39895b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump	0f571bf5,14849cdd,23e0dda8,44dfc196,7bce7e06,8a0a3452,8e07eb7f,938331d3,958a3d7c,d1c6b473,ed39895b	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	edeb6dc4	unreviewed debt in a test: review the subject, then port or justify

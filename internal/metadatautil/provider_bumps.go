@@ -331,7 +331,7 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	if err != nil {
 		return nil, err
 	}
-	geminiSelection, err := selectGeminiStable(geminiCurrent, cutoff, sources, client)
+	geminiSelection, err := selectNPMStable(sources.GeminiRegistryURL, geminiCurrent, cutoff, client)
 	if err != nil {
 		return nil, err
 	}
@@ -748,8 +748,10 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 	return currentSelection(time.Time{}), nil
 }
 
-func selectGeminiStable(currentVersion string, cutoff time.Time, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	candidates, _, err := stableCandidatesFromRegistry(sources.GeminiRegistryURL, cutoff, "", client)
+// selectNPMStable selects the newest stable release of the npm package at
+// registryURL that is older than cutoff.
+func selectNPMStable(registryURL, currentVersion string, cutoff time.Time, client *http.Client) (ProviderBumpSelection, error) {
+	candidates, _, err := stableCandidatesFromRegistry(registryURL, cutoff, "", client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}

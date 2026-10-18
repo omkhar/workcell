@@ -1758,22 +1758,24 @@ func TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump(t
 	prepare := strings.Index(script, "prepare-codex-subcommand-fixture")
 	apply := strings.Index(script, "apply-provider-bump-plan")
 	publishDockerfile := strings.Index(script, `mv -f -- "${dockerfile_candidate}" "${DOCKERFILE_PATH}"`)
-	publishPackageJSON := strings.Index(script, `mv -f -- "${providers_candidate_dir}/package.json" "${PROVIDERS_PACKAGE_JSON_PATH}"`)
-	publishPackageLock := strings.Index(script, `mv -f -- "${providers_candidate_dir}/package-lock.json" "${PROVIDERS_DIR}/package-lock.json"`)
+	// publish_provider_packages moves the lockfile before the package.json pin.
+	publishPackageJSON := strings.Index(script, `mv -f -- "${candidate_dir}/package.json" "${target_dir}/package.json"`)
+	publishPackageLock := strings.Index(script, `mv -f -- "${candidate_dir}/package-lock.json" "${target_dir}/package-lock.json"`)
+	publishPackages := strings.Index(script, `publish_provider_packages "${providers_candidate_dir}" "${PROVIDERS_DIR}"`)
 	publishCodexFixture := strings.Index(script, `mv -f -- "${codex_fixture_candidate}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}"`)
-	lockfile := strings.Index(script, `"${NPM_BIN}" install --package-lock-only`)
+	lockfile := strings.Index(script, `refresh_provider_lockfile "${providers_candidate_dir}"`)
 	verify := strings.LastIndex(script, "\nverify_provider_releases\n")
 	restamp := strings.Index(script, `workcell-citools flag-inventory restamp "${ROOT_DIR}"`)
-	if restamp < 0 || restamp < publishDockerfile || restamp < publishPackageJSON || restamp > verify {
+	if restamp < 0 || restamp < publishDockerfile || restamp < publishPackages || restamp > verify {
 		t.Fatalf("%s must restamp the flag fixtures after it publishes the pins and before it verifies releases", path)
 	}
-	if prepare < 0 || apply < 0 || publishDockerfile < 0 || publishPackageJSON < 0 || publishPackageLock < 0 || publishCodexFixture < 0 || lockfile < 0 || verify < 0 {
+	if prepare < 0 || apply < 0 || publishDockerfile < 0 || publishPackageJSON < 0 || publishPackageLock < 0 || publishPackages < 0 || publishCodexFixture < 0 || lockfile < 0 || verify < 0 {
 		t.Fatalf("%s must prepare, apply, publish, refresh the lockfile, and verify the Codex fixture update", path)
 	}
 	if !(prepare < apply && apply < lockfile &&
-		lockfile < publishDockerfile && lockfile < publishPackageJSON && lockfile < publishPackageLock && lockfile < publishCodexFixture &&
+		lockfile < publishDockerfile && lockfile < publishPackages && lockfile < publishCodexFixture &&
 		publishPackageLock < publishPackageJSON && publishCodexFixture < publishDockerfile &&
-		publishDockerfile < verify && publishPackageJSON < verify && publishPackageLock < verify && publishCodexFixture < verify) {
+		publishDockerfile < verify && publishPackages < verify && publishCodexFixture < verify) {
 		t.Fatalf("%s must stage every fallible refresh and publish dependent artifacts before their plan-driving pins", path)
 	}
 	for _, want := range []string{
@@ -1781,15 +1783,17 @@ func TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump(t
 		`codex_fixture_candidate="$(mktemp "${CODEX_SUBCOMMAND_FIXTURE_PATH}.XXXXXX")"`,
 		`[[ -z "${codex_fixture_candidate}" ]] || rm -f "${codex_fixture_candidate}"`,
 		`[[ -z "${dockerfile_candidate}" ]] || rm -f "${dockerfile_candidate}"`,
-		`"${PROVIDERS_DIR}"/.workcell-provider-bump.*) rm -rf -- "${providers_candidate_dir}" ;;`,
+		`"${source_dir}"/.workcell-provider-bump.*) rm -rf -- "${candidate_dir}" ;;`,
+		`clean_provider_candidate "${providers_candidate_dir}" "${PROVIDERS_DIR}"`,
 		`dockerfile_candidate="$(mktemp "${DOCKERFILE_PATH}.XXXXXX")"`,
 		`providers_candidate_dir="$(mktemp -d "${PROVIDERS_DIR}/.workcell-provider-bump.XXXXXX")"`,
 		`"${dockerfile_candidate}"`,
 		`"${providers_candidate_dir}/package.json"`,
-		`cd "${providers_candidate_dir}"`,
-		`if [[ ! -f "${providers_candidate_dir}/package.json" || -L "${providers_candidate_dir}/package.json" ||`,
-		`! -f "${providers_candidate_dir}/package-lock.json" || -L "${providers_candidate_dir}/package-lock.json" ]]`,
-		`unexpected_provider_candidate="$(find "${providers_candidate_dir}"`,
+		`cd "${candidate_dir}"`,
+		`"${NPM_BIN}" install --package-lock-only --ignore-scripts --no-audit --no-fund`,
+		`if [[ ! -f "${candidate_dir}/package.json" || -L "${candidate_dir}/package.json" ||`,
+		`! -f "${candidate_dir}/package-lock.json" || -L "${candidate_dir}/package-lock.json" ]]`,
+		`unexpected_provider_candidate="$(find "${candidate_dir}"`,
 		"verify_provider_releases() {",
 		"  verify_provider_releases\n  print_summary\n  echo \"No eligible stable provider pin updates found.\"",
 	} {

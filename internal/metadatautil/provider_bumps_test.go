@@ -2543,9 +2543,9 @@ func TestProviderResolversNeverDowngradeBelowCurrentPin(t *testing.T) {
 		return []ProviderBumpSkippedRelease{{Version: version, PublishedAt: "2026-09-20T00:00:00Z", Reason: "current-newer-than-cooled-candidate"}}
 	}
 
-	gemini, err := selectGeminiStable("0.62.0", cutoff, sources, server.Client())
+	gemini, err := selectNPMStable(sources.GeminiRegistryURL, "0.62.0", cutoff, server.Client())
 	if err != nil {
-		t.Fatalf("selectGeminiStable() error = %v", err)
+		t.Fatalf("selectNPMStable() error = %v", err)
 	}
 	if gemini.TargetVersion != "0.62.0" || gemini.Changed || !reflect.DeepEqual(gemini.SkippedReleases, held("0.61.0")) {
 		t.Fatalf("Gemini selection = %#v, want held at 0.62.0", gemini)
@@ -2561,9 +2561,9 @@ func TestProviderResolversNeverDowngradeBelowCurrentPin(t *testing.T) {
 
 	// Negative control: an older current pin still moves forward to the
 	// cooled-off release and records no hold.
-	gemini, err = selectGeminiStable("0.60.0", cutoff, sources, server.Client())
+	gemini, err = selectNPMStable(sources.GeminiRegistryURL, "0.60.0", cutoff, server.Client())
 	if err != nil {
-		t.Fatalf("selectGeminiStable() error = %v", err)
+		t.Fatalf("selectNPMStable() error = %v", err)
 	}
 	if gemini.TargetVersion != "0.61.0" || !gemini.Changed || len(gemini.SkippedReleases) != 0 {
 		t.Fatalf("Gemini selection = %#v, want bump to 0.61.0", gemini)
