@@ -255,23 +255,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /opt/workcell/providers
 
 COPY runtime/container/providers /opt/workcell/providers
+COPY --chmod=0555 runtime/container/install-provider-packages.sh /usr/local/bin/install-provider-packages.sh
 
-RUN install_provider_packages() { \
-       npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
-       && return 0; \
-     } \
-  && for attempt in 1 2 3; do \
-       rm -rf /opt/workcell/providers/node_modules; \
-       if install_provider_packages; then \
-         break; \
-       fi; \
-       if [[ "${attempt}" -eq 3 ]]; then \
-         exit 1; \
-       fi; \
-       npm cache clean --force >/dev/null 2>&1 || true; \
-       sleep "$((attempt * 5))"; \
-     done \
-  && find /opt/workcell/providers -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
+RUN install-provider-packages.sh /opt/workcell/providers
 
 FROM runtime-base AS runtime-builder
 

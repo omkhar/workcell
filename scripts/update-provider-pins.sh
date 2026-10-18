@@ -202,17 +202,66 @@ plan_path="$(mktemp "${TMPDIR:-/tmp}/workcell-provider-bump-plan.XXXXXX.json")"
 codex_fixture_candidate=""
 dockerfile_candidate=""
 providers_candidate_dir=""
+
+# A provider package directory stages its package.json and package-lock.json in
+# a candidate directory below itself. The candidate refreshes the lockfile, and
+# it replaces the pinned files only after every fallible step passes.
+stage_provider_packages() {
+  local source_dir="$1"
+  local candidate_dir="$2"
+
+  cp -p -- "${source_dir}/package.json" "${candidate_dir}/package.json"
+  cp -p -- "${source_dir}/package-lock.json" "${candidate_dir}/package-lock.json"
+}
+
+refresh_provider_lockfile() {
+  local candidate_dir="$1"
+  local unexpected_provider_candidate=""
+
+  (
+    cd "${candidate_dir}"
+    "${NPM_BIN}" install --package-lock-only --ignore-scripts --no-audit --no-fund
+  )
+  if [[ ! -f "${candidate_dir}/package.json" || -L "${candidate_dir}/package.json" ||
+    ! -f "${candidate_dir}/package-lock.json" || -L "${candidate_dir}/package-lock.json" ]]; then
+    echo "Provider bump staging must produce regular package.json and package-lock.json files." >&2
+    exit 1
+  fi
+  unexpected_provider_candidate="$(find "${candidate_dir}" -mindepth 1 -maxdepth 1 \
+    ! -name package.json ! -name package-lock.json -print -quit)"
+  if [[ -n "${unexpected_provider_candidate}" ]]; then
+    echo "Provider bump staging produced an unexpected path: ${unexpected_provider_candidate}" >&2
+    exit 1
+  fi
+}
+
+# The lockfile goes first, so a package.json pin never names an unlocked version.
+publish_provider_packages() {
+  local candidate_dir="$1"
+  local target_dir="$2"
+
+  mv -f -- "${candidate_dir}/package-lock.json" "${target_dir}/package-lock.json"
+  mv -f -- "${candidate_dir}/package.json" "${target_dir}/package.json"
+  rmdir -- "${candidate_dir}"
+}
+
+clean_provider_candidate() {
+  local candidate_dir="$1"
+  local source_dir="$2"
+
+  [[ -n "${candidate_dir}" ]] || return 0
+  case "${candidate_dir}" in
+    "${source_dir}"/.workcell-provider-bump.*) rm -rf -- "${candidate_dir}" ;;
+    *) echo "Refusing to clean unexpected provider bump candidate path: ${candidate_dir}" >&2 ;;
+  esac
+}
+
 cleanup_apply() {
   cleanup
   rm -f "${plan_path}"
   [[ -z "${codex_fixture_candidate}" ]] || rm -f "${codex_fixture_candidate}"
   [[ -z "${dockerfile_candidate}" ]] || rm -f "${dockerfile_candidate}"
-  if [[ -n "${providers_candidate_dir}" ]]; then
-    case "${providers_candidate_dir}" in
-      "${PROVIDERS_DIR}"/.workcell-provider-bump.*) rm -rf -- "${providers_candidate_dir}" ;;
-      *) echo "Refusing to clean unexpected provider bump candidate path: ${providers_candidate_dir}" >&2 ;;
-    esac
-  fi
+  clean_provider_candidate "${providers_candidate_dir}" "${PROVIDERS_DIR}"
 }
 trap cleanup_apply EXIT
 printf '%s\n' "${plan_json}" >"${plan_path}"
@@ -232,8 +281,7 @@ fi
 dockerfile_candidate="$(mktemp "${DOCKERFILE_PATH}.XXXXXX")"
 cp -p -- "${DOCKERFILE_PATH}" "${dockerfile_candidate}"
 providers_candidate_dir="$(mktemp -d "${PROVIDERS_DIR}/.workcell-provider-bump.XXXXXX")"
-cp -p -- "${PROVIDERS_DIR}/package.json" "${providers_candidate_dir}/package.json"
-cp -p -- "${PROVIDERS_DIR}/package-lock.json" "${providers_candidate_dir}/package-lock.json"
+stage_provider_packages "${PROVIDERS_DIR}" "${providers_candidate_dir}"
 
 (
   cd "${ROOT_DIR}"
@@ -244,26 +292,9 @@ cp -p -- "${PROVIDERS_DIR}/package-lock.json" "${providers_candidate_dir}/packag
     "${providers_candidate_dir}/package.json"
 )
 
-(
-  cd "${providers_candidate_dir}"
-  "${NPM_BIN}" install --package-lock-only --ignore-scripts --no-audit --no-fund
-)
+refresh_provider_lockfile "${providers_candidate_dir}"
 
-if [[ ! -f "${providers_candidate_dir}/package.json" || -L "${providers_candidate_dir}/package.json" ||
-  ! -f "${providers_candidate_dir}/package-lock.json" || -L "${providers_candidate_dir}/package-lock.json" ]]; then
-  echo "Provider bump staging must produce regular package.json and package-lock.json files." >&2
-  exit 1
-fi
-unexpected_provider_candidate="$(find "${providers_candidate_dir}" -mindepth 1 -maxdepth 1 \
-  ! -name package.json ! -name package-lock.json -print -quit)"
-if [[ -n "${unexpected_provider_candidate}" ]]; then
-  echo "Provider bump staging produced an unexpected path: ${unexpected_provider_candidate}" >&2
-  exit 1
-fi
-
-mv -f -- "${providers_candidate_dir}/package-lock.json" "${PROVIDERS_DIR}/package-lock.json"
-mv -f -- "${providers_candidate_dir}/package.json" "${PROVIDERS_PACKAGE_JSON_PATH}"
-rmdir -- "${providers_candidate_dir}"
+publish_provider_packages "${providers_candidate_dir}" "${PROVIDERS_DIR}"
 providers_candidate_dir=""
 if [[ -n "${codex_fixture_candidate}" ]]; then
   mv -f -- "${codex_fixture_candidate}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}"
