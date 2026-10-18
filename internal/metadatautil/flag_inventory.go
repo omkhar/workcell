@@ -25,16 +25,20 @@ import (
 
 var (
 	// An option line starts with at most six spaces of indentation, so the
-	// deeper-indented description text that names other flags is not read.
-	helpOptionLinePattern = regexp.MustCompile(`^ {1,6}(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*(?:, *-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)*)(?:[ =<\[]|$)`)
+	// deeper-indented description text that names other flags is not read. A
+	// wrapped description line at that depth can start with a flag and end a
+	// sentence ("      --amp-env."); it is read as that flag, never dropped.
+	helpOptionLinePattern = regexp.MustCompile(`^ {1,6}(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*(?:, *-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)*)(?:[ =<\[]|\.?$)`)
 	// helpOptionLikePattern matches a line that starts like an option line, as
 	// "  -?", "--x" or "  --[no-]color" do. One that helpOptionLinePattern does not
 	// match uses syntax the parser does not read, so the inventory fails instead
 	// of dropping or truncating a name.
 	helpOptionLikePattern = regexp.MustCompile(`^ {0,6}-{1,2}\S`)
-	// helpAliasesPattern matches the clap and yargs alias list of a command.
-	helpAliasesPattern = regexp.MustCompile(`\[aliases: ([a-z][a-z0-9, -]*)\]`)
-	flagFixtureStampRE = regexp.MustCompile(`(?m)^# ([a-z][a-z0-9-]*)-version: ([0-9]+\.[0-9]+\.[0-9]+)$`)
+	// helpAliasesPattern matches the clap and yargs alias list of a command,
+	// and the "[alias: ...]" list that amp prints on the command line.
+	helpAliasesPattern = regexp.MustCompile(`\[alias(?:es)?: ([a-z][a-z0-9, -]*)\]`)
+	// The stamp is a stable X.Y.Z pin or a build-stamped uncertified npm pin.
+	flagFixtureStampRE = regexp.MustCompile(`(?m)^# ([a-z][a-z0-9-]*)-version: ([0-9]+\.[0-9]+\.[0-9]+|` + buildStampedVersionExpr + `)$`)
 )
 
 // FlagFixturePath is the checked-in inventory of one adapter.
@@ -97,13 +101,17 @@ func ParseHelpCommands(help, binary string) ([]string, error) {
 			case match != nil && match[1] != binary:
 				commands = append(commands, strings.Split(match[1], "|")...)
 			}
-			// clap and yargs print aliases at the end of the first or a later line.
-			if match := helpAliasesPattern.FindStringSubmatch(line); match != nil {
-				for _, alias := range strings.Split(match[1], ",") {
+			// clap and yargs print aliases at the end of the first or a later
+			// line. amp prints them on a top-level command line only; its deeper
+			// lines are subcommands, whose aliases are not top-level words.
+			if strings.Contains(line, "[aliases:") || match != nil && strings.Contains(line, "[alias:") {
+				aliases := helpAliasesPattern.FindStringSubmatch(line)
+				if aliases == nil {
+					return nil, fmt.Errorf("help command line %q has an alias list the inventory does not read", line)
+				}
+				for _, alias := range strings.Split(aliases[1], ",") {
 					commands = append(commands, strings.TrimSpace(alias))
 				}
-			} else if strings.Contains(line, "[aliases:") {
-				return nil, fmt.Errorf("help command line %q has an alias list the inventory does not read", line)
 			}
 		}
 	}

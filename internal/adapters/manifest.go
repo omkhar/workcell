@@ -76,8 +76,9 @@ var (
 	// so each must be a plain token.
 	credentialKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	endpointPattern      = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?:[0-9]{1,5}$`)
-	// FlagPattern is one option token as CLI help prints it: -x or --long-name.
-	FlagPattern       = regexp.MustCompile(`^(-[A-Za-z0-9]|--[A-Za-z0-9][A-Za-z0-9-]*)$`)
+	// FlagPattern is one option token as CLI help prints it: -x, a two-letter
+	// short option such as amp's -ox, or --long-name.
+	FlagPattern       = regexp.MustCompile(`^(-[A-Za-z0-9]{1,2}|--[A-Za-z0-9][A-Za-z0-9-]*)$`)
 	subcommandPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 

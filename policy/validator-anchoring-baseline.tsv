@@ -36,7 +36,7 @@ internal/metadatautil	ExtractDockerfileArg	828b8b57,e7295a85,fb388a05	debt: rege
 internal/metadatautil	HadolintManifestChecksum	40acb559,b65cec14	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	IsSafePullRequestTargetWorkflow	4db683f1,f9acf37a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	LaneScripts	055d0553,333ec69d,5b763629	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	ParseHelpCommands	1254e754,14bf0875,a1d90014,c0c9634c,c87d28bb	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ParseHelpCommands	1254e754,14bf0875,a1d90014,c0c9634c,c87d28bb,fb82ec77	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
@@ -91,6 +91,7 @@ internal/metadatautil	assignmentPrefix	28c9a340	the match reads the parsed argv 
 internal/metadatautil	assignmentRun	64f729a5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	assignsInRun	5cfb8c8f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	assignsWord	db8fa01d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	buildStampedVersionPattern	f79ba133	the pattern checks one npm version string, not file content
 internal/metadatautil	canonicalImageRef	04006e89,2e34cec2,e738c6c0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	carriesParen	1c5fb76f,76e37fa3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	checkGuardedFunctions	1f7ce1fa,21a76735	unreviewed debt: review the subject, then port or justify
@@ -124,6 +125,7 @@ internal/metadatautil	extractInstallBlocks	d104be03	unreviewed debt: review the 
 internal/metadatautil	fetchCodexSubcommands	ce25dff3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	fileExemptsPortability	6c6641e7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	filterVerificationPaths	3c90a3bd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	flagFixtureStampRE	1eb67864	the pattern reads the one version stamp line of a reviewed flag fixture
 internal/metadatautil	flattenSubstitutions	06747006,0931674b,4c46065b,7a000647,7ba95feb,be0aacca	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	flattenedCommands	0639a974,1643c766,22efc51f,3fa18951,571812cf,69ddf134,7da37412,93987f5c,c000ee9c,c246b162,e72fa7b5,e72fa7b5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	forwards	b157cc56	the pattern tests whether one parsed command word is a positional parameter or an array expansion

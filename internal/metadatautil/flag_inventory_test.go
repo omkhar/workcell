@@ -32,11 +32,15 @@ func TestParseHelpFlags(t *testing.T) {
 		"  -C <directory>",
 		"  --first <value> --second <value>",
 		"  -u --unsafe",
+		// amp: a two-letter short option, and a wrapped description line that
+		// starts with a flag
+		"  -ox, --orb-execute",
+		"      --amp-env.",
 		"Commands:",
 		"  exec              Run Codex non-interactively [aliases: e]",
 		"  $ copilot -p \"Fix the bug\"",
 	}, "\n")
-	want := []string{"--allowed-tools", "--allowedTools", "--config", "--debug", "--enable", "--first", "--second", "--unsafe", "--yes", "--yolo", "-C", "-c", "-d", "-u", "-y"}
+	want := []string{"--allowed-tools", "--allowedTools", "--amp-env", "--config", "--debug", "--enable", "--first", "--orb-execute", "--second", "--unsafe", "--yes", "--yolo", "-C", "-c", "-d", "-ox", "-u", "-y"}
 	if got, err := ParseHelpFlags(help); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("ParseHelpFlags() = %q, %v, want %q", got, err, want)
 	}
@@ -56,7 +60,9 @@ func TestParseHelpCommands(t *testing.T) {
 		"yargs":     {"Commands:\n  tool mcp   Manage\n  tool skills <command>  Manage  [aliases: skill, skillz]\n  tool [query..]   Launch  [default]\n\nOptions:\n  -d\n", "mcp skills skill skillz"},
 		"clap":      {"Commands:\n  exec  Run [aliases: e]\n  apply  Apply the diff to your\n         working tree [aliases: a]\n  help  Print\n\nOptions:\n", "exec e apply a help"},
 		"later":     {"Options:\n  -h\nCommands:\n  exec  Run\nOptions:\nCommands:\n  late  Run\n", "exec"},
-		"none":      {"Options:\n  -h\n", ""},
+		// A subcommand alias on a deeper line is not a top-level word.
+		"amp":  {"Commands:\n  threads   [alias: t, thread] Manage\n    new   [alias: n] Create\n  update   [alias: up] Update\n\nOptions:\n", "threads t thread update up"},
+		"none": {"Options:\n  -h\n", ""},
 	}
 	for name, c := range cases {
 		if got, err := ParseHelpCommands(c.help, "tool"); err != nil || strings.Join(got, " ") != c.want {
@@ -65,6 +71,9 @@ func TestParseHelpCommands(t *testing.T) {
 	}
 	// An alias list the parser cannot read fails.
 	if got, err := ParseHelpCommands("Commands:\n  exec  Run [aliases: new_cmd]\n", "tool"); err == nil {
+		t.Errorf("ParseHelpCommands() = %q, want an error", got)
+	}
+	if got, err := ParseHelpCommands("Commands:\n  exec  [alias: new_cmd] Run\n", "tool"); err == nil {
 		t.Errorf("ParseHelpCommands() = %q, want an error", got)
 	}
 	// A command line with a name the parser cannot read fails.
@@ -331,5 +340,17 @@ deny = ["--auto"]
 	mustWriteText(t, FlagFixturePath(root, "undemo"), "# undemo-version: 4.5.6\n--auto\n--model\n--port\n")
 	if err := CheckFlagInventory(root); err == nil || !strings.Contains(err.Error(), "flag --port is not classified") {
 		t.Fatalf("CheckFlagInventory() = %v, want unclassified --port", err)
+	}
+	// A build-stamped pin, as amp publishes, stamps the fixture too.
+	mustWriteText(t, filepath.Join(root, "runtime", "container", "providers-uncertified", "package.json"), `{"dependencies":{"undemo-cli":"0.0.1792166439-g8235ca"}}`)
+	mustWriteText(t, FlagFixturePath(root, "undemo"), "# undemo-version: 0.0.1792152053-g57ff9b\n--auto\n--model\n")
+	if err := CheckFlagInventory(root); err == nil || !strings.Contains(err.Error(), "stamp 0.0.1792152053-g57ff9b does not match the undemo pin 0.0.1792166439-g8235ca") {
+		t.Fatalf("CheckFlagInventory() = %v, want the stale build-stamped undemo stamp", err)
+	}
+	if err := RestampFlagFixtures(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFlagInventory(root); err != nil {
+		t.Fatalf("CheckFlagInventory() after the build-stamped restamp = %v, want nil", err)
 	}
 }
