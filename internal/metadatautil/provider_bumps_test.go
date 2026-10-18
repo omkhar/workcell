@@ -2568,7 +2568,7 @@ func TestProviderResolversNeverDowngradeBelowCurrentPin(t *testing.T) {
 		return []ProviderBumpSkippedRelease{{Version: version, PublishedAt: "2026-09-20T00:00:00Z", Reason: "current-newer-than-cooled-candidate"}}
 	}
 
-	gemini, err := selectNPMStable(sources.GeminiRegistryURL, "0.62.0", cutoff, server.Client())
+	gemini, err := selectNPMStable(sources.GeminiRegistryURL, "0.62.0", cutoff, parseStableVersion, server.Client())
 	if err != nil {
 		t.Fatalf("selectNPMStable() error = %v", err)
 	}
@@ -2586,7 +2586,7 @@ func TestProviderResolversNeverDowngradeBelowCurrentPin(t *testing.T) {
 
 	// Negative control: an older current pin still moves forward to the
 	// cooled-off release and records no hold.
-	gemini, err = selectNPMStable(sources.GeminiRegistryURL, "0.60.0", cutoff, server.Client())
+	gemini, err = selectNPMStable(sources.GeminiRegistryURL, "0.60.0", cutoff, parseStableVersion, server.Client())
 	if err != nil {
 		t.Fatalf("selectNPMStable() error = %v", err)
 	}
@@ -2605,7 +2605,7 @@ func TestStableCandidatesFromRegistryStreamsLargePackuments(t *testing.T) {
 		_, _ = io.WriteString(w, `{"name":"pkg","versions":{"1.2.3":{"readme":"`+filler+`","files":[[1,{"a":[]}]]}},"dist-tags":{"latest":"1.2.3"},"time":{"created":"2026-01-01T00:00:00Z","1.2.3":"2026-01-02T00:00:00Z"}}`)
 	}))
 	defer server.Close()
-	candidates, _, err := stableCandidatesFromRegistry(server.URL, time.Time{}, "", server.Client())
+	candidates, _, err := stableCandidatesFromRegistry(server.URL, time.Time{}, "", parseStableVersion, server.Client())
 	if err != nil {
 		t.Fatalf("stableCandidatesFromRegistry() error = %v", err)
 	}

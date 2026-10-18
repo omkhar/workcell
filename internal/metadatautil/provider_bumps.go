@@ -342,7 +342,7 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	if err != nil {
 		return nil, err
 	}
-	geminiSelection, err := selectNPMStable(sources.GeminiRegistryURL, geminiCurrent, cutoff, client)
+	geminiSelection, err := selectNPMStable(sources.GeminiRegistryURL, geminiCurrent, cutoff, parseStableVersion, client)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +387,7 @@ func planUncertifiedNPMBumps(packageJSONPath string, cutoff time.Time, registryU
 			return nil, fmt.Errorf("%s requires a stable %s pin, found %q", packageJSONPath, name, current)
 		}
 		// A scoped name keeps its @ and escapes its slash, as the registry expects.
-		selection, err := selectNPMStable(registryURL+"/"+strings.Replace(name, "/", "%2f", 1), current, cutoff, client)
+		selection, err := selectNPMStable(registryURL+"/"+strings.Replace(name, "/", "%2f", 1), current, cutoff, parseStableVersion, client)
 		if err != nil {
 			return nil, err
 		}
@@ -594,7 +594,7 @@ func extractGeminiVersion(providersPackageJSONPath string) (string, error) {
 }
 
 func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	candidates, skipped, err := stableCandidatesFromRegistry(sources.CodexRegistryURL, cutoff, maxVersion, client)
+	candidates, skipped, err := stableCandidatesFromRegistry(sources.CodexRegistryURL, cutoff, maxVersion, parseStableVersion, client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
@@ -839,8 +839,8 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 
 // selectNPMStable selects the newest stable release of the npm package at
 // registryURL that is older than cutoff.
-func selectNPMStable(registryURL, currentVersion string, cutoff time.Time, client *http.Client) (ProviderBumpSelection, error) {
-	candidates, _, err := stableCandidatesFromRegistry(registryURL, cutoff, "", client)
+func selectNPMStable(registryURL, currentVersion string, cutoff time.Time, parse versionParser, client *http.Client) (ProviderBumpSelection, error) {
+	candidates, _, err := stableCandidatesFromRegistry(registryURL, cutoff, "", parse, client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
@@ -852,7 +852,7 @@ func selectNPMStable(registryURL, currentVersion string, cutoff time.Time, clien
 		}, nil
 	}
 	newest := candidates[0]
-	if current, ok := parseStableVersion(currentVersion); ok && compareStableVersions(newest, current) < 0 {
+	if current, ok := parse(currentVersion); ok && compareStableVersions(newest, current) < 0 {
 		return keepNewerCurrentPin(currentVersion, newest, nil), nil
 	}
 	return ProviderBumpSelection{
@@ -918,7 +918,7 @@ func claudeSelectionForCandidate(candidate stableVersion, currentVersion string,
 }
 
 func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, approvedVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	candidates, _, err := stableCandidatesFromRegistry(sources.ClaudeRegistryURL, time.Time{}, maxVersion, client)
+	candidates, _, err := stableCandidatesFromRegistry(sources.ClaudeRegistryURL, time.Time{}, maxVersion, parseStableVersion, client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
@@ -986,13 +986,15 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 	}, nil
 }
 
-func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
+// stableCandidatesFromRegistry lists the registry releases that parse names
+// as exact versions, up to dist-tags.latest and published by cutoff.
+func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, parse versionParser, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
 	var metadata npmRegistryMetadata
 	if _, err := fetchDecoded(client, registryURL, providerBumpMaxNPMStreamBytes, func(body io.Reader) error { return decodeNPMRegistryMetadata(body, &metadata) }); err != nil {
 		return nil, nil, err
 	}
 	latestRaw := metadata.DistTags["latest"]
-	latestVersion, ok := parseStableVersion(latestRaw)
+	latestVersion, ok := parse(latestRaw)
 	if !ok {
 		return nil, nil, fmt.Errorf("%s dist-tags.latest must resolve to a stable version, found %q", registryURL, latestRaw)
 	}
@@ -1003,7 +1005,7 @@ func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersi
 	candidates := make([]stableVersion, 0, len(metadata.Time))
 	skipped := make([]ProviderBumpSkippedRelease, 0)
 	for rawVersion, publishedRaw := range metadata.Time {
-		version, ok := parseStableVersion(rawVersion)
+		version, ok := parse(rawVersion)
 		if !ok {
 			continue
 		}
@@ -1179,6 +1181,9 @@ func nextLinkURL(linkHeader string) string {
 	}
 	return ""
 }
+
+// versionParser parses one exact version form of a provider pin.
+type versionParser func(raw string) (stableVersion, bool)
 
 func parseStableVersion(raw string) (stableVersion, bool) {
 	if !stableVersionPattern.MatchString(raw) {
