@@ -17,8 +17,14 @@ The GitHub Releases page contains old details that are not in this file.
 - Workcell passes an option of an uncertified adapter only when the manifest
   `[flags]` `allow` list has it and `deny` does not. A word that
   names one of `[flags]` `other_commands` is refused (`reject_manifest_args`).
-  Other words, such as a prompt, pass. No shipped adapter is
-  uncertified yet. `--inspect` now prints `session_assurance_initial`.
+  Other words, such as a prompt, pass. `--inspect` now prints
+  `session_assurance_initial`.
+- `--agent opencode --allow-uncertified-agent` runs the OpenCode CLI
+  (`opencode-ai` 1.19.3 on npm), the first uncertified adapter. Its egress
+  allowlist is `opencode.ai:443`, and Workcell stages no OpenCode credential.
+  `runtime/container/providers-uncertified/` pins the CLI apart from the Tier 1
+  provider packages, and only the `runtime-uncertified` image installs it.
+  `scripts/update-provider-pins.sh` refreshes the pin after the cool-off.
 - `runtime/container/Dockerfile` ends with a `require-build-target` stage that
   fails, so each runtime image build names its target
   (`internal/metadatautil/apt_broker_build_test.go`).

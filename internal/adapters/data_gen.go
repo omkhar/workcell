@@ -114,7 +114,9 @@ var providers = []providerDefinition{
 		tables: providerTables{
 			credentialKeys:           []string{},
 			credentialContainerPaths: map[string]string{},
-			reservedTargets:          []string{},
+			reservedTargets: []string{
+				"/state/agent-home/.config/opencode",
+			},
 		},
 	},
 }

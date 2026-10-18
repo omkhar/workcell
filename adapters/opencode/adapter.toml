@@ -11,6 +11,11 @@ method = "npm"
 package = "opencode-ai"
 provenance = "scripts/verify-upstream-opencode-release.sh"
 
+# seed_opencode_home creates the OpenCode config directory, so an injection
+# policy may not stage a file there.
+[home]
+reserved_targets = ["/state/agent-home/.config/opencode"]
+
 # OpenCode Zen (opencode.ai) serves the default models. Workcell stages no
 # opencode credential.
 [egress]

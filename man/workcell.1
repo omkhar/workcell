@@ -175,6 +175,10 @@ The
 provider id is recognized only as a planned fail-closed adapter; current
 releases exit before runtime preparation because no matching runtime, auth
 handoff, or live certification evidence is shipped.
+The
+.B opencode
+provider id is an uncertified adapter. It runs only with
+.BR --allow-uncertified-agent .
 .TP
 .B --agent-autonomy yolo|prompt
 Select the provider approval posture. The default is
