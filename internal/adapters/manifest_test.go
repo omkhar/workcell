@@ -709,6 +709,7 @@ container_path = "/opt/demo.json"
 		"planned with fields":     strings.Replace(valid, `"certified"`, `"planned"`, 1),
 		"invalid tier":            strings.Replace(valid, `"certified"`, `"trusted"`, 1),
 		"missing binary":          strings.Replace(valid, "binary = \"demo\"\n", "", 1),
+		"binary with a quote":     strings.Replace(valid, `binary = "demo"`, `binary = "de\"mo"`, 1),
 		"invalid method":          strings.Replace(valid, `method = "binary"`, `method = "curl"`, 1),
 		"binary without arg":      strings.Replace(valid, "version_arg = \"DEMO_VERSION\"\n", "", 1),
 		"npm without package":     strings.Replace(valid, `method = "binary"`, `method = "npm"`, 1),

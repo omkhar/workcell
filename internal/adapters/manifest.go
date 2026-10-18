@@ -292,6 +292,10 @@ func validateManifest(m Manifest, schema int) error {
 	if m.Binary == "" {
 		return fmt.Errorf("binary is required for tier %q", m.Tier)
 	}
+	// The generated Rust launcher table embeds the binary as a string literal.
+	if !manifestIDPattern.MatchString(m.Binary) {
+		return fmt.Errorf("invalid binary %q", m.Binary)
+	}
 	if err := validateFlags(m.Flags); err != nil {
 		return err
 	}
