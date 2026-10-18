@@ -228,7 +228,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "0ee1327fae499db23c10b485b1caf915de98be87be609a0a7e9db66ea6ea0cda"
+      "sha256": "22924ee60d2a5538ece089975315bf61ed535455c578af93e8859e5417b1a805"
     },
     {
       "kind": "runtime-control-plane",

@@ -224,20 +224,16 @@ emit_session_assurance_notice
 
 if [[ $# -eq 0 ]]; then
   case "${AGENT_NAME}:${AGENT_UI}" in
-    codex:cli)
-      set -- codex
-      ;;
     codex:gui)
       set -- codex app-server
       ;;
-    claude:cli)
-      set -- claude
-      ;;
-    copilot:cli)
-      set -- copilot
-      ;;
-    gemini:cli)
-      set -- gemini
+    *:cli)
+      # Each supported adapter starts its own binary in the CLI.
+      if ! workcell_supported_agent "${AGENT_NAME}"; then
+        echo "Unsupported agent/ui combination: ${AGENT_NAME}:${AGENT_UI}" >&2
+        exit 2
+      fi
+      set -- "${AGENT_NAME}"
       ;;
     *)
       echo "Unsupported agent/ui combination: ${AGENT_NAME}:${AGENT_UI}" >&2
@@ -257,29 +253,10 @@ elif [[ "${WORKCELL_MODE}" == "development" ]] && [[ $# -gt 0 ]] && [[ "$1" != "
 else
   validate_command_args "${AGENT_NAME}" "$@"
 
-  if [[ $# -gt 0 ]]; then
-    case "${AGENT_NAME}" in
-      codex)
-        if [[ "$1" == "codex" ]]; then
-          set -- /usr/local/libexec/workcell/core/codex "${@:2}"
-        fi
-        ;;
-      claude)
-        if [[ "$1" == "claude" ]]; then
-          set -- /usr/local/libexec/workcell/core/claude "${@:2}"
-        fi
-        ;;
-      copilot)
-        if [[ "$1" == "copilot" ]]; then
-          set -- /usr/local/libexec/workcell/core/copilot "${@:2}"
-        fi
-        ;;
-      gemini)
-        if [[ "$1" == "gemini" ]]; then
-          set -- /usr/local/libexec/workcell/core/gemini "${@:2}"
-        fi
-        ;;
-    esac
+  # validate_command_args passed, so a provider command names AGENT_NAME, a
+  # supported adapter, and runs through its launcher link.
+  if [[ $# -gt 0 ]] && [[ "$1" == "${AGENT_NAME}" ]]; then
+    set -- "/usr/local/libexec/workcell/core/${AGENT_NAME}" "${@:2}"
   fi
 fi
 
