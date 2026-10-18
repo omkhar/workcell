@@ -7250,8 +7250,32 @@ fi
 grep -q 'provider_e2e_auth_status_cmd=.*--auth-status' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--prepare-only' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_prepare_only_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
+# provider_e2e_egress_count LABEL FILE decodes the labeled dry-run command,
+# which provider-e2e prints with printf %q, into its argument vector and
+# prints how many arguments are an --egress-proxy flag. A duplicate flag is
+# caught, and a path that only contains the text is not counted.
+provider_e2e_egress_count() {
+  local line=""
+  local count=0
+  local arg=""
+  local -a argv=()
+  line="$(sed -n "s/^provider_e2e_$1=//p" "$2")"
+  eval "argv=(${line})"
+  for arg in "${argv[@]}"; do
+    case "${arg}" in
+      --egress-proxy | --egress-proxy=*) count=$((count + 1)) ;;
+    esac
+  done
+  printf '%s\n' "${count}"
+}
 grep -q 'provider_e2e_prepare_only_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-codex.out
+if [[ "$(provider_e2e_egress_count prepare_only_cmd /tmp/workcell-provider-e2e-codex.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count probe_cmd /tmp/workcell-provider-e2e-codex.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count shell_probe_cmd /tmp/workcell-provider-e2e-codex.out)" != 0 ]]; then
+  echo "Expected exactly one --egress-proxy on each strict provider-e2e command and none on the shell probe" >&2
+  exit 1
+fi
 grep -q 'provider_e2e_shell_probe_cmd=.*--mode development' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_shell_probe_cmd=.*-- bash -lc' /tmp/workcell-provider-e2e-codex.out
@@ -7260,6 +7284,43 @@ grep -q 'provider_e2e_probe_cmd=.*--vm-memory 10 --vm-disk 80' /tmp/workcell-pro
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg exec' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*--agent-arg --json' /tmp/workcell-provider-e2e-codex.out
 grep -q 'provider_e2e_probe_cmd=.*WORKCELL_PROVIDER_E2E_OK' /tmp/workcell-provider-e2e-codex.out
+
+# An explicit policy keeps the launcher egress default unless --egress-proxy
+# is given; the option reaches only the strict steps, and a bad or repeated
+# value stops with status 2.
+PROVIDER_E2E_POLICY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-provider-e2e-policy.XXXXXX")"
+# The file name holds the flag text, so only a decoded argument count passes.
+PROVIDER_E2E_EXPLICIT_POLICY="${PROVIDER_E2E_POLICY_DIR}/--egress-proxy=off-policy.toml"
+printf 'version = 1\n' >"${PROVIDER_E2E_EXPLICIT_POLICY}"
+"${ROOT_DIR}/scripts/provider-e2e.sh" --agent codex --workspace "${ROOT_DIR}" \
+  --injection-policy "${PROVIDER_E2E_EXPLICIT_POLICY}" --dry-run >/tmp/workcell-provider-e2e-explicit.out 2>&1
+if [[ "$(provider_e2e_egress_count prepare_only_cmd /tmp/workcell-provider-e2e-explicit.out)" != 0 ]] ||
+  [[ "$(provider_e2e_egress_count probe_cmd /tmp/workcell-provider-e2e-explicit.out)" != 0 ]] ||
+  [[ "$(provider_e2e_egress_count shell_probe_cmd /tmp/workcell-provider-e2e-explicit.out)" != 0 ]]; then
+  echo "Expected provider-e2e with an explicit policy to keep the launcher egress default" >&2
+  exit 1
+fi
+"${ROOT_DIR}/scripts/provider-e2e.sh" --agent codex --workspace "${ROOT_DIR}" \
+  --injection-policy "${PROVIDER_E2E_EXPLICIT_POLICY}" --egress-proxy off --dry-run >/tmp/workcell-provider-e2e-explicit.out 2>&1
+grep -q 'provider_e2e_prepare_only_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-explicit.out
+grep -q 'provider_e2e_probe_cmd=.* --egress-proxy=off' /tmp/workcell-provider-e2e-explicit.out
+if [[ "$(provider_e2e_egress_count prepare_only_cmd /tmp/workcell-provider-e2e-explicit.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count probe_cmd /tmp/workcell-provider-e2e-explicit.out)" != 1 ]] ||
+  [[ "$(provider_e2e_egress_count shell_probe_cmd /tmp/workcell-provider-e2e-explicit.out)" != 0 ]]; then
+  echo "Expected exactly one --egress-proxy on each strict provider-e2e command and none on the shell probe" >&2
+  exit 1
+fi
+for provider_e2e_bad_egress in "--egress-proxy maybe" "--egress-proxy on --egress-proxy off"; do
+  provider_e2e_status=0
+  # shellcheck disable=SC2086 # each case is a list of separate arguments
+  "${ROOT_DIR}/scripts/provider-e2e.sh" --agent codex --workspace "${ROOT_DIR}" \
+    --injection-policy "${PROVIDER_E2E_EXPLICIT_POLICY}" ${provider_e2e_bad_egress} --dry-run >/dev/null 2>&1 || provider_e2e_status=$?
+  if [[ "${provider_e2e_status}" -ne 2 ]]; then
+    echo "Expected provider-e2e to stop with status 2 for: ${provider_e2e_bad_egress}" >&2
+    exit 1
+  fi
+done
+rm -rf "${PROVIDER_E2E_POLICY_DIR}"
 
 if ! WORKCELL_E2E_CLAUDE_API_KEY='smoke-api-key' \
   "${ROOT_DIR}/scripts/provider-e2e.sh" \

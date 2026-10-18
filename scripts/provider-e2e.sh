@@ -71,6 +71,7 @@ WORKSPACE=""
 AGENT=""
 COLIMA_PROFILE=""
 INJECTION_POLICY=""
+EGRESS_PROXY_SETTING=""
 readonly PROBE_RESPONSE_TOKEN="WORKCELL_PROVIDER_E2E_OK"
 readonly SHELL_PROBE_RESPONSE_TOKEN="WORKCELL_PROVIDER_E2E_SHELL_OK"
 readonly E2E_VM_MEMORY_GIB=10
@@ -98,6 +99,9 @@ Options:
   --workspace <path>          Workspace to run against
   --injection-policy <path>   Optional explicit injection policy
   --colima-profile <name>     Optional managed Colima profile name
+  --egress-proxy <on|off>     Egress proxy setting for the strict steps
+                              (default: off for a generated policy, the
+                              launcher default for an explicit one)
   --require-injection         Fail unless an explicit or generated injection
                               policy is available
   --dry-run                   Print the planned commands and exit
@@ -107,6 +111,10 @@ If --injection-policy is omitted, the script will generate a temporary policy
 from WORKCELL_E2E_* environment variables when they are present. Otherwise it
 falls back to Workcell's ordinary default injection-policy resolution unless
 --require-injection is set.
+
+A strict Colima launch uses the egress proxy by default and refuses a Claude,
+Gemini or Codex API key from a file. Pass --egress-proxy off with an explicit
+policy that holds such a key.
 EOF
 }
 
@@ -358,6 +366,13 @@ while [[ $# -gt 0 ]]; do
       COLIMA_PROFILE="$2"
       shift 2
       ;;
+    --egress-proxy)
+      [[ $# -ge 2 ]] || die "Option --egress-proxy requires a value."
+      [[ -z "${EGRESS_PROXY_SETTING}" ]] || die "Option --egress-proxy may be given only once."
+      [[ "$2" == "on" ]] || [[ "$2" == "off" ]] || die "Option --egress-proxy takes on or off: $2"
+      EGRESS_PROXY_SETTING="$2"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -418,16 +433,25 @@ if [[ -n "${COLIMA_PROFILE}" ]]; then
   shell_probe_cmd+=("--colima-profile" "${COLIMA_PROFILE}")
   probe_cmd+=("--colima-profile" "${COLIMA_PROFILE}")
 fi
+# The generated policy stages each API key from a file. The default egress
+# proxy of strict Colima refuses such a key, so its strict steps opt out unless
+# --egress-proxy says otherwise. An explicit policy keeps the launcher default
+# unless --egress-proxy is given. The development shell probe takes no value,
+# because --egress-proxy=on stops a development launch.
+strict_egress_setting="${EGRESS_PROXY_SETTING}"
 if [[ -n "${INJECTION_POLICY}" ]]; then
   prepare_only_cmd+=("--injection-policy" "${INJECTION_POLICY}")
   shell_probe_cmd+=("--injection-policy" "${INJECTION_POLICY}")
   probe_cmd+=("--injection-policy" "${INJECTION_POLICY}")
 elif [[ -n "${GENERATED_POLICY}" ]]; then
-  # The generated policy stages each API key from a file. The default egress
-  # proxy of strict Colima refuses such a key, so the strict steps opt out.
-  prepare_only_cmd+=("--injection-policy" "${GENERATED_POLICY}" "--egress-proxy=off")
+  strict_egress_setting="${strict_egress_setting:-off}"
+  prepare_only_cmd+=("--injection-policy" "${GENERATED_POLICY}")
   shell_probe_cmd+=("--injection-policy" "${GENERATED_POLICY}")
-  probe_cmd+=("--injection-policy" "${GENERATED_POLICY}" "--egress-proxy=off")
+  probe_cmd+=("--injection-policy" "${GENERATED_POLICY}")
+fi
+if [[ -n "${strict_egress_setting}" ]]; then
+  prepare_only_cmd+=("--egress-proxy=${strict_egress_setting}")
+  probe_cmd+=("--egress-proxy=${strict_egress_setting}")
 fi
 shell_probe_cmd+=("--" "bash" "-lc" "$(build_shell_probe_command)")
 case "${AGENT}" in
