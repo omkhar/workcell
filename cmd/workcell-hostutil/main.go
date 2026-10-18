@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -137,7 +139,8 @@ func run(args []string) error {
 // scripts/generate-adapters-*.sh wrappers own the targets and output paths.
 func runAdapters(args []string) error {
 	if len(args) != 4 || args[0] != "gen" || adapters.GenTargets[args[1]] == nil {
-		return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil adapters gen <data|providerid|launcher-shell|runtime-shell> REPO_ROOT OUTPUT"}
+		targets := strings.Join(slices.Sorted(maps.Keys(adapters.GenTargets)), "|")
+		return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil adapters gen <" + targets + "> REPO_ROOT OUTPUT"}
 	}
 	manifests, err := adapters.LoadManifests(filepath.Join(args[2], "adapters"))
 	if err != nil {

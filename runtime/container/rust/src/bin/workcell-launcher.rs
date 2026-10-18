@@ -40,6 +40,11 @@ const LAUNCH_TARGETS: &[LaunchTarget] = &[
             "/usr/local/libexec/workcell/core/node",
         ],
     },
+];
+
+// PROVIDER_LAUNCH_TARGETS routes each supported adapter binary to the
+// provider wrapper.
+const PROVIDER_LAUNCH_TARGETS: &[LaunchTarget] = &[
     LaunchTarget {
         name: "codex",
         script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
@@ -92,7 +97,11 @@ fn lookup_target(argv0: &OsStr) -> Option<&'static LaunchTarget> {
     let base = argv0.as_bytes().rsplit(|byte| *byte == b'/').next()?;
     let base = std::str::from_utf8(base).ok()?;
 
-    LAUNCH_TARGETS.iter().find(|target| target.name == base)
+    launch_targets().find(|target| target.name == base)
+}
+
+fn launch_targets() -> impl Iterator<Item = &'static LaunchTarget> {
+    LAUNCH_TARGETS.iter().chain(PROVIDER_LAUNCH_TARGETS)
 }
 
 fn build_exec_args(
@@ -294,7 +303,7 @@ mod tests {
 
     #[test]
     fn approved_invocations_match_only_installed_paths() {
-        for target in LAUNCH_TARGETS {
+        for target in launch_targets() {
             for approved_invocation in target.approved_invocations {
                 let request = prepare_launch_with_invocation(
                     OsStr::new(approved_invocation),
@@ -495,8 +504,17 @@ mod tests {
     }
 
     #[test]
+    fn launch_target_names_are_unique() {
+        let mut names: Vec<&str> = launch_targets().map(|target| target.name).collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count, "duplicate launch target name");
+    }
+
+    #[test]
     fn all_launch_targets_have_no_nul_bytes() {
-        for target in LAUNCH_TARGETS {
+        for target in launch_targets() {
             assert!(
                 CString::new(target.name).is_ok(),
                 "LAUNCH_TARGETS entry name contains a NUL byte: {:?}",

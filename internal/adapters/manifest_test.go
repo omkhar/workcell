@@ -356,15 +356,15 @@ func rustTokens(src string) ([]string, error) {
 }
 
 // rustLaunchTargets returns each provider LaunchTarget entry of the one
-// LAUNCH_TARGETS table in the Rust source, as [match, name, invocation,
-// invocation]. It matches tokens, not text, so a copy in a comment, in any
-// literal, or outside the table does not count. It returns nil when the
-// source does not tokenize, has no single active top-level LAUNCH_TARGETS
-// table, or has a table entry of another shape.
-func rustLaunchTargets(source string) [][]string {
+// LaunchTarget table called name in the Rust source, as [match, name,
+// invocation, invocation]. It matches tokens, not text, so a copy in a
+// comment, in any literal, or outside the table does not count. ok is false
+// when the source does not tokenize, has no single active top-level table of
+// that name, or has a table entry of another shape.
+func rustLaunchTargets(source, name string) (targets [][]string, ok bool) {
 	tokens, err := rustTokens(source)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	// Count only a top-level declaration with no attribute: nesting depth 0,
 	// and "const" starts the item (after ";", "}", or the file start). A copy
@@ -377,36 +377,36 @@ func rustLaunchTargets(source string) [][]string {
 			depth++
 		case "}", ")", "]":
 			depth--
-		case "LAUNCH_TARGETS":
+		case name:
 			if depth == 0 && i > 0 && tokens[i-1] == "const" && (i == 1 || tokens[i-2] == ";" || tokens[i-2] == "}") {
 				start = append(start, i)
 			}
 		}
 	}
 	if len(start) != 1 {
-		return nil
+		return nil, false
 	}
-	// The declaration reads "const LAUNCH_TARGETS: &[LaunchTarget] = &[...];".
+	// The declaration reads "const <name>: &[LaunchTarget] = &[...];".
 	// The table runs to the next ";" token; the whole-table match below
 	// rejects anything else in that span.
 	head := []string{":", "&", "[", "LaunchTarget", "]", "=", "&"}
 	rest := tokens[start[0]+1:]
 	end := slices.Index(rest, ";")
 	if end < len(head) || !slices.Equal(rest[:len(head)], head) {
-		return nil
+		return nil, false
 	}
 	// Any other shape (an attribute, a macro, a const or escaped field, a
 	// provider row with other than two invocations) could hide a row, so
 	// reject it instead of skipping it.
 	table := strings.Join(rest[len(head):end], " ")
 	if !rustLaunchTable.MatchString(table) {
-		return nil
+		return nil, false
 	}
-	targets := rustLaunchBlock.FindAllStringSubmatch(table, -1)
+	targets = rustLaunchBlock.FindAllStringSubmatch(table, -1)
 	if strings.Count(table, `script_path : "/usr/local/libexec/workcell/provider-wrapper.sh"`) != len(targets) {
-		return nil
+		return nil, false
 	}
-	return targets
+	return targets, true
 }
 
 // dockerfilePinnedArgs returns the ARG names a Dockerfile pins with a non-empty
@@ -560,7 +560,7 @@ func TestRustLaunchTargetsIgnoreDecoys(t *testing.T) {
 		"unterminated raw string":      {table(rustDemoTarget) + `r#"x"`, 0},
 	}
 	for name, c := range cases {
-		if got := rustLaunchTargets(c.source); len(got) != c.want {
+		if got, _ := rustLaunchTargets(c.source, "LAUNCH_TARGETS"); len(got) != c.want {
 			t.Errorf("%s: found %d targets, want %d: %v", name, len(got), c.want, got)
 		}
 	}
@@ -608,8 +608,16 @@ func TestDockerfilePinnedArgsIgnoreDecoys(t *testing.T) {
 }
 
 func TestManifestsMatchRustLaunchTargets(t *testing.T) {
+	launcher := readRepoFile(t, "runtime/container/rust/src/bin/workcell-launcher.rs")
+	if core, ok := rustLaunchTargets(launcher, "LAUNCH_TARGETS"); !ok || len(core) != 0 {
+		t.Errorf("LAUNCH_TARGETS must parse and hold no provider row (ok=%v): %v", ok, core)
+	}
+	providers, ok := rustLaunchTargets(launcher, "PROVIDER_LAUNCH_TARGETS")
+	if !ok {
+		t.Error("PROVIDER_LAUNCH_TARGETS does not parse")
+	}
 	var names []string
-	for _, target := range rustLaunchTargets(readRepoFile(t, "runtime/container/rust/src/bin/workcell-launcher.rs")) {
+	for _, target := range providers {
 		name := target[1]
 		names = append(names, name)
 		if target[2] != "/usr/local/bin/"+name || target[3] != "/usr/local/libexec/workcell/core/"+name {
@@ -701,6 +709,7 @@ container_path = "/opt/demo.json"
 		"planned with fields":     strings.Replace(valid, `"certified"`, `"planned"`, 1),
 		"invalid tier":            strings.Replace(valid, `"certified"`, `"trusted"`, 1),
 		"missing binary":          strings.Replace(valid, "binary = \"demo\"\n", "", 1),
+		"binary with a quote":     strings.Replace(valid, `binary = "demo"`, `binary = "de\"mo"`, 1),
 		"invalid method":          strings.Replace(valid, `method = "binary"`, `method = "curl"`, 1),
 		"binary without arg":      strings.Replace(valid, "version_arg = \"DEMO_VERSION\"\n", "", 1),
 		"npm without package":     strings.Replace(valid, `method = "binary"`, `method = "npm"`, 1),
