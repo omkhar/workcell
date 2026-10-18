@@ -14,8 +14,10 @@ The GitHub Releases page contains old details that are not in this file.
   fails (`internal/adapters/uncertified_test.go`). The session records
   `session_assurance_initial=lower-assurance-uncertified-adapter` and runs the
   `runtime-uncertified` image stage as `workcell:local-uncertified`.
-- Provider arguments of an uncertified adapter pass only through its manifest
-  `[flags]` `allow` list (`reject_manifest_args`). No shipped adapter is
+- Workcell passes an option of an uncertified adapter only when the manifest
+  `[flags]` `allow` list has it and `deny` does not. A word that
+  names one of `[flags]` `other_commands` is refused (`reject_manifest_args`).
+  Other words, such as a prompt, pass. No shipped adapter is
   uncertified yet. `--inspect` now prints `session_assurance_initial`.
 - `runtime/container/Dockerfile` ends with a `require-build-target` stage that
   fails, so each runtime image build names its target

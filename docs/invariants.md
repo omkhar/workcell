@@ -453,8 +453,10 @@ An adapter with the manifest tier `uncertified` runs only with
 `--allow-uncertified-agent`. The session records
 `session_assurance_initial=lower-assurance-uncertified-adapter`. Workcell runs
 the `runtime-uncertified` image stage for it, so the runtime image of a
-certified adapter does not include an uncertified agent. Provider arguments
-pass only through the manifest `[flags]` `allow` list. The tests are in
+certified adapter does not include an uncertified agent. A provider option
+passes only when it is on the manifest `[flags]` `allow` list and not on
+`deny`. A word that names one of `[flags]` `other_commands` is refused, and
+other words, such as a prompt, pass. The tests are in
 `internal/adapters/uncertified_test.go`.
 
 ## 7. Autonomous runs remain auditable

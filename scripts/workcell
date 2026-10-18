@@ -280,7 +280,7 @@ Options:
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
-  --allow-uncertified-agent     Run an uncertified adapter as lower assurance; its args pass only its manifest allowlist
+  --allow-uncertified-agent     Run an uncertified adapter as lower assurance; its options pass only its manifest allowlist
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
   --egress-proxy[=on|off]       Route strict Colima egress only through a per-session SNI proxy sidecar
                                 (default on for strict Colima; off keeps the allowlist alone)

@@ -42,8 +42,9 @@ The `--container-mutability` option is independent of `--mode`.
   option. An `uncertified` adapter runs only with `--allow-uncertified-agent`,
   in every mode. This is an explicit lower-assurance choice: Workcell labels
   the session `lower-assurance-uncertified-adapter` and runs the
-  `runtime-uncertified` image stage. The provider arguments pass only through
-  the manifest `[flags]` `allow` list.
+  `runtime-uncertified` image stage. A provider option passes only when it is
+  on the manifest `[flags]` `allow` list and not on `deny`. A word that names
+  one of `[flags]` `other_commands` is refused, and other words pass.
 
 See [invariants.md](invariants.md) for the controls that apply to each mode.
 See [safe-path-expectations.md](safe-path-expectations.md) for operator

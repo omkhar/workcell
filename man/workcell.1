@@ -510,9 +510,14 @@ No review certified its CLI. Without this option, Workcell refuses the
 adapter. With a certified adapter, Workcell refuses the option. The session
 runs the
 .B runtime-uncertified
-image stage. Provider arguments pass only through the manifest
+image stage. In every mode, a provider option passes only when it is on the
+manifest
 .B [flags] allow
-list, in every mode. Workcell records
+list and not on
+.BR deny ;
+a word that names one of
+.B other_commands
+is refused, and other words pass. Workcell records
 .B session_assurance_initial=lower-assurance-uncertified-adapter
 and, in strict mode,
 .BR execution_path=lower-assurance-uncertified-adapter .
