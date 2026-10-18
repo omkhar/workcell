@@ -1,5 +1,11 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 
+# Language boundary: this file holds every provider argument policy, the four
+# reviewed reject_unsafe_<id>_args functions and reject_manifest_args for an
+# uncertified adapter. AGENTS.md puts new policy in Go, but one policy domain
+# must have one owner, so a new policy joins the others here until the whole
+# file moves to Go in one change (issue 901).
+
 workcell_die() {
   echo "$*" >&2
   exit 2
