@@ -183,6 +183,11 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
 The pre-commit hook blocks unrelated commits when stable provider pin bumps are
 pending and points you at `./scripts/publish-provider-bump-pr.sh`.
 
+The hook checks the pins with GitHub API calls and passes no GitHub
+credential, because it runs the pin script of the worktree. GitHub allows 60
+calls an hour without a token. The hook reports a spent quota as a rate limit,
+not as a pending pin, and names the reset time.
+
 ## Good first contributions
 
 Useful starter changes tend to be:

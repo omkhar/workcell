@@ -1216,6 +1216,9 @@ func fetchDecoded(client *http.Client, targetURL string, limit int64, decode fun
 		return nil, fmt.Errorf("fetch %s: %w", targetURL, err)
 	}
 	defer resp.Body.Close()
+	if err := githubRateLimitError(resp); err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", targetURL, err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
