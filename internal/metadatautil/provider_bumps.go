@@ -59,8 +59,13 @@ const (
 )
 
 var (
-	errReleaseAssetNotFound                 = errors.New("release asset not found")
-	stableVersionPattern                    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	errReleaseAssetNotFound = errors.New("release asset not found")
+	stableVersionPattern    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	// buildStampedVersionPattern is the npm version form of a CLI that
+	// publishes each build as 0.0.<build>-g<commit>, for example @ampcode/cli.
+	// Its dist-tags.latest has the same form, and the build number orders
+	// the releases.
+	buildStampedVersionPattern              = regexp.MustCompile(`^0\.0\.[0-9]+-g[0-9a-f]+$`)
 	geminiDependencyPattern                 = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
 	claudeVersionLinePattern                = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
 	codexVersionLinePattern                 = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
@@ -371,8 +376,8 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	return plan, nil
 }
 
-// planUncertifiedNPMBumps selects the stable cool-off target of each
-// dependency that packageJSONPath pins.
+// planUncertifiedNPMBumps selects the cool-off target of each dependency
+// that packageJSONPath pins, in the exact version form of its pin.
 func planUncertifiedNPMBumps(packageJSONPath string, cutoff time.Time, registryURL string, client *http.Client) (map[string]ProviderBumpSelection, error) {
 	var pkg providersPackageJSON
 	if err := readJSONFile(packageJSONPath, &pkg); err != nil {
@@ -383,11 +388,12 @@ func planUncertifiedNPMBumps(packageJSONPath string, cutoff time.Time, registryU
 	}
 	plan := map[string]ProviderBumpSelection{}
 	for name, current := range pkg.Dependencies {
-		if !stableVersionPattern.MatchString(current) {
-			return nil, fmt.Errorf("%s requires a stable %s pin, found %q", packageJSONPath, name, current)
+		parse := uncertifiedVersionParser(current)
+		if parse == nil {
+			return nil, fmt.Errorf("%s requires an exact stable or build-stamped %s pin, found %q", packageJSONPath, name, current)
 		}
 		// A scoped name keeps its @ and escapes its slash, as the registry expects.
-		selection, err := selectNPMStable(registryURL+"/"+strings.Replace(name, "/", "%2f", 1), current, cutoff, parseStableVersion, client)
+		selection, err := selectNPMStable(registryURL+"/"+strings.Replace(name, "/", "%2f", 1), current, cutoff, parse, client)
 		if err != nil {
 			return nil, err
 		}
@@ -425,8 +431,8 @@ func ApplyUncertifiedProviderBumpPlan(planPath, packageJSONPath string) error {
 	text := string(raw)
 	updated := text
 	for name, selection := range plan.Uncertified {
-		if !stableVersionPattern.MatchString(selection.TargetVersion) {
-			return fmt.Errorf("%s contains a non-stable %s target version %q", planPath, name, selection.TargetVersion)
+		if uncertifiedVersionParser(selection.TargetVersion) == nil {
+			return fmt.Errorf("%s contains a non-exact %s target version %q", planPath, name, selection.TargetVersion)
 		}
 		if pkg.Dependencies[name] == "" {
 			return fmt.Errorf("%s plans %s, which %s does not pin", planPath, name, packageJSONPath)
@@ -1195,6 +1201,28 @@ func parseStableVersion(raw string) (stableVersion, bool) {
 	}
 	version.Raw = raw
 	return version, true
+}
+
+// parseBuildStampedVersion parses a 0.0.<build>-g<commit> version. The build
+// number is the patch number, so the stable comparison orders the builds.
+func parseBuildStampedVersion(raw string) (stableVersion, bool) {
+	if !buildStampedVersionPattern.MatchString(raw) {
+		return stableVersion{}, false
+	}
+	version, ok := parseStableVersion(raw[:strings.IndexByte(raw, '-')])
+	version.Raw = raw
+	return version, ok
+}
+
+// uncertifiedVersionParser returns the parser of the version form of an
+// uncertified npm pin, or nil when the pin is not an exact version.
+func uncertifiedVersionParser(pin string) versionParser {
+	for _, parse := range []versionParser{parseStableVersion, parseBuildStampedVersion} {
+		if _, ok := parse(pin); ok {
+			return parse
+		}
+	}
+	return nil
 }
 
 func sortStableVersionsDesc(versions []stableVersion) {

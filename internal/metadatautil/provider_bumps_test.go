@@ -2681,7 +2681,7 @@ func TestUncertifiedProviderBumpsPlanAndApply(t *testing.T) {
 	if err := os.WriteFile(rangePath, []byte(`{"dependencies":{"opencode-ai":"^1.1.0"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planUncertifiedNPMBumps(rangePath, cutoff, server.URL, server.Client()); err == nil || !strings.Contains(err.Error(), `requires a stable opencode-ai pin, found "^1.1.0"`) {
+	if _, err := planUncertifiedNPMBumps(rangePath, cutoff, server.URL, server.Client()); err == nil || !strings.Contains(err.Error(), `requires an exact stable or build-stamped opencode-ai pin, found "^1.1.0"`) {
 		t.Fatalf("planUncertifiedNPMBumps(range pin) = %v", err)
 	}
 	// A plan that names a package the file does not pin fails closed.
@@ -2708,5 +2708,70 @@ func TestUncertifiedProviderBumpsPlanAndApply(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(packageJSON); string(after) != string(before) {
 		t.Fatalf("a symlinked package path changed its target: %s", after)
+	}
+}
+
+// A build-stamped pin (0.0.<build>-g<commit>, the @ampcode/cli form) moves to
+// the newest cooled build by build number. A release of another form, the
+// placeholder tag, and a build after the cutoff stay out of the plan.
+func TestUncertifiedProviderBumpsFollowBuildStampedPins(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/@demo%2fstamped" {
+			http.NotFound(w, r)
+			return
+		}
+		writeRegistryMetadata(w, "0.0.300-gccc333", map[string]string{
+			"0.0.300-gccc333":   "2026-09-30T23:00:00Z",
+			"0.0.200-gbbb222":   "2026-09-20T00:00:00Z",
+			"0.0.90-gaaa111":    "2026-09-21T00:00:00Z",
+			"0.0.0-placeholder": "2026-09-22T00:00:00Z",
+			"9.9.9":             "2026-09-22T00:00:00Z",
+		})
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	packageJSON := filepath.Join(dir, "package.json")
+	if err := os.WriteFile(packageJSON, []byte(`{"dependencies":{"@demo/stamped":"0.0.90-gaaa111"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Date(2026, time.September, 29, 12, 0, 0, 0, time.UTC)
+	plan, err := planUncertifiedNPMBumps(packageJSON, cutoff, server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("planUncertifiedNPMBumps() error = %v", err)
+	}
+	if got := plan["@demo/stamped"]; got.TargetVersion != "0.0.200-gbbb222" || !got.Changed {
+		t.Fatalf("@demo/stamped selection = %#v, want a bump to the cooled build 0.0.200-gbbb222", got)
+	}
+	// The build number orders the builds: a pin newer than the cooled build
+	// stays.
+	newerPath := filepath.Join(dir, "newer-package.json")
+	if err := os.WriteFile(newerPath, []byte(`{"dependencies":{"@demo/stamped":"0.0.250-gddd444"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := planUncertifiedNPMBumps(newerPath, cutoff, server.URL, server.Client())
+	if got := newer["@demo/stamped"]; err != nil || got.TargetVersion != "0.0.250-gddd444" || got.Changed {
+		t.Fatalf("@demo/stamped selection from a newer pin = %#v, %v, want the pin kept", got, err)
+	}
+	planPath := filepath.Join(dir, "plan.json")
+	content, err := json.Marshal(ProviderBumpPlan{Uncertified: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyUncertifiedProviderBumpPlan(planPath, packageJSON); err != nil {
+		t.Fatalf("ApplyUncertifiedProviderBumpPlan() error = %v", err)
+	}
+	if got, _ := os.ReadFile(packageJSON); string(got) != `{"dependencies":{"@demo/stamped":"0.0.200-gbbb222"}}`+"\n" {
+		t.Fatalf("package.json after apply = %s", got)
+	}
+	// A prerelease that is not a build stamp is not an exact pin.
+	content, _ = json.Marshal(ProviderBumpPlan{Uncertified: map[string]ProviderBumpSelection{"@demo/stamped": {TargetVersion: "0.0.0-placeholder"}}})
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyUncertifiedProviderBumpPlan(planPath, packageJSON); err == nil || !strings.Contains(err.Error(), `non-exact @demo/stamped target version "0.0.0-placeholder"`) {
+		t.Fatalf("ApplyUncertifiedProviderBumpPlan(placeholder) = %v", err)
 	}
 }
