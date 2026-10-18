@@ -295,7 +295,8 @@ Use these sources for detailed claims:
 - Workcell has no managed-workstation backend.
 - The session plane has no queue, pause, resume, or checkpoint model.
   `workcell session fork` starts new children from a signed snapshot of a
-  parent session.
+  parent session. `workcell session restore` puts a signed snapshot back into
+  the worktree of a stopped isolated session.
 - The supported user interface is the CLI. GUI and IDE paths do not have the
   Tier 1 claim.
 - The built-in resolvers support Codex host-auth reuse. The Claude macOS

@@ -59,6 +59,7 @@ session_export = "workcell session export --id SESSION_ID [--format json|ocsf] [
 session_verify = "workcell session verify --id SESSION_ID"
 session_snapshot = "workcell session snapshot --id SESSION_ID"
 session_fork = "workcell session fork --id SESSION_ID [--snapshot SNAPSHOT_ID] --count N"
+session_restore = "workcell session restore --id SESSION_ID --snapshot SNAPSHOT_ID"
 session_delete = "workcell session delete --id SESSION_ID"
 launch_doctor = "--doctor"
 launch_inspect = "--inspect"
