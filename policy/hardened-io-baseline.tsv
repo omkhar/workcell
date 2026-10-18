@@ -110,7 +110,7 @@ internal/scenarios/scenario_manifest.go	os.ReadFile	c695bb02	CI tooling over the
 internal/scenarios/scenario_manifest.go	os.Stat	aee45cbc	CI tooling over the checked-out repository tree; no operator-controlled path
 internal/sessionctl/monitor.go	os.Open	a3435e48	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
 internal/sessionctl/monitor.go	os.Stat	6c015cde	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/sessionctl/snapshot_capture.go	os.RemoveAll	a54bd737	reviewed at the call: this removes the directory created above, and RemoveAll does not follow symlinks
+internal/sessionctl/snapshot_capture.go	os.RemoveAll	970f0ba2	reviewed at the call: withScratchGitDir removes the directory it created above, and RemoveAll does not follow symlinks
 internal/sessionctl/snapshot_capture.go	os.Stat	46157e56	reviewed at the call: this stats the path by name on purpose, to prove it still names the directory the descriptor holds
 internal/startupbench/run.go	os.WriteFile	68f00f30	CI tooling over the checked-out repository tree; no operator-controlled path
 internal/supportbundle/collect.go	os.ReadFile	c06a46ef	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there

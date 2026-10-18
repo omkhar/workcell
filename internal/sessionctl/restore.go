@@ -200,12 +200,14 @@ func restoreApply(opts restoreApplyOptions) error {
 		return fmt.Errorf("the session workspace is not a directory: %s", opts.Workspace)
 	}
 
-	scratch, err := os.MkdirTemp("", "workcell-restore.") // hardened-fs-exempt: this creates a fresh owner-only directory with O_EXCL semantics
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
+	return withScratchGitDir("workcell-restore.", func(scratch string) error {
+		return restoreThroughScratch(opts, scratch)
+	})
+}
 
+// restoreThroughScratch fetches the signed snapshot commit into the private
+// git dir scratch, checks it, and applies its tree to the workspace.
+func restoreThroughScratch(opts restoreApplyOptions, scratch string) error {
 	// The scratch dir is the git dir, so git reads no config, index, or object
 	// from the session clone .git. The fetch rehashes every object it gets.
 	git := func(args ...string) (string, error) {

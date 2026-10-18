@@ -92,12 +92,16 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 		return "", "", fmt.Errorf("session snapshot requires a self-contained git workspace: %s", opts.Workspace)
 	}
 
-	scratch, err := os.MkdirTemp("", "workcell-snapshot.") // hardened-fs-exempt: this creates a fresh owner-only directory with O_EXCL semantics
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
+	err = withScratchGitDir("workcell-snapshot.", func(scratch string) error {
+		tree, commit, err = captureIntoScratch(opts, gitDir, scratch)
+		return err
+	})
+	return tree, commit, err
+}
 
+// captureIntoScratch writes the snapshot of the workspace through the private
+// git dir scratch and publishes it to the store.
+func captureIntoScratch(opts snapshotCaptureOptions, gitDir, scratch string) (tree, commit string, err error) {
 	// The scratch dir is the git dir: its index is the temporary index and its
 	// config is the only config git reads, so the workspace .git/config and
 	// .git/index are untouched. The workspace objects are a read-only
@@ -131,6 +135,18 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 		return "", "", err
 	}
 	return tree, commit, nil
+}
+
+// withScratchGitDir runs fn with a fresh owner-only directory that serves as a
+// private git dir, and removes the directory afterwards. Snapshot capture and
+// restore share it, so git never reads the session clone .git.
+func withScratchGitDir(prefix string, fn func(scratch string) error) error {
+	scratch, err := os.MkdirTemp("", prefix) // hardened-fs-exempt: this creates a fresh owner-only directory with O_EXCL semantics
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
+	return fn(scratch)
 }
 
 // writeSnapshotAlternates makes the workspace object store a read-only
