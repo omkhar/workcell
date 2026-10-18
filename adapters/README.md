@@ -79,6 +79,10 @@ bump, run the script with `--write` and classify each new flag.
 attached `--flag=value` form of each denied long option, through the policy
 function.
 
+An uncertified manifest needs a `[flags]` `allow` list that is not empty. Its
+provider arguments pass only through that list (`reject_manifest_args`). See
+[`../docs/extending-adapters.md`](../docs/extending-adapters.md).
+
 The file `internal/adapters/adapters.go` contains the public API. Injection,
 policy, and runtime code use this API.
 

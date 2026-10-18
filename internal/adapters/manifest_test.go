@@ -737,6 +737,8 @@ container_path = "/opt/demo.json"
 		"invalid id":              strings.Replace(valid, `id = "demo"`, `id = "Demo"`, 1),
 		"planned with fields":     strings.Replace(valid, `"certified"`, `"planned"`, 1),
 		"invalid tier":            strings.Replace(valid, `"certified"`, `"trusted"`, 1),
+		"uncertified, no flags":   strings.Replace(valid, `"certified"`, `"uncertified"`, 1),
+		"uncertified, no allow":   strings.Replace(valid, `"certified"`, `"uncertified"`, 1) + "\n[flags]\ndeny = [\"--yolo\"]\n",
 		"missing binary":          strings.Replace(valid, "binary = \"demo\"\n", "", 1),
 		"binary with a quote":     strings.Replace(valid, `binary = "demo"`, `binary = "de\"mo"`, 1),
 		"invalid method":          strings.Replace(valid, `method = "binary"`, `method = "curl"`, 1),

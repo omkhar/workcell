@@ -13,3 +13,25 @@ workcell_supported_agent() {
       ;;
   esac
 }
+
+# workcell_adapter_tier prints the manifest tier of supported adapter $1.
+workcell_adapter_tier() {
+  case "$1" in
+    claude | codex | copilot | gemini)
+      echo certified
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# workcell_manifest_flags prints the [flags] list $2 (allow, deny, or
+# other_commands) of uncertified adapter $1, one entry per line.
+workcell_manifest_flags() {
+  case "$1:$2" in
+    *)
+      return 1
+      ;;
+  esac
+}

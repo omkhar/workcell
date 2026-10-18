@@ -228,13 +228,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "afac9a84e26c6ec3378cfafc6f9fe7172ce59be4a5f3730dd3e5df96441aba5f"
+      "sha256": "0ee1327fae499db23c10b485b1caf915de98be87be609a0a7e9db66ea6ea0cda"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/generated-adapters.sh",
       "runtime_path": "/usr/local/libexec/workcell/generated-adapters.sh",
-      "sha256": "97b1be3634ac2a0d99606b9b6069d7010ca361585d36c773c97b36ed27eca325"
+      "sha256": "4c8552079b790504995e47f9066a9e224dd676812e02bc9e41c280ef4ae56b4a"
     },
     {
       "kind": "runtime-control-plane",
@@ -258,7 +258,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "e17e745d646d5863f7c1d78640e0a8dc4982d74ccefb11394bbb62adec8cba33"
+      "sha256": "7b08e3843cc5d7d64e0fa46480fb7471cfaf6c44bdadbf0c02971d3cc0c8fd9f"
     },
     {
       "kind": "runtime-control-plane",
