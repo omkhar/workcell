@@ -25,6 +25,12 @@ The GitHub Releases page contains old details that are not in this file.
   `runtime/container/providers-uncertified/` pins the CLI apart from the Tier 1
   provider packages, and only the `runtime-uncertified` image installs it.
   `scripts/update-provider-pins.sh` refreshes the pin after the cool-off.
+- `--agent amp --allow-uncertified-agent` runs the Amp CLI (`@ampcode/cli`
+  0.0.1792166439-g8235ca on npm), the second uncertified adapter. Its egress
+  allowlist is `ampcode.com:443` and `authapi.ampcode.com:443`. Workcell
+  stages no Amp credential: Amp needs an Amp account, and its device login in
+  the session saves the account in the session home. The pin follows the Amp
+  build line, `0.0.<build>-g<commit>`, after the cool-off.
 - `runtime/container/Dockerfile` ends with a `require-build-target` stage that
   fails, so each runtime image build names its target
   (`internal/metadatautil/apt_broker_build_test.go`).
