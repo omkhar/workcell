@@ -38,6 +38,12 @@ The `--container-mutability` option is independent of `--mode`.
   for plain status updates.
 - Use `--prepare` or `--prepare-only` when you must prepare the image as a
   separate step.
+- Each adapter manifest has a tier. A `certified` adapter runs with no extra
+  option. An `uncertified` adapter runs only with `--allow-uncertified-agent`,
+  in every mode. This is an explicit lower-assurance choice: Workcell labels
+  the session `lower-assurance-uncertified-adapter` and runs the
+  `runtime-uncertified` image stage. The provider arguments pass only through
+  the manifest `[flags]` `allow` list.
 
 See [invariants.md](invariants.md) for the controls that apply to each mode.
 See [safe-path-expectations.md](safe-path-expectations.md) for operator

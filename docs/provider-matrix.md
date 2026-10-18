@@ -53,6 +53,20 @@ For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and
 [docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md).
 
+## Uncertified adapters
+
+An adapter manifest (`adapters/<id>/adapter.toml`) has a `tier` of `certified`,
+`uncertified`, or `planned`. The four providers above are `certified`. No
+shipped adapter is `uncertified` yet.
+
+An `uncertified` adapter is a provider CLI that runs inside the bounded
+runtime, but no review certified its CLI flags. The launch needs
+`--allow-uncertified-agent`, and the session is lower assurance. The adapter
+runs the `runtime-uncertified` image stage. Its provider arguments pass only
+through the manifest `[flags]` `allow` list. The manifest `tier` is not the
+Tier 1, 2, and 3 support class below. See
+[extending-adapters.md](extending-adapters.md).
+
 ## Tier Rules
 
 - A Tier 1 provider CLI runs fully inside the bounded runtime.

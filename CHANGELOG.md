@@ -9,6 +9,17 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Added
 
+- `--allow-uncertified-agent` runs an adapter whose manifest tier is
+  `uncertified`. Without the option, or with a certified adapter, the launch
+  fails (`internal/adapters/uncertified_test.go`). The session records
+  `session_assurance_initial=lower-assurance-uncertified-adapter` and runs the
+  `runtime-uncertified` image stage as `workcell:local-uncertified`.
+- Provider arguments of an uncertified adapter pass only through its manifest
+  `[flags]` `allow` list (`reject_manifest_args`). No shipped adapter is
+  uncertified yet. `--inspect` now prints `session_assurance_initial`.
+- `runtime/container/Dockerfile` ends with a `require-build-target` stage that
+  fails, so each runtime image build names its target
+  (`internal/metadatautil/apt_broker_build_test.go`).
 - `--egress-proxy` routes strict Colima egress only through a per-session SNI
   proxy sidecar on an internal network. The sidecar listens only on its
   internal-network address. Denied connections go to `<session>.egress-deny.jsonl`

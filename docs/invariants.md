@@ -442,11 +442,20 @@ Examples include:
 - `--allow-control-plane-vcs`
 - `--allow-repo-mcp`
 - `--allow-arbitrary-command`
+- `--allow-uncertified-agent`
 - `breakglass`
 - host debug logs or transcript capture
 - Copilot or future Antigravity telemetry and content capture
 
 Workcell records these choices in launch or runtime state.
+
+An adapter with the manifest tier `uncertified` runs only with
+`--allow-uncertified-agent`. The session records
+`session_assurance_initial=lower-assurance-uncertified-adapter`. Workcell runs
+the `runtime-uncertified` image stage for it, so the runtime image of a
+certified adapter does not include an uncertified agent. Provider arguments
+pass only through the manifest `[flags]` `allow` list. The tests are in
+`internal/adapters/uncertified_test.go`.
 
 ## 7. Autonomous runs remain auditable
 
