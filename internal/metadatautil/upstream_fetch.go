@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,10 +79,34 @@ func fetchGitHubAPIWithLimit(ctx context.Context, client upstreamHTTPDoer, rawUR
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
+	if err := githubRateLimitError(resp); err != nil {
+		return nil, err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected GitHub API response %d", resp.StatusCode)
 	}
 	return readBoundedHTTPBody(resp, maxBytes, "GitHub API metadata")
+}
+
+// errGitHubRateLimit marks a refusal because the GitHub API quota is spent,
+// so callers and operators can tell it from a pin that needs a refresh.
+var errGitHubRateLimit = errors.New("GitHub API rate limit reached")
+
+// githubRateLimitError returns an error that wraps errGitHubRateLimit when
+// resp is a 403 or 429 with no requests left in the quota, and nil otherwise.
+// The message names the reset time and the token file that raises the quota.
+func githubRateLimitError(resp *http.Response) error {
+	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusTooManyRequests {
+		return nil
+	}
+	if resp.Header.Get("X-RateLimit-Remaining") != "0" {
+		return nil
+	}
+	reset := "an unknown time"
+	if seconds, err := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+		reset = time.Unix(seconds, 0).UTC().Format(time.RFC3339)
+	}
+	return fmt.Errorf("%w (status %d); the quota resets at %s; set WORKCELL_GITHUB_API_TOKEN_FILE to a file that holds a GitHub token for a higher quota", errGitHubRateLimit, resp.StatusCode, reset)
 }
 
 func newGitHubAPIClient() *http.Client {

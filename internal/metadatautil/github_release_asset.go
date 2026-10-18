@@ -101,6 +101,9 @@ func fetchGitHubReleaseAsset(ctx context.Context, client upstreamHTTPDoer, relea
 		}
 		return readGitHubReleaseAssetBody(redirect, maxBytes)
 	default:
+		if err := githubRateLimitError(initial); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("unexpected GitHub release asset response %d", initial.StatusCode)
 	}
 }
