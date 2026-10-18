@@ -22,6 +22,7 @@ internal/adapters	rustTokens	01438f12,316d61f3,5d3a8db4,926f1e1f,9bd99527,aad01d
 internal/adapters	validateFlags	2d22c89e,bdc1c12e,fd6a16a7	unreviewed debt: review the subject, then port or justify
 internal/adapters	validateManifest	245b0a57,258a8901,2e3c875f,a88bf6e5	the patterns check decoded manifest field values, not file content
 internal/metadatautil	ApplyProviderBumpPlan	24b3ab93,5305b6f7,6d79321a,6ebdc620,742074a1,a5aa29e9,a78c8e9b,db99510a,fc5c811b	the pattern checks a version field of the decoded JSON plan
+internal/metadatautil	ApplyUncertifiedProviderBumpPlan	2b035fbd,5310c911,86d248eb,bc579a07	the patterns check a version field of the decoded JSON plan and rewrite one dependency of the reviewed package.json
 internal/metadatautil	CheckHardenedIO	79a072eb	the prefix checks a repository path, not file content
 internal/metadatautil	CheckProviderBumpPolicy	1f13431f,af3fe681,c21ac8c0,d846cb62	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	CheckRetentionPolicy	d283c5af	the prefix checks a decoded workflow step uses: value
@@ -51,6 +52,7 @@ internal/metadatautil	TestCheckPinnedInputsRejectsNonPositiveAppIDPin	2a560549	u
 internal/metadatautil	TestCheckPinnedInputsRejectsToolPinPolicyDrift	31639267,85969adc,bc1833de	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks	541549b9,dd1f04de	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestCheckPinnedInputsRequiresRootOwnedCodexArtifacts	c15d78d5	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsValidatesUncertifiedProviderLock	5d0758ee	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	7ec6e521	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes	5170f81d	unreviewed debt in a test: review the subject, then port or justify
@@ -187,6 +189,7 @@ internal/metadatautil	pinnedInputsCheck.validateRustupVersion	6324d737	unreviewe
 internal/metadatautil	pinnedInputsCheck.validateSecurityWorkflowDispatch	34f2f101	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateValidatorBuildkit	3b54b641,7e8fd525	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateWorkflowPolicy	20114f66,729ab531,aa1b7dd5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	planUncertifiedNPMBumps	571cbce2	the pattern checks a version field of the decoded package.json
 internal/metadatautil	preloadAssignments	46f1dfca,cd8fdbb9,cd8fdbb9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	preludeSafe	7d62ff7e,85178304,c256efb6,e008b096	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a line break in a token file

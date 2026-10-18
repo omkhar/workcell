@@ -1589,6 +1589,8 @@ func TestPlanProviderBumpsDoesNotDowngradeWhenCurrentClaudeVersionIsStillCooling
     "linux-x64": {"checksum": "108amd64108amd64108amd64108amd64108amd64108amd64108amd64108amd64"}
   }
 }`))
+		case "/npm/opencode-ai":
+			writeRegistryMetadata(w, "1.2.0", map[string]string{"1.2.0": "2026-04-10T00:00:00Z", "1.1.0": "2026-04-01T00:00:00Z"})
 		case "/claude-release/2.1.107/manifest.json":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
@@ -1621,6 +1623,29 @@ func TestPlanProviderBumpsDoesNotDowngradeWhenCurrentClaudeVersionIsStillCooling
 	}
 	if plan.Providers["claude"].Changed {
 		t.Fatal("Claude plan should keep the current version while it is still inside the reviewed cool-off window")
+	}
+	if plan.HasChanges || plan.Uncertified != nil {
+		t.Fatalf("plan without uncertified pins = %#v, want no changes", plan)
+	}
+
+	// A cooled release of an uncertified npm pin alone makes the plan change,
+	// so the pre-commit pin check covers the uncertified packages too.
+	uncertifiedPath := filepath.Join(root, "uncertified-package.json")
+	mustWriteText(t, uncertifiedPath, `{"dependencies":{"opencode-ai":"1.1.0"}}`+"\n")
+	plan, err = PlanProviderBumps(policyPath, dockerfilePath, packageJSONPath, now, ProviderBumpSources{
+		CodexRegistryURL:           server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt:      server.URL + "/codex-release/rust-v%s",
+		GeminiRegistryURL:          server.URL + "/gemini-registry",
+		ClaudeRegistryURL:          server.URL + "/claude-registry",
+		ClaudeReleaseRootURL:       server.URL + "/claude-release",
+		UncertifiedPackageJSONPath: uncertifiedPath,
+		NPMRegistryURL:             server.URL + "/npm",
+	}, server.Client())
+	if err != nil {
+		t.Fatalf("PlanProviderBumps(uncertified) error = %v", err)
+	}
+	if got := plan.Uncertified["opencode-ai"]; !plan.HasChanges || got.TargetVersion != "1.2.0" || !got.Changed {
+		t.Fatalf("plan with a cooled uncertified release = %#v, want has_changes and opencode-ai 1.2.0", plan)
 	}
 }
 
@@ -2599,5 +2624,89 @@ func TestDecodeNPMRegistryMetadataSkipsOutOfRangeNumbers(t *testing.T) {
 	}
 	if metadata.DistTags["latest"] != "1.2.3" || metadata.Time["1.2.3"] != "2026-01-02T00:00:00Z" {
 		t.Fatalf("metadata = %#v, want latest 1.2.3 with its time", metadata)
+	}
+}
+
+// The uncertified provider package.json pins follow the npm stable channel and
+// the cool-off: a cooled release moves the pin, a fresh one does not, and the
+// apply step rewrites only the planned dependency.
+func TestUncertifiedProviderBumpsPlanAndApply(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.EscapedPath() {
+		case "/opencode-ai":
+			writeRegistryMetadata(w, "1.3.0", map[string]string{
+				"1.3.0": "2026-09-30T23:00:00Z",
+				"1.2.0": "2026-09-20T00:00:00Z",
+				"1.1.0": "2026-09-10T00:00:00Z",
+			})
+		case "/@demo%2fcli":
+			writeRegistryMetadata(w, "2.0.0", map[string]string{"2.0.0": "2026-09-01T00:00:00Z"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	packageJSON := filepath.Join(dir, "package.json")
+	if err := os.WriteFile(packageJSON, []byte("{\n  \"dependencies\": {\n    \"@demo/cli\": \"2.0.0\",\n    \"opencode-ai\": \"1.1.0\"\n  }\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC).Add(-48 * time.Hour)
+	plan, err := planUncertifiedNPMBumps(packageJSON, cutoff, server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("planUncertifiedNPMBumps() error = %v", err)
+	}
+	if got := plan["opencode-ai"]; got.TargetVersion != "1.2.0" || !got.Changed {
+		t.Fatalf("opencode-ai selection = %#v, want a bump to the cooled 1.2.0", got)
+	}
+	if got := plan["@demo/cli"]; got.TargetVersion != "2.0.0" || got.Changed {
+		t.Fatalf("@demo/cli selection = %#v, want it up to date", got)
+	}
+	planPath := filepath.Join(dir, "plan.json")
+	content, err := json.Marshal(ProviderBumpPlan{Uncertified: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyUncertifiedProviderBumpPlan(planPath, packageJSON); err != nil {
+		t.Fatalf("ApplyUncertifiedProviderBumpPlan() error = %v", err)
+	}
+	if got, _ := os.ReadFile(packageJSON); string(got) != "{\n  \"dependencies\": {\n    \"@demo/cli\": \"2.0.0\",\n    \"opencode-ai\": \"1.2.0\"\n  }\n}\n" {
+		t.Fatalf("package.json after apply = %s", got)
+	}
+	// A range pin is not a reviewed exact pin.
+	rangePath := filepath.Join(dir, "range-package.json")
+	if err := os.WriteFile(rangePath, []byte(`{"dependencies":{"opencode-ai":"^1.1.0"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planUncertifiedNPMBumps(rangePath, cutoff, server.URL, server.Client()); err == nil || !strings.Contains(err.Error(), `requires a stable opencode-ai pin, found "^1.1.0"`) {
+		t.Fatalf("planUncertifiedNPMBumps(range pin) = %v", err)
+	}
+	// A plan that names a package the file does not pin fails closed.
+	content, _ = json.Marshal(ProviderBumpPlan{Uncertified: map[string]ProviderBumpSelection{"evil-pkg": {TargetVersion: "1.0.0"}}})
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyUncertifiedProviderBumpPlan(planPath, packageJSON); err == nil || !strings.Contains(err.Error(), "plans evil-pkg, which") {
+		t.Fatalf("ApplyUncertifiedProviderBumpPlan(unpinned package) = %v", err)
+	}
+	// A symlinked package file is refused on the read, so the file that is
+	// checked is the file that would be replaced, and the link target stays.
+	content, _ = json.Marshal(ProviderBumpPlan{Uncertified: map[string]ProviderBumpSelection{"opencode-ai": {TargetVersion: "1.3.0"}}})
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(dir, "linked-package.json")
+	if err := os.Symlink(packageJSON, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(packageJSON)
+	if err := ApplyUncertifiedProviderBumpPlan(planPath, linkPath); err == nil {
+		t.Fatal("ApplyUncertifiedProviderBumpPlan(symlinked package) succeeded, want a no-follow refusal")
+	}
+	if after, _ := os.ReadFile(packageJSON); string(after) != string(before) {
+		t.Fatalf("a symlinked package path changed its target: %s", after)
 	}
 }

@@ -517,6 +517,9 @@ jobs:
       - name: Verify upstream Gemini release
         run: ./scripts/verify-upstream-gemini-release.sh
 
+      - name: Verify upstream OpenCode release
+        run: ./scripts/verify-upstream-opencode-release.sh
+
       - name: Require pinned upstreams to match the latest reviewed track
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1263,6 +1266,7 @@ jobs:
           ./scripts/verify-upstream-claude-release.sh
           ./scripts/verify-upstream-copilot-release.sh
           ./scripts/verify-upstream-gemini-release.sh
+          ./scripts/verify-upstream-opencode-release.sh
           ./scripts/update-upstream-pins.sh --check
 
       - name: Verify release bundle matches preflight

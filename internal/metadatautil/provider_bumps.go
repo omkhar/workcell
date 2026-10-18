@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -29,6 +30,7 @@ const (
 	defaultProviderBumpCopilotReleaseAPIURL = "https://api.github.com/repos/github/copilot-cli/releases"
 	defaultProviderBumpGeminiRegistryURL    = "https://registry.npmjs.org/@google%2fgemini-cli"
 	defaultProviderBumpClaudeRegistryURL    = "https://registry.npmjs.org/@anthropic-ai%2fclaude-code"
+	defaultProviderBumpNPMRegistryURL       = "https://registry.npmjs.org"
 	defaultProviderBumpClaudeReleaseRoot    = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
 	providerBumpUserAgent                   = "workcell-provider-bump/1.0"
 	// providerBumpHTTPTimeout caps every upstream metadata fetch (npm
@@ -91,6 +93,9 @@ type ProviderBumpPlan struct {
 	CooloffHours int                              `json:"cooloff_hours"`
 	HasChanges   bool                             `json:"has_changes"`
 	Providers    map[string]ProviderBumpSelection `json:"providers"`
+	// Uncertified holds the npm pins of the uncertified provider packages,
+	// keyed by package name. Only the runtime-uncertified image installs them.
+	Uncertified map[string]ProviderBumpSelection `json:"uncertified,omitempty"`
 }
 
 type ProviderBumpSelection struct {
@@ -126,6 +131,11 @@ type ProviderBumpSources struct {
 	// it; prepare-codex-subcommand-fixture still enforces it at apply time.
 	CodexCLISourceURLFmt       string
 	CodexSubcommandFixturePath string
+	// UncertifiedPackageJSONPath enables the plan of every dependency of the
+	// uncertified provider package.json, read from NPMRegistryURL. An empty
+	// path skips it.
+	UncertifiedPackageJSONPath string
+	NPMRegistryURL             string
 }
 
 type npmRegistryMetadata struct {
@@ -181,6 +191,7 @@ func DefaultProviderBumpSources() ProviderBumpSources {
 		ClaudeRegistryURL:     defaultProviderBumpClaudeRegistryURL,
 		ClaudeReleaseRootURL:  defaultProviderBumpClaudeReleaseRoot,
 		CodexCLISourceURLFmt:  defaultCodexCLISourceAPIURLFormat,
+		NPMRegistryURL:        defaultProviderBumpNPMRegistryURL,
 	}
 }
 
@@ -348,7 +359,85 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 			providerid.Gemini:  geminiSelection,
 		},
 	}
+	if sources.UncertifiedPackageJSONPath != "" {
+		plan.Uncertified, err = planUncertifiedNPMBumps(sources.UncertifiedPackageJSONPath, cutoff, sources.NPMRegistryURL, client)
+		if err != nil {
+			return nil, err
+		}
+		for _, selection := range plan.Uncertified {
+			plan.HasChanges = plan.HasChanges || selection.Changed
+		}
+	}
 	return plan, nil
+}
+
+// planUncertifiedNPMBumps selects the stable cool-off target of each
+// dependency that packageJSONPath pins.
+func planUncertifiedNPMBumps(packageJSONPath string, cutoff time.Time, registryURL string, client *http.Client) (map[string]ProviderBumpSelection, error) {
+	var pkg providersPackageJSON
+	if err := readJSONFile(packageJSONPath, &pkg); err != nil {
+		return nil, err
+	}
+	if len(pkg.Dependencies) == 0 {
+		return nil, fmt.Errorf("%s must pin at least one dependency", packageJSONPath)
+	}
+	plan := map[string]ProviderBumpSelection{}
+	for name, current := range pkg.Dependencies {
+		if !stableVersionPattern.MatchString(current) {
+			return nil, fmt.Errorf("%s requires a stable %s pin, found %q", packageJSONPath, name, current)
+		}
+		// A scoped name keeps its @ and escapes its slash, as the registry expects.
+		selection, err := selectNPMStable(registryURL+"/"+strings.Replace(name, "/", "%2f", 1), current, cutoff, client)
+		if err != nil {
+			return nil, err
+		}
+		plan[name] = selection
+	}
+	return plan, nil
+}
+
+// ApplyUncertifiedProviderBumpPlan writes each plan.Uncertified target
+// version to its dependency in packageJSONPath.
+func ApplyUncertifiedProviderBumpPlan(planPath, packageJSONPath string) error {
+	content, err := rootio.ReadFileNoFollow(planPath, "provider bump plan", providerBumpMaxJSONBytes)
+	if err != nil {
+		return err
+	}
+	var plan ProviderBumpPlan
+	if err := json.Unmarshal(content, &plan); err != nil {
+		return err
+	}
+	// One no-follow parent descriptor serves the read and the atomic write, so
+	// the file that is validated is the file that is replaced.
+	parent, path, err := rootio.OpenParentDirectoryNoFollow(packageJSONPath)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	raw, err := rootio.ReadFileAtNoFollow(parent, filepath.Base(path), "uncertified provider package", providerBumpMaxJSONBytes)
+	if err != nil {
+		return err
+	}
+	var pkg providersPackageJSON
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return fmt.Errorf("%s: %w", packageJSONPath, err)
+	}
+	text := string(raw)
+	updated := text
+	for name, selection := range plan.Uncertified {
+		if !stableVersionPattern.MatchString(selection.TargetVersion) {
+			return fmt.Errorf("%s contains a non-stable %s target version %q", planPath, name, selection.TargetVersion)
+		}
+		if pkg.Dependencies[name] == "" {
+			return fmt.Errorf("%s plans %s, which %s does not pin", planPath, name, packageJSONPath)
+		}
+		dependency := regexp.MustCompile(`("` + regexp.QuoteMeta(name) + `"\s*:\s*")[^"]+(")`)
+		updated = dependency.ReplaceAllString(updated, fmt.Sprintf(`${1}%s${2}`, selection.TargetVersion))
+	}
+	if updated == text {
+		return nil
+	}
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(path), []byte(updated), 0o644, ".uncertified-bump-")
 }
 
 func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackageJSONPath string) error {

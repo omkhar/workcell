@@ -1,0 +1,10 @@
+{
+  "name": "workcell-uncertified-provider-clis",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned npm CLI dependencies of uncertified Workcell adapters for the runtime-uncertified image",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "opencode-ai": "1.19.3"
+  }
+}

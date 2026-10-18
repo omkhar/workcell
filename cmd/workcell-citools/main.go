@@ -101,8 +101,8 @@ func subcommands() []subcommand {
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
 		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
-		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE [NOW_RFC3339]", 4, 5, cmdProviderBumpPlan},
-		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
+		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE UNCERTIFIED_PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", 5, 6, cmdProviderBumpPlan},
+		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON UNCERTIFIED_PROVIDERS_PACKAGE_JSON", 5, 5, cmdApplyProviderBumpPlan},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"flag-inventory", "plan|check|restamp ROOT | compare|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
@@ -535,8 +535,8 @@ func cmdCheckProviderBumpPolicy(args []string) error {
 
 func cmdProviderBumpPlan(args []string) error {
 	now := time.Now().UTC()
-	if len(args) == 5 {
-		parsed, err := time.Parse(time.RFC3339, args[4])
+	if len(args) == 6 {
+		parsed, err := time.Parse(time.RFC3339, args[5])
 		if err != nil {
 			return err
 		}
@@ -544,6 +544,7 @@ func cmdProviderBumpPlan(args []string) error {
 	}
 	sources := metadatautil.DefaultProviderBumpSources()
 	sources.CodexSubcommandFixturePath = args[3]
+	sources.UncertifiedPackageJSONPath = args[4]
 	plan, err := metadatautil.PlanProviderBumps(args[0], args[1], args[2], now, sources, nil)
 	if err != nil {
 		return err
@@ -557,7 +558,10 @@ func cmdProviderBumpPlan(args []string) error {
 }
 
 func cmdApplyProviderBumpPlan(args []string) error {
-	return metadatautil.ApplyProviderBumpPlan(args[0], args[1], args[2], args[3])
+	if err := metadatautil.ApplyProviderBumpPlan(args[0], args[1], args[2], args[3]); err != nil {
+		return err
+	}
+	return metadatautil.ApplyUncertifiedProviderBumpPlan(args[0], args[4])
 }
 
 func cmdPrepareCodexSubcommandFixture(args []string) error {

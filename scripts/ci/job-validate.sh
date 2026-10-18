@@ -139,6 +139,9 @@ WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream
 echo "[ci/validate] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 
+echo "[ci/validate] upstream OpenCode release"
+"${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
+
 if [[ "${PROFILE}" == "release-preflight" ]]; then
   # Pinned-upstream-refresh status: only on the release-preflight
   # profile.  Routine PRs rely on the weekly pin-hygiene.yml cron lane

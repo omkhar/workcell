@@ -25,6 +25,8 @@ type pinnedInputsCheck struct {
 	validatorDockerfile         string
 	providersPackageJSONText    string
 	providersPackageLockText    string
+	uncertifiedPackageJSONText  string
+	uncertifiedPackageLockText  string
 	markdownlintPackageJSONText string
 	markdownlintPackageLockText string
 	installDevToolsScript       string
@@ -48,6 +50,8 @@ type pinnedInputsCheck struct {
 	debianBootstrapManifest DebianBootstrapManifest
 	providersPackageJSON    map[string]any
 	providersPackageLock    map[string]any
+	uncertifiedPackageJSON  map[string]any
+	uncertifiedPackageLock  map[string]any
 	markdownlintPackageJSON markdownlintPackageJSON
 	markdownlintPackageLock markdownlintPackageLock
 	hostedControlsPolicy    map[string]any
@@ -69,6 +73,10 @@ type pinnedInputPaths struct {
 	upstreamRefresh      string
 	validatorImageScript string
 	localDockerParity    string
+	// The uncertified provider packages pin the npm CLIs that only the
+	// runtime-uncertified image stage installs.
+	uncertifiedJSON string
+	uncertifiedLock string
 }
 
 type rustPinValues struct {
@@ -125,6 +133,8 @@ func newPinnedInputsCheck(cfg PinnedInputsConfig) *pinnedInputsCheck {
 			upstreamRefresh:      filepath.Join(cfg.WorkflowsDir, "upstream-refresh.yml"),
 			validatorImageScript: filepath.Join(repoRoot, "scripts", "ci", "build-validator-image.sh"),
 			localDockerParity:    filepath.Join(repoRoot, "scripts", "ci", "lib", "local-docker-parity.sh"),
+			uncertifiedJSON:      filepath.Join(repoRoot, "runtime", "container", "providers-uncertified", "package.json"),
+			uncertifiedLock:      filepath.Join(repoRoot, "runtime", "container", "providers-uncertified", "package-lock.json"),
 		},
 	}
 }
@@ -158,6 +168,8 @@ func (check *pinnedInputsCheck) load() error {
 			return loadPinnedTextInputs([]pinnedTextInput{
 				{check.cfg.ProvidersPackageJSONPath, &check.providersPackageJSONText},
 				{check.cfg.ProvidersPackageLockPath, &check.providersPackageLockText},
+				{check.paths.uncertifiedJSON, &check.uncertifiedPackageJSONText},
+				{check.paths.uncertifiedLock, &check.uncertifiedPackageLockText},
 				{check.paths.markdownlintJSON, &check.markdownlintPackageJSONText},
 				{check.paths.markdownlintLock, &check.markdownlintPackageLockText},
 				{check.paths.installDevTools, &check.installDevToolsScript},
@@ -185,6 +197,12 @@ func (check *pinnedInputsCheck) load() error {
 				},
 				func() error {
 					return json.Unmarshal([]byte(check.providersPackageLockText), &check.providersPackageLock)
+				},
+				func() error {
+					return json.Unmarshal([]byte(check.uncertifiedPackageJSONText), &check.uncertifiedPackageJSON)
+				},
+				func() error {
+					return json.Unmarshal([]byte(check.uncertifiedPackageLockText), &check.uncertifiedPackageLock)
 				},
 				func() error {
 					return json.Unmarshal([]byte(check.markdownlintPackageJSONText), &check.markdownlintPackageJSON)

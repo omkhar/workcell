@@ -23,6 +23,9 @@ WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum \
 echo "[ci/pin-hygiene] upstream Gemini release"
 "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 
+echo "[ci/pin-hygiene] upstream OpenCode release"
+"${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
+
 echo "[ci/pin-hygiene] pinned upstream refresh status"
 "${ROOT_DIR}/scripts/update-upstream-pins.sh" --check
 

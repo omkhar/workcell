@@ -4,7 +4,6 @@
 package metadatautil
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -268,33 +267,36 @@ func validateNodeMarkdownlintPinnedInputs(
 	return nil
 }
 
-func validateNodeProviderLock(providersPackageJSON, providersPackageLock map[string]any) error {
+// validateNodeProviderLock requires lockPath, a provider package-lock.json, to
+// pin each package.json dependency exactly and every entry to an npm registry
+// tarball with an integrity hash.
+func validateNodeProviderLock(lockPath string, providersPackageJSON, providersPackageLock map[string]any) error {
 	rootPackage, _ := providersPackageLock["packages"].(map[string]any)
 	rootDependencies, _ := rootPackage[""].(map[string]any)
 	expectedDependencies, _ := providersPackageJSON["dependencies"].(map[string]any)
 	actualDependencies, _ := rootDependencies["dependencies"].(map[string]any)
 	if len(actualDependencies) != len(expectedDependencies) {
-		return errors.New("runtime/container/providers/package-lock.json root dependencies do not match package.json")
+		return fmt.Errorf("%s root dependencies do not match package.json", lockPath)
 	}
 	for name, expected := range expectedDependencies {
 		if actualDependencies[name] != expected {
-			return errors.New("runtime/container/providers/package-lock.json root dependencies do not match package.json")
+			return fmt.Errorf("%s root dependencies do not match package.json", lockPath)
 		}
 	}
 	for packageName, expectedVersionAny := range expectedDependencies {
 		expectedVersion, _ := expectedVersionAny.(string)
 		pkgEntry, ok := rootPackage["node_modules/"+packageName].(map[string]any)
 		if !ok {
-			return fmt.Errorf("missing pinned provider package entry for %s", packageName)
+			return fmt.Errorf("%s: missing pinned provider package entry for %s", lockPath, packageName)
 		}
 		if version, _ := pkgEntry["version"].(string); version != expectedVersion {
-			return fmt.Errorf("pinned provider package %s is %s, expected %s", packageName, version, expectedVersion)
+			return fmt.Errorf("%s: pinned provider package %s is %s, expected %s", lockPath, packageName, version, expectedVersion)
 		}
 		if integrity, _ := pkgEntry["integrity"].(string); integrity == "" {
-			return fmt.Errorf("pinned provider package %s is missing an integrity hash", packageName)
+			return fmt.Errorf("%s: pinned provider package %s is missing an integrity hash", lockPath, packageName)
 		}
 		if resolved, _ := pkgEntry["resolved"].(string); !strings.HasPrefix(resolved, "https://registry.npmjs.org/") {
-			return fmt.Errorf("pinned provider package %s uses an unexpected source: %q", packageName, resolved)
+			return fmt.Errorf("%s: pinned provider package %s uses an unexpected source: %q", lockPath, packageName, resolved)
 		}
 	}
 	for packagePath, rawEntry := range rootPackage {
@@ -303,13 +305,13 @@ func validateNodeProviderLock(providersPackageJSON, providersPackageLock map[str
 		}
 		entry, _ := rawEntry.(map[string]any)
 		if link, _ := entry["link"].(bool); link {
-			return fmt.Errorf("linked npm dependencies are not allowed in the provider lockfile: %s", packagePath)
+			return fmt.Errorf("%s: linked npm dependencies are not allowed in the provider lockfile: %s", lockPath, packagePath)
 		}
 		if integrity, _ := entry["integrity"].(string); integrity == "" {
-			return fmt.Errorf("provider lockfile entry is missing integrity data: %s", packagePath)
+			return fmt.Errorf("%s: provider lockfile entry is missing integrity data: %s", lockPath, packagePath)
 		}
 		if resolved, _ := entry["resolved"].(string); !strings.HasPrefix(resolved, "https://registry.npmjs.org/") {
-			return fmt.Errorf("provider lockfile entry uses an unexpected source (%s): %q", packagePath, resolved)
+			return fmt.Errorf("%s: provider lockfile entry uses an unexpected source (%s): %q", lockPath, packagePath, resolved)
 		}
 	}
 	return nil
