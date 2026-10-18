@@ -280,6 +280,7 @@ Options:
   --allow-nongit-workspace      Allow a non-git workspace only when it contains an explicit agent marker
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
+  --allow-uncertified-agent     Run an uncertified adapter as lower assurance; its args pass only its manifest allowlist
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
   --egress-proxy[=on|off]       Route strict Colima egress only through a per-session SNI proxy sidecar
                                 (default on for strict Colima; off keeps the allowlist alone)
@@ -2984,6 +2985,7 @@ lower_assurance_reasons() {
   local -a reasons=()
   [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]] && reasons+=("control-plane-vcs")
   [[ "${ALLOW_REPO_MCP}" -eq 1 ]] && reasons+=("repo-mcp")
+  [[ "${ADAPTER_ASSURANCE}" == lower-assurance-* ]] && reasons+=("${ADAPTER_ASSURANCE#lower-assurance-}")
   # Bash 3.2 (macOS /bin/bash) treats an empty array as unset under set -u.
   [[ "${#reasons[@]}" -gt 0 ]] || return 0
   local IFS='+'
@@ -3567,7 +3569,7 @@ write_profile_image_marker() {
   mkdir -p "$(dirname "${marker_path}")"
   umask 077
   printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\nbuild_inputs_sha256=%s\n' \
-    "workcell:local" "${image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${marker_path}"
+    "${IMAGE_TAG}" "${image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${marker_path}"
   chmod 0600 "${marker_path}" 2>/dev/null || true
 }
 
@@ -6131,6 +6133,7 @@ build_recommended_command() {
   if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
     cmd+=(--allow-control-plane-vcs --ack-control-plane-vcs)
   fi
+  [[ "${ALLOW_UNCERTIFIED_AGENT}" -eq 1 ]] && cmd+=(--allow-uncertified-agent)
   if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
     if [[ -n "${ACK_REPO_MCP_TOKEN}" ]]; then
       cmd+=(--allow-repo-mcp "--ack-repo-mcp=${ACK_REPO_MCP_TOKEN}")
@@ -6535,6 +6538,7 @@ print_inspect_state() {
   printf 'container_assurance=%s\n' "$(container_assurance)"
   printf 'autonomy_assurance=%s\n' "$(autonomy_assurance)"
   printf 'observability_assurance=%s\n' "$(observability_assurance)"
+  printf 'session_assurance_initial=%s\n' "$(session_assurance_initial)"
   printf 'provider_native_sandbox_configured=%s\n' "$(provider_native_sandbox_configured)"
   printf 'provider_native_sandbox_effective=%s\n' "$(provider_native_sandbox_effective)"
   printf 'provider_native_sandbox_reason=%s\n' "$(provider_native_sandbox_reason)"
@@ -7478,7 +7482,7 @@ run_runtime_image_build_with_retries() {
         --load
         -t "${IMAGE_TAG}"
         -f "${ROOT_DIR}/runtime/container/Dockerfile"
-        --target runtime
+        --target "${RUNTIME_IMAGE_TARGET}"
         "${ROOT_DIR}"
       )
       if [[ -n "${codex_release_url}" ]]; then
@@ -8942,6 +8946,9 @@ LOGS_KIND=""
 ALLOW_NONGIT_WORKSPACE=0
 ALLOW_CONTROL_PLANE_VCS=0
 ALLOW_REPO_MCP=0
+ALLOW_UNCERTIFIED_AGENT=0
+AGENT_TIER=""
+ADAPTER_ASSURANCE=""
 ALLOW_ARBITRARY_COMMAND=0
 ACK_BREAKGLASS=0
 ACK_BREAKGLASS_TOKEN=""
@@ -9207,6 +9214,10 @@ while [[ $# -gt 0 ]]; do
       ALLOW_REPO_MCP=1
       shift
       ;;
+    --allow-uncertified-agent)
+      ALLOW_UNCERTIFIED_AGENT=1
+      shift
+      ;;
     --allow-arbitrary-command)
       ALLOW_ARBITRARY_COMMAND=1
       shift
@@ -9406,6 +9417,19 @@ if [[ -n "${AGENT}" ]] && ! workcell_supported_agent "${AGENT}"; then
   esac
 fi
 
+# The adapter manifest tier decides whether the agent runs and how the session
+# is labeled (workcell_adapter_assurance in assurance.sh).
+if [[ -n "${AGENT}" ]]; then
+  if ! AGENT_TIER="$(workcell_adapter_tier "${AGENT}")"; then
+    echo "Workcell has no manifest tier for agent: ${AGENT}" >&2
+    exit 2
+  fi
+  ADAPTER_ASSURANCE="$(workcell_adapter_assurance "${AGENT}" "${AGENT_TIER}" "${ALLOW_UNCERTIFIED_AGENT}")" || exit 2
+elif [[ "${ALLOW_UNCERTIFIED_AGENT}" -eq 1 ]]; then
+  echo "--allow-uncertified-agent requires --agent." >&2
+  exit 2
+fi
+
 if [[ -z "${AGENT}" ]] && [[ -z "${LOGS_KIND}" ]]; then
   echo "Option --agent is required." >&2
   usage >&2
@@ -9504,7 +9528,16 @@ if [[ -n "${SESSION_FORK_PARENT}" ]]; then
   fi
 fi
 
-IMAGE_TAG="workcell:local"
+# An uncertified adapter runs the runtime-uncertified image stage under its own
+# tag, so a certified launch never runs that image.
+# ponytail: a profile keeps one image marker, so alternating certified and
+# uncertified agents in one profile rebuilds; key the marker by tag if that hurts.
+RUNTIME_IMAGE_TARGET="runtime"
+if [[ "${AGENT_TIER}" == "uncertified" ]]; then
+  RUNTIME_IMAGE_TARGET="runtime-uncertified"
+fi
+# The tag follows the target: workcell:local or workcell:local-uncertified.
+IMAGE_TAG="workcell:local${RUNTIME_IMAGE_TARGET#runtime}"
 PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"
 PROFILE_PREEXISTED=0
 PROFILE_MARKER_WORKSPACE=""

@@ -206,8 +206,8 @@ func TestManifestsMatchLauncherProviderEndpoints(t *testing.T) {
 // TestManifestsMatchLauncherAgentDispatch runs the launcher instead of reading
 // its source, so a decoy in a comment or heredoc cannot satisfy it.
 func TestManifestsMatchLauncherAgentDispatch(t *testing.T) {
-	probe := func(agent string) (string, int) {
-		cmd := exec.Command("bash", "--noprofile", "--norc", "scripts/workcell", "--auth-status", "--agent", agent, "--workspace", ".")
+	probe := func(agent string, extra ...string) (string, int) {
+		cmd := exec.Command("bash", append([]string{"--noprofile", "--norc", "scripts/workcell", "--auth-status", "--agent", agent, "--workspace", "."}, extra...)...)
 		cmd.Dir = repoRoot
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
 		out, err := cmd.CombinedOutput()
@@ -222,7 +222,11 @@ func TestManifestsMatchLauncherAgentDispatch(t *testing.T) {
 		t.Fatalf("launcher probe cannot detect an unsupported agent (exit %d): %s", code, out)
 	}
 	for _, m := range loadRepoManifests(t) {
-		out, code := probe(m.ID)
+		var extra []string
+		if m.Tier == "uncertified" { // TestLauncherGatesUncertifiedAdapter covers the refusal
+			extra = []string{"--allow-uncertified-agent"}
+		}
+		out, code := probe(m.ID, extra...)
 		switch m.Tier {
 		case "planned":
 			if code != 2 || !strings.Contains(out, planned) {

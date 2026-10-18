@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "4ca5e68e7c04e8874a320c89379ccb87cb3a119a55fc3c5247103f2341777b8b"
+      "sha256": "a9099fe6ea02d9d76cadca7159c5d718e76fdbb4b0a7293468af671aecf61aa0"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -30,7 +30,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/generated-adapters.sh",
-      "sha256": "336f5a46197eb22c068c12d5745a24321277296dfa2489731b5a313c9ab69504"
+      "sha256": "2b8e4ce3ad0e13fd0fee6631fa7a86572479644ee8e9d8265c4e84210f71f31c"
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle",
@@ -192,7 +192,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/assurance.sh",
       "runtime_path": "/usr/local/libexec/workcell/assurance.sh",
-      "sha256": "43de5782d66036211eb695b721168503fad1b746c93f165a381c34dd1829ba72"
+      "sha256": "ac22300b7b15464744ca1403203313b4290bbcd8d1f246ed37d663e144707785"
     },
     {
       "kind": "runtime-control-plane",
