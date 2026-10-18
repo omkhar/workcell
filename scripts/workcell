@@ -7473,6 +7473,7 @@ run_runtime_image_build_with_retries() {
         --load
         -t "${IMAGE_TAG}"
         -f "${ROOT_DIR}/runtime/container/Dockerfile"
+        --target runtime
         "${ROOT_DIR}"
       )
       if [[ -n "${codex_release_url}" ]]; then
