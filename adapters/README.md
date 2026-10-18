@@ -11,6 +11,10 @@ and behavior):
 - [`copilot/`](copilot/README.md)
 - [`gemini/`](gemini/README.md)
 
+Uncertified adapters (a launch needs `--allow-uncertified-agent`):
+
+- [`opencode/`](opencode/README.md)
+
 Unsupported fail-closed scaffolds:
 
 - [`antigravity/`](antigravity/README.md)

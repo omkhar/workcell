@@ -108,4 +108,15 @@ var providers = []providerDefinition{
 			},
 		},
 	},
+	{
+		id:                       "opencode",
+		sharedCredentialsEnabled: false,
+		tables: providerTables{
+			credentialKeys:           []string{},
+			credentialContainerPaths: map[string]string{},
+			reservedTargets: []string{
+				"/state/agent-home/.config/opencode",
+			},
+		},
+	},
 }

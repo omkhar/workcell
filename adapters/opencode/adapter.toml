@@ -1,0 +1,46 @@
+# Workcell adapter manifest; see adapters/README.md. No review certified this
+# CLI, so its options pass only through [flags] allow (reject_manifest_args).
+
+schema = 1
+id = "opencode"
+tier = "uncertified"
+binary = "opencode"
+
+[install]
+method = "npm"
+package = "opencode-ai"
+provenance = "scripts/verify-upstream-opencode-release.sh"
+
+# seed_opencode_home creates the OpenCode config directory, so an injection
+# policy may not stage a file there.
+[home]
+reserved_targets = ["/state/agent-home/.config/opencode"]
+
+# OpenCode Zen (opencode.ai) serves the default models. Workcell stages no
+# opencode credential.
+[egress]
+endpoints = ["opencode.ai:443"]
+
+# Classifies tests/fixtures/flags/opencode.txt. The default command starts the
+# terminal UI; run is the only other allowed command. deny names the network
+# listeners, the remote server attach, the self-approval options, and the
+# hidden --yolo, --dangerously-skip-permissions, and --share options.
+[flags]
+subcommands = ["run"]
+other_commands = [
+  "completion", "acp", "mcp", "attach", "debug", "providers", "auth", "agent",
+  "upgrade", "uninstall", "serve", "web", "models", "stats", "export",
+  "import", "github", "pr", "session", "plugin", "plug", "db",
+]
+allow = [
+  "-c", "--command", "--continue", "--agent", "--dir", "-f", "--file",
+  "--fork", "--format", "-h", "--help", "-i", "--interactive", "--log-level",
+  "-m", "--mini", "--model", "--no-replay", "--print-logs", "--prompt",
+  "--pure", "--replay-limit", "-s", "--session", "--thinking", "--title",
+  "-v", "--variant", "--version",
+]
+deny = [
+  "--attach", "--auto", "--cors", "--dangerously-skip-permissions",
+  "--hostname", "--mdns", "--mdns-domain", "-p", "--password", "--port",
+  "--share", "-u", "--username", "--yolo",
+]
