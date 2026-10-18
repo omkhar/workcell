@@ -284,3 +284,52 @@ func TestRestampFlagFixturesRefusesSymlinkedParent(t *testing.T) {
 		t.Fatalf("outside fixture = %q, want it unchanged", got)
 	}
 }
+
+// An uncertified npm adapter has a fixture stamped with its pin in the
+// uncertified provider package.json. The static check and the restamp cover
+// it; the container probe plan does not, because the Tier 1 image lacks it.
+func TestFlagInventoryCoversUncertifiedAdapter(t *testing.T) {
+	t.Parallel()
+
+	root := writeFlagInventoryRepo(t, "# demo-version: 1.2.3\n--model\n--yolo\n")
+	for _, dir := range []string{"adapters/undemo", "runtime/container/providers-uncertified"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWriteText(t, filepath.Join(root, "adapters", "undemo", "adapter.toml"), `schema = 1
+id = "undemo"
+tier = "uncertified"
+binary = "undemo"
+
+[install]
+method = "npm"
+package = "undemo-cli"
+provenance = "scripts/verify-undemo.sh"
+
+[flags]
+allow = ["--model"]
+deny = ["--auto"]
+`)
+	mustWriteText(t, filepath.Join(root, "runtime", "container", "providers-uncertified", "package.json"), `{"dependencies":{"undemo-cli":"4.5.6"}}`)
+	if plan, err := FlagInventoryPlan(root); err != nil || plan != "demo demo exec\n" {
+		t.Fatalf("FlagInventoryPlan() = %q, %v, want only the certified adapter", plan, err)
+	}
+	if err := CheckFlagInventory(root); err == nil {
+		t.Fatal("CheckFlagInventory() = nil, want the missing undemo fixture to fail")
+	}
+	mustWriteText(t, FlagFixturePath(root, "undemo"), "# undemo-version: 4.5.5\n--auto\n--model\n")
+	if err := CheckFlagInventory(root); err == nil || !strings.Contains(err.Error(), "stamp 4.5.5 does not match the undemo pin 4.5.6") {
+		t.Fatalf("CheckFlagInventory() = %v, want the stale undemo stamp", err)
+	}
+	if err := RestampFlagFixtures(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFlagInventory(root); err != nil {
+		t.Fatalf("CheckFlagInventory() after restamp = %v, want nil", err)
+	}
+	mustWriteText(t, FlagFixturePath(root, "undemo"), "# undemo-version: 4.5.6\n--auto\n--model\n--port\n")
+	if err := CheckFlagInventory(root); err == nil || !strings.Contains(err.Error(), "flag --port is not classified") {
+		t.Fatalf("CheckFlagInventory() = %v, want unclassified --port", err)
+	}
+}

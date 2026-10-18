@@ -438,6 +438,9 @@ case "${AGENT_NAME}:${WORKCELL_AGENT_AUTONOMY}" in
       "--available-tools=view,create,edit,apply_patch,grep,glob"
     )
     ;;
+  opencode:yolo)
+    MANAGED_AUTONOMY_ARGS=(--auto)
+    ;;
 esac
 
 declare -a MANAGED_COPILOT_SAFETY_ARGS=(
@@ -506,6 +509,23 @@ case "${AGENT_NAME}" in
     # Gemini CLI self-relaunch conflicts with Workcell's protected exec boundary.
     GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/libexec/workcell/real/node \
       "$(gemini_provider_script_path)" \
+      "${MANAGED_AUTONOMY_ARGS[@]}" \
+      "$@"
+    ;;
+  opencode)
+    reject_manifest_args opencode "$@"
+    for env_name in "${!OPENCODE_@}"; do
+      unset "${env_name}"
+    done
+    # The workspace config and .opencode/ directories are repository input,
+    # so OpenCode reads only the session-home and the managed configuration.
+    # OPENCODE_CONFIG_CONTENT applies after the session-home file.
+    OPENCODE_CONFIG_CONTENT='{"autoupdate":false,"share":"disabled"}' \
+      OPENCODE_DISABLE_PROJECT_CONFIG=1 \
+      OPENCODE_DISABLE_AUTOUPDATE=1 \
+      OPENCODE_DISABLE_MODELS_FETCH=1 \
+      OPENCODE_DISABLE_LSP_DOWNLOAD=1 \
+      exec /usr/local/libexec/workcell/real/opencode \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
     ;;

@@ -1,0 +1,43 @@
+# Option inventory for the PINNED runtime opencode CLI. The stamp must equal the pin.
+# opencode-version: 1.19.3
+# Regenerate: workcell-citools flag-inventory write with the help from the runtime-uncertified image. Classify: adapters/opencode/adapter.toml [flags].
+--agent
+--attach
+--auto
+--command
+--continue
+--cors
+--dir
+--file
+--fork
+--format
+--help
+--hostname
+--interactive
+--log-level
+--mdns
+--mdns-domain
+--mini
+--model
+--no-replay
+--password
+--port
+--print-logs
+--prompt
+--pure
+--replay-limit
+--session
+--thinking
+--title
+--username
+--variant
+--version
+-c
+-f
+-h
+-i
+-m
+-p
+-s
+-u
+-v
