@@ -182,7 +182,7 @@ func publishSnapshot(opts snapshotCaptureOptions, scratch string) error {
 	defer func() { _ = storeFile.Close() }()
 	storePath := storeFile.Name()
 
-	check := func() error { return requireSameDirectory(storeFile, storePath) }
+	check := func() error { return requireSameDirectory(storeFile, storePath, "snapshot store") }
 	if err := check(); err != nil {
 		return err
 	}
@@ -223,19 +223,21 @@ func snapshotInitArgs(gitHead, dir string) []string {
 }
 
 // requireSameDirectory fails when path no longer names the directory the
-// descriptor holds, so a store component swapped for a symlink or another
-// directory during a git run is detected before the result is trusted.
-func requireSameDirectory(dir *os.File, path string) error {
+// descriptor holds, so a component of the snapshot store or the session
+// workspace that was swapped for a symlink or another directory during a git
+// run is detected before the result is trusted. label names the directory in
+// the error.
+func requireSameDirectory(dir *os.File, path, label string) error {
 	held, err := dir.Stat()
 	if err != nil {
 		return err
 	}
 	now, err := os.Stat(path) // hardened-fs-exempt: this stats the path by name on purpose, to prove it still names the directory the descriptor holds
 	if err != nil {
-		return fmt.Errorf("the snapshot store path changed: %w", err)
+		return fmt.Errorf("the %s path changed: %w", label, err)
 	}
 	if !os.SameFile(held, now) {
-		return fmt.Errorf("the snapshot store path changed while it was in use: %s", path)
+		return fmt.Errorf("the %s path changed while it was in use: %s", label, path)
 	}
 	return nil
 }

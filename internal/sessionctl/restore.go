@@ -17,6 +17,7 @@ import (
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/shellproto"
 )
 
@@ -195,19 +196,23 @@ func restoreApply(opts restoreApplyOptions) error {
 	case !snapshotOriginHashPattern.MatchString(opts.OriginHash):
 		return errors.New("the origin hash is not a sha256 digest")
 	}
-	info, err := os.Lstat(opts.Workspace)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("the session workspace is not a directory: %s", opts.Workspace)
+	// Git writes the worktree by pathname, so hold the workspace directory open
+	// through a no-follow walk and prove before and after each git write that
+	// the path still names it. A symlink anywhere in the path is refused.
+	workspace, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(opts.Workspace, "anchor"))
+	if err != nil {
+		return fmt.Errorf("the session workspace is not a directory: %s: %w", opts.Workspace, err)
 	}
-
+	defer func() { _ = workspace.Close() }()
+	check := func() error { return requireSameDirectory(workspace, workspace.Name(), "session workspace") }
 	return withScratchGitDir("workcell-restore.", func(scratch string) error {
-		return restoreThroughScratch(opts, scratch)
+		return restoreThroughScratch(opts, workspace.Name(), check, scratch)
 	})
 }
 
 // restoreThroughScratch fetches the signed snapshot commit into the private
 // git dir scratch, checks it, and applies its tree to the workspace.
-func restoreThroughScratch(opts restoreApplyOptions, scratch string) error {
+func restoreThroughScratch(opts restoreApplyOptions, workspacePath string, check func() error, scratch string) error {
 	// The scratch dir is the git dir, so git reads no config, index, or object
 	// from the session clone .git. The fetch rehashes every object it gets.
 	git := func(args ...string) (string, error) {
@@ -230,11 +235,17 @@ func restoreThroughScratch(opts restoreApplyOptions, scratch string) error {
 	}
 	// The scratch index first takes the current worktree, so the reset then
 	// removes the files that the snapshot tree does not have.
-	worktree := "--work-tree=" + opts.Workspace
+	worktree := "--work-tree=" + workspacePath
 	for _, step := range [][]string{{worktree, "add", "-A"}, {worktree, "read-tree", "-u", "--reset", opts.Tree}} {
+		if err := check(); err != nil {
+			return err
+		}
 		if _, err := git(step...); err != nil {
 			return err
 		}
+	}
+	if err := check(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -134,7 +134,7 @@ func TestRequireSameDirectoryDetectsSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer held.Close() //nolint:errcheck // test fixture
-	if err := requireSameDirectory(held, dir); err != nil {
+	if err := requireSameDirectory(held, dir, "snapshot store"); err != nil {
 		t.Fatalf("unchanged directory rejected: %v", err)
 	}
 	if err := os.Rename(dir, filepath.Join(root, "moved")); err != nil {
@@ -143,7 +143,7 @@ func TestRequireSameDirectoryDetectsSwap(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := requireSameDirectory(held, dir); err == nil {
+	if err := requireSameDirectory(held, dir, "snapshot store"); err == nil {
 		t.Fatal("a swapped directory was accepted")
 	}
 }

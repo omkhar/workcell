@@ -264,6 +264,16 @@ func TestRestoreApplyRefusesUnsignedValues(t *testing.T) {
 	if err := restoreApply(symlinked); err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Fatalf("symlinked workspace error = %v", err)
 	}
+	// A symlink in an ancestor of the workspace is refused too.
+	ancestorLink := filepath.Join(t.TempDir(), "parent-link")
+	if err := os.Symlink(filepath.Dir(opts.Workspace), ancestorLink); err != nil {
+		t.Fatal(err)
+	}
+	viaAncestor := opts
+	viaAncestor.Workspace = filepath.Join(ancestorLink, filepath.Base(opts.Workspace))
+	if err := restoreApply(viaAncestor); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("workspace behind a symlinked ancestor error = %v", err)
+	}
 	// None of the refusals changed the worktree.
 	if got, err := os.ReadFile(filepath.Join(opts.Workspace, "tracked.txt")); err != nil || string(got) != "later\n" {
 		t.Fatalf("tracked.txt = %q, %v", got, err)
