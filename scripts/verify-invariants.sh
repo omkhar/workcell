@@ -244,6 +244,7 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-amp-release.sh"
 )
 REPO_PRECOMMIT_HOOK="${ROOT_DIR}/.githooks/pre-commit"
 # --live-lane-only runs only the Darwin live-Colima lane, with its own fixtures.

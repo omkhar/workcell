@@ -186,6 +186,7 @@ verify_provider_releases() {
   WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-amp-release.sh"
 }
 
 if [[ "${mode}" == "summary" ]]; then

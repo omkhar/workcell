@@ -26,6 +26,9 @@ echo "[ci/pin-hygiene] upstream Gemini release"
 echo "[ci/pin-hygiene] upstream OpenCode release"
 "${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
 
+echo "[ci/pin-hygiene] upstream Amp release"
+"${ROOT_DIR}/scripts/verify-upstream-amp-release.sh"
+
 echo "[ci/pin-hygiene] pinned upstream refresh status"
 "${ROOT_DIR}/scripts/update-upstream-pins.sh" --check
 

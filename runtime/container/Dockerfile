@@ -272,19 +272,23 @@ WORKDIR /opt/workcell/providers-uncertified
 COPY runtime/container/providers-uncertified /opt/workcell/providers-uncertified
 COPY --chmod=0555 runtime/container/install-provider-packages.sh /usr/local/bin/install-provider-packages.sh
 
-# The opencode-ai package needs its install script to pick a binary, so the
-# build picks it: the glibc package of the target architecture. On amd64 the
-# baseline build also runs on a CPU without AVX2.
+# The opencode-ai and @ampcode/cli packages need their install scripts to
+# pick a binary, so the build picks it: the glibc package of the target
+# architecture. On amd64 the opencode baseline build also runs on a CPU
+# without AVX2; amp publishes one linux-x64 build.
 RUN install-provider-packages.sh /opt/workcell/providers-uncertified \
   && case "${TARGETARCH}" in \
-       arm64) opencode_package="opencode-linux-arm64" ;; \
-       amd64) opencode_package="opencode-linux-x64-baseline" ;; \
-       *) echo "Unsupported TARGETARCH for opencode: ${TARGETARCH}" >&2; exit 1 ;; \
+       arm64) opencode_package="opencode-linux-arm64" amp_package="@ampcode/cli-linux-arm64" ;; \
+       amd64) opencode_package="opencode-linux-x64-baseline" amp_package="@ampcode/cli-linux-x64" ;; \
+       *) echo "Unsupported TARGETARCH for the uncertified CLIs: ${TARGETARCH}" >&2; exit 1 ;; \
      esac \
   && install -D -m 0755 \
     "/opt/workcell/providers-uncertified/node_modules/${opencode_package}/bin/opencode" \
     /out/opencode \
-  && touch -h -d "@${SOURCE_DATE_EPOCH}" /out/opencode
+  && install -D -m 0755 \
+    "/opt/workcell/providers-uncertified/node_modules/${amp_package}/amp" \
+    /out/amp \
+  && touch -h -d "@${SOURCE_DATE_EPOCH}" /out/opencode /out/amp
 
 FROM runtime-base AS runtime-builder
 
@@ -729,6 +733,7 @@ FROM runtime AS runtime-uncertified
 LABEL org.workcell.runtime-stage="runtime-uncertified"
 
 COPY --from=uncertified-provider-builder --chown=0:0 --chmod=0755 /out/opencode /usr/local/libexec/workcell/real/opencode
+COPY --from=uncertified-provider-builder --chown=0:0 --chmod=0755 /out/amp /usr/local/libexec/workcell/real/amp
 
 USER 0:0
 RUN ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/opencode \
