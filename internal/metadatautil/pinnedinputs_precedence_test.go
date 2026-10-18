@@ -99,3 +99,39 @@ func TestCheckPinnedInputsPreservesCompoundValidationFailurePrecedence(t *testin
 		})
 	}
 }
+
+// The uncertified provider lockfile gets the Tier 1 lockfile rules: an exact
+// root pin, and an npm registry tarball with integrity for every entry.
+func TestCheckPinnedInputsValidatesUncertifiedProviderLock(t *testing.T) {
+	for _, tc := range []struct {
+		name, old, new, want string
+	}{
+		{
+			name: "source",
+			old:  "https://registry.npmjs.org/opencode-linux-arm64/",
+			new:  "https://mirror.example/opencode-linux-arm64/",
+			want: "runtime/container/providers-uncertified/package-lock.json: provider lockfile entry uses an unexpected source (node_modules/opencode-linux-arm64)",
+		},
+		{
+			name: "root pin",
+			old:  `"opencode-ai": "1.`,
+			new:  `"opencode-ai": "^1.`,
+			want: "runtime/container/providers-uncertified/package-lock.json root dependencies do not match package.json",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := writePinnedInputsFixture(t)
+			lock := filepath.Join(filepath.Dir(filepath.Dir(cfg.ProvidersPackageLockPath)), "providers-uncertified", "package-lock.json")
+			rewriteFile(t, lock, func(content string) string {
+				if !strings.Contains(content, tc.old) {
+					t.Fatalf("fixture lockfile has no %q", tc.old)
+				}
+				return strings.Replace(content, tc.old, tc.new, 1)
+			})
+			err := metadatautil.CheckPinnedInputs(cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

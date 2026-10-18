@@ -259,6 +259,33 @@ COPY --chmod=0555 runtime/container/install-provider-packages.sh /usr/local/bin/
 
 RUN install-provider-packages.sh /opt/workcell/providers
 
+# The npm CLIs of uncertified adapters install here, apart from the Tier 1
+# provider packages. Only the runtime-uncertified stage copies their output.
+FROM runtime-base AS uncertified-provider-builder
+
+ARG SOURCE_DATE_EPOCH
+ARG TARGETARCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+WORKDIR /opt/workcell/providers-uncertified
+
+COPY runtime/container/providers-uncertified /opt/workcell/providers-uncertified
+COPY --chmod=0555 runtime/container/install-provider-packages.sh /usr/local/bin/install-provider-packages.sh
+
+# The opencode-ai package needs its install script to pick a binary, so the
+# build picks it: the glibc package of the target architecture. On amd64 the
+# baseline build also runs on a CPU without AVX2.
+RUN install-provider-packages.sh /opt/workcell/providers-uncertified \
+  && case "${TARGETARCH}" in \
+       arm64) opencode_package="opencode-linux-arm64" ;; \
+       amd64) opencode_package="opencode-linux-x64-baseline" ;; \
+       *) echo "Unsupported TARGETARCH for opencode: ${TARGETARCH}" >&2; exit 1 ;; \
+     esac \
+  && install -D -m 0755 \
+    "/opt/workcell/providers-uncertified/node_modules/${opencode_package}/bin/opencode" \
+    /out/opencode \
+  && touch -h -d "@${SOURCE_DATE_EPOCH}" /out/opencode
+
 FROM runtime-base AS runtime-builder
 
 # Anthropic Claude Code native binary version and SHA256 checksums for each
@@ -700,6 +727,8 @@ ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]
 FROM runtime AS runtime-uncertified
 
 LABEL org.workcell.runtime-stage="runtime-uncertified"
+
+COPY --from=uncertified-provider-builder --chown=0:0 --chmod=0755 /out/opencode /usr/local/libexec/workcell/real/opencode
 
 # Each build names its target. A build without --target reaches this stage and
 # fails, so no build gets an uncertified image by default.

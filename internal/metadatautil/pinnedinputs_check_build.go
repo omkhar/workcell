@@ -119,7 +119,14 @@ func (check *pinnedInputsCheck) validateRustupDigests() error {
 }
 
 func (check *pinnedInputsCheck) validateProviderLock() error {
-	return validateNodeProviderLock(check.providersPackageJSON, check.providersPackageLock)
+	return firstPinnedInputError(
+		func() error {
+			return validateNodeProviderLock("runtime/container/providers/package-lock.json", check.providersPackageJSON, check.providersPackageLock)
+		},
+		func() error {
+			return validateNodeProviderLock("runtime/container/providers-uncertified/package-lock.json", check.uncertifiedPackageJSON, check.uncertifiedPackageLock)
+		},
+	)
 }
 
 func (check *pinnedInputsCheck) validateBuildxPins() error {

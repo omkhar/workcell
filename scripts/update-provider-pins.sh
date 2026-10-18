@@ -32,6 +32,8 @@ POLICY_PATH="${ROOT_DIR}/policy/provider-bumps.toml"
 DOCKERFILE_PATH="${ROOT_DIR}/runtime/container/Dockerfile"
 PROVIDERS_PACKAGE_JSON_PATH="${ROOT_DIR}/runtime/container/providers/package.json"
 PROVIDERS_DIR="${ROOT_DIR}/runtime/container/providers"
+# The npm pins of uncertified adapters; only the runtime-uncertified image uses them.
+UNCERTIFIED_PROVIDERS_DIR="${ROOT_DIR}/runtime/container/providers-uncertified"
 CODEX_SUBCOMMAND_FIXTURE_PATH="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"
 
 mode="summary"
@@ -120,7 +122,7 @@ if [[ "${mode}" == "apply" ]]; then
   export PATH="${npm_bin_dir}:${PATH}"
 fi
 
-plan_cmd=(go run ./cmd/workcell-citools provider-bump-plan "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}")
+plan_cmd=(go run ./cmd/workcell-citools provider-bump-plan "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}" "${UNCERTIFIED_PROVIDERS_DIR}/package.json")
 if [[ -n "${now_override}" ]]; then
   plan_cmd+=("${now_override}")
 fi
@@ -156,6 +158,14 @@ print_summary() {
         )
     ),
     (
+      ($plan.uncertified // {})
+      | to_entries
+      | sort_by(.key)
+      | .[]
+      | "  " + .key + " (uncertified npm): " + .value.current_version + " -> " + .value.target_version +
+        (if .value.changed then " (update available, published " + .value.published_at + ")" else " (up to date)" end)
+    ),
+    (
       $plan.providers
       | to_entries
       | sort_by(.key)
@@ -175,6 +185,7 @@ verify_provider_releases() {
   "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
   WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
 }
 
 if [[ "${mode}" == "summary" ]]; then
@@ -202,6 +213,7 @@ plan_path="$(mktemp "${TMPDIR:-/tmp}/workcell-provider-bump-plan.XXXXXX.json")"
 codex_fixture_candidate=""
 dockerfile_candidate=""
 providers_candidate_dir=""
+uncertified_candidate_dir=""
 
 # A provider package directory stages its package.json and package-lock.json in
 # a candidate directory below itself. The candidate refreshes the lockfile, and
@@ -262,6 +274,7 @@ cleanup_apply() {
   [[ -z "${codex_fixture_candidate}" ]] || rm -f "${codex_fixture_candidate}"
   [[ -z "${dockerfile_candidate}" ]] || rm -f "${dockerfile_candidate}"
   clean_provider_candidate "${providers_candidate_dir}" "${PROVIDERS_DIR}"
+  clean_provider_candidate "${uncertified_candidate_dir}" "${UNCERTIFIED_PROVIDERS_DIR}"
 }
 trap cleanup_apply EXIT
 printf '%s\n' "${plan_json}" >"${plan_path}"
@@ -282,6 +295,8 @@ dockerfile_candidate="$(mktemp "${DOCKERFILE_PATH}.XXXXXX")"
 cp -p -- "${DOCKERFILE_PATH}" "${dockerfile_candidate}"
 providers_candidate_dir="$(mktemp -d "${PROVIDERS_DIR}/.workcell-provider-bump.XXXXXX")"
 stage_provider_packages "${PROVIDERS_DIR}" "${providers_candidate_dir}"
+uncertified_candidate_dir="$(mktemp -d "${UNCERTIFIED_PROVIDERS_DIR}/.workcell-provider-bump.XXXXXX")"
+stage_provider_packages "${UNCERTIFIED_PROVIDERS_DIR}" "${uncertified_candidate_dir}"
 
 (
   cd "${ROOT_DIR}"
@@ -289,11 +304,15 @@ stage_provider_packages "${PROVIDERS_DIR}" "${providers_candidate_dir}"
     "${plan_path}" \
     "${POLICY_PATH}" \
     "${dockerfile_candidate}" \
-    "${providers_candidate_dir}/package.json"
+    "${providers_candidate_dir}/package.json" \
+    "${uncertified_candidate_dir}/package.json"
 )
 
 refresh_provider_lockfile "${providers_candidate_dir}"
+refresh_provider_lockfile "${uncertified_candidate_dir}"
 
+publish_provider_packages "${uncertified_candidate_dir}" "${UNCERTIFIED_PROVIDERS_DIR}"
+uncertified_candidate_dir=""
 publish_provider_packages "${providers_candidate_dir}" "${PROVIDERS_DIR}"
 providers_candidate_dir=""
 if [[ -n "${codex_fixture_candidate}" ]]; then

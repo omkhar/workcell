@@ -279,6 +279,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
   "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
   "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"

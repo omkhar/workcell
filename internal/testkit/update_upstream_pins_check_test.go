@@ -563,6 +563,8 @@ func writeUpdaterFixture(t *testing.T, manifest updaterFixtureManifest, manifest
 		"runtime/container/debian-bootstrap.env",
 		"runtime/container/providers/package-lock.json",
 		"runtime/container/providers/package.json",
+		"runtime/container/providers-uncertified/package-lock.json",
+		"runtime/container/providers-uncertified/package.json",
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/check-pinned-inputs.sh",
