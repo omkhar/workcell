@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -310,6 +311,13 @@ func TestLauncherGatesUncertifiedAdapter(t *testing.T) {
 		}
 	}
 
+	// The launch support check refuses a host other than the reviewed launch
+	// host (Apple Silicon macOS) before a dry run, for example the Linux
+	// validator without /dev/kvm. The refusals above ran on every host; the
+	// suite on the macOS host runs the dry runs below.
+	if runtime.GOOS != "darwin" {
+		t.Skip("the dry runs need the reviewed launch host, macOS")
+	}
 	code, stdout, stderr := launcherRun(t, root, "--agent", "zz-fixture", "--allow-uncertified-agent", "--dry-run")
 	if code != 0 {
 		t.Fatalf("uncertified dry run exited %d: %s", code, stderr)
