@@ -2692,4 +2692,21 @@ func TestUncertifiedProviderBumpsPlanAndApply(t *testing.T) {
 	if err := ApplyUncertifiedProviderBumpPlan(planPath, packageJSON); err == nil || !strings.Contains(err.Error(), "plans evil-pkg, which") {
 		t.Fatalf("ApplyUncertifiedProviderBumpPlan(unpinned package) = %v", err)
 	}
+	// A symlinked package file is refused on the read, so the file that is
+	// checked is the file that would be replaced, and the link target stays.
+	content, _ = json.Marshal(ProviderBumpPlan{Uncertified: map[string]ProviderBumpSelection{"opencode-ai": {TargetVersion: "1.3.0"}}})
+	if err := os.WriteFile(planPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(dir, "linked-package.json")
+	if err := os.Symlink(packageJSON, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(packageJSON)
+	if err := ApplyUncertifiedProviderBumpPlan(planPath, linkPath); err == nil {
+		t.Fatal("ApplyUncertifiedProviderBumpPlan(symlinked package) succeeded, want a no-follow refusal")
+	}
+	if after, _ := os.ReadFile(packageJSON); string(after) != string(before) {
+		t.Fatalf("a symlinked package path changed its target: %s", after)
+	}
 }

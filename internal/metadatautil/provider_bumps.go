@@ -407,14 +407,22 @@ func ApplyUncertifiedProviderBumpPlan(planPath, packageJSONPath string) error {
 	if err := json.Unmarshal(content, &plan); err != nil {
 		return err
 	}
-	var pkg providersPackageJSON
-	if err := readJSONFile(packageJSONPath, &pkg); err != nil {
-		return err
-	}
-	text, err := readText(packageJSONPath)
+	// One no-follow parent descriptor serves the read and the atomic write, so
+	// the file that is validated is the file that is replaced.
+	parent, path, err := rootio.OpenParentDirectoryNoFollow(packageJSONPath)
 	if err != nil {
 		return err
 	}
+	defer parent.Close()
+	raw, err := rootio.ReadFileAtNoFollow(parent, filepath.Base(path), "uncertified provider package", providerBumpMaxJSONBytes)
+	if err != nil {
+		return err
+	}
+	var pkg providersPackageJSON
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return fmt.Errorf("%s: %w", packageJSONPath, err)
+	}
+	text := string(raw)
 	updated := text
 	for name, selection := range plan.Uncertified {
 		if !stableVersionPattern.MatchString(selection.TargetVersion) {
@@ -429,11 +437,6 @@ func ApplyUncertifiedProviderBumpPlan(planPath, packageJSONPath string) error {
 	if updated == text {
 		return nil
 	}
-	parent, path, err := rootio.OpenParentDirectoryNoFollow(packageJSONPath)
-	if err != nil {
-		return err
-	}
-	defer parent.Close()
 	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(path), []byte(updated), 0o644, ".uncertified-bump-")
 }
 
