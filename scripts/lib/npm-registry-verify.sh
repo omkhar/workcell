@@ -73,3 +73,24 @@ verify_lock_package_tree() {
       "$(extract_lock_field "${lock_path}" "${package_path}" "integrity")"
   done <<<"${root_name}"$'\n'"${package_names}"
 }
+
+# verify_pinned_package_tree PACKAGE_JSON_PATH LOCK_PATH NAME fails unless
+# package.json pins NAME at the lockfile version, and the registry confirms the
+# lockfile entries of NAME and its dependencies.
+verify_pinned_package_tree() {
+  local package_json_path="$1"
+  local lock_path="$2"
+  local package_name="$3"
+  local pinned_version lock_version
+  pinned_version="$(jq -r --arg name "${package_name}" '.dependencies[$name] // empty' "${package_json_path}")"
+  if [[ -z "${pinned_version}" ]]; then
+    echo "package.json must pin ${package_name}" >&2
+    exit 1
+  fi
+  lock_version="$(extract_lock_field "${lock_path}" "node_modules/${package_name}" "version")"
+  if [[ "${lock_version}" != "${pinned_version}" ]]; then
+    echo "${package_name} package-lock version mismatch: package.json=${pinned_version}, package-lock=${lock_version}" >&2
+    exit 1
+  fi
+  verify_lock_package_tree "${lock_path}" "${package_name}"
+}
