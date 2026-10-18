@@ -708,3 +708,16 @@ ENV PATH=/usr/local/bin:/usr/bin:/bin
 USER 65532:65532
 
 ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]
+
+# An uncertified adapter runs this image. Its agents install here, so a new
+# uncertified agent does not change the runtime (Tier 1) image.
+FROM runtime AS runtime-uncertified
+
+LABEL org.workcell.runtime-stage="runtime-uncertified"
+
+# Each build names its target. A build without --target reaches this stage and
+# fails, so no build gets an uncertified image by default.
+FROM runtime-base AS require-build-target
+
+RUN echo "Build runtime/container/Dockerfile with --target runtime or --target runtime-uncertified." >&2 \
+  && exit 1

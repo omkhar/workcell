@@ -265,7 +265,7 @@ func TestCheckPinnedInputsRejectsAptBrokerBuildContractDrift(t *testing.T) {
 			name: "appended-final-stage",
 			old:  `ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]`,
 			new:  "ENTRYPOINT [\"/usr/local/bin/workcell-entrypoint\"]\n\n  FROM runtime-base AS alternate-final",
-			want: "final runtime stage must be the last Docker stage",
+			want: "stages after the runtime stage must be exactly",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,5 +355,24 @@ func TestAptBrokerBuilderCopiesEveryInternalDependency(t *testing.T) {
 		if found < 3 {
 			t.Fatalf("go list for %s found %d workcell packages, want at least the three built commands", arch, found)
 		}
+	}
+}
+
+// Only the uncertified stage and the failing guard follow the runtime stage, so
+// a runtime build without --target produces no image.
+func TestCheckPinnedInputsRejectsRuntimeStageTailDrift(t *testing.T) {
+	const stagesWant = "stages after the runtime stage must be exactly"
+	const guardWant = "must end with the require-build-target guard stage"
+	for _, tc := range []struct{ name, old, new, want string }{
+		{"uncertified-stage-removed", "FROM runtime AS runtime-uncertified\n", "", stagesWant},
+		{"uncertified-stage-from-runtime-base", "FROM runtime AS runtime-uncertified\n", "FROM runtime-base AS runtime-uncertified\n", stagesWant},
+		{"guard-stage-removed", "FROM runtime-base AS require-build-target\n", "", stagesWant},
+		{"stage-after-guard", "  && exit 1\n", "  && exit 1\n\nFROM runtime AS default-final\n", stagesWant},
+		{"guard-does-not-fail", "  && exit 1\n", "  && exit 0\n", guardWant},
+		{"guard-extra-instruction", "  && exit 1\n", "  && exit 1\n\nLABEL decoy=1\n", guardWant},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirePinnedInputsErrorContains(t, rewriteAptBrokerDockerfile(t, tc.old, tc.new), tc.want)
+		})
 	}
 }

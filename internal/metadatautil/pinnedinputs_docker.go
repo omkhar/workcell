@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -44,7 +45,10 @@ func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerf
 	if err := validator.validateAptBrokerBuildInputs(); err != nil {
 		return err
 	}
-	return validateRuntimeBuildPreload(runtimeDockerfile, cfg.RuntimeDockerfilePath)
+	if err := validateRuntimeBuildPreload(runtimeDockerfile, cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	return validateBuildTargetGuard(runtimeDockerfile)
 }
 
 type dockerPinnedInputValidator struct {
@@ -571,11 +575,36 @@ func (validator *dockerPinnedInputValidator) aptBrokerRuntimeStage() (string, er
 		return "", errors.New("runtime/container/Dockerfile must contain exactly one final runtime stage")
 	}
 	stage := strings.SplitN(validator.runtimeDockerfile, stageStart, 2)[1]
-	if regexp.MustCompile(`(?mi)^[\t ]*FROM[\t ]`).MatchString(stage) {
-		return "", errors.New("runtime/container/Dockerfile final runtime stage must be the last Docker stage")
+	// Only the uncertified stage and the no-target guard follow the runtime
+	// stage, so a build without --target fails instead of producing an image.
+	var got []string
+	for line := range strings.Lines(stage) {
+		if fields := strings.Fields(line); len(fields) > 0 && strings.EqualFold(fields[0], "FROM") {
+			got = append(got, strings.Join(fields, " "))
+		}
 	}
-	return stage, nil
+	if !slices.Equal(got, []string{uncertifiedStageStart, buildTargetGuardStart}) {
+		return "", fmt.Errorf("runtime/container/Dockerfile stages after the runtime stage must be exactly %q and %q, found %q", uncertifiedStageStart, buildTargetGuardStart, got)
+	}
+	return strings.SplitN(stage, uncertifiedStageStart+"\n", 2)[0], nil
 }
+
+// validateBuildTargetGuard requires the last stage to fail, so a build without
+// --target gets no image. Comments do not count; any other instruction fails.
+func validateBuildTargetGuard(runtimeDockerfile string) error {
+	_, guard, ok := strings.Cut(runtimeDockerfile, "\n"+buildTargetGuardStart+"\n")
+	if !ok || strings.TrimSpace(dockerfileInstructions(guard)) != buildTargetGuard {
+		return errors.New("runtime/container/Dockerfile must end with the require-build-target guard stage that fails a build without --target")
+	}
+	return nil
+}
+
+const (
+	uncertifiedStageStart = "FROM runtime AS runtime-uncertified"
+	buildTargetGuardStart = "FROM runtime-base AS require-build-target"
+	buildTargetGuard      = `RUN echo "Build runtime/container/Dockerfile with --target runtime or --target runtime-uncertified." >&2 \
+  && exit 1`
+)
 
 func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeBinaries(runtimeStage string) error {
 	// Count instructions, not text: a comment naming a binary changes nothing.

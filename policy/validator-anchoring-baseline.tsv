@@ -100,7 +100,7 @@ internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe1138
 internal/metadatautil	definedName	0f1edc2e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	docClaimRule	3ac775b1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.aptBrokerBuilderStage	174cd5ff	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	dockerPinnedInputValidator.aptBrokerRuntimeStage	23121551,c4f09ac0	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerPinnedInputValidator.aptBrokerRuntimeStage	23121551	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateAptBrokerRuntimeInstall	851e5f5b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateProviderVersions	2f0141d4	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateValidatorDeadcode	4a31dbf9	unreviewed debt: review the subject, then port or justify
