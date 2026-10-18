@@ -92,20 +92,24 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 		return "", "", fmt.Errorf("session snapshot requires a self-contained git workspace: %s", opts.Workspace)
 	}
 
-	scratch, err := os.MkdirTemp("", "workcell-snapshot.") // hardened-fs-exempt: this creates a fresh owner-only directory with O_EXCL semantics
-	if err != nil {
-		return "", "", err
-	}
-	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
+	err = withScratchGitDir("workcell-snapshot.", func(scratch string) error {
+		tree, commit, err = captureIntoScratch(opts, gitDir, scratch)
+		return err
+	})
+	return tree, commit, err
+}
 
+// captureIntoScratch writes the snapshot of the workspace through the private
+// git dir scratch and publishes it to the store.
+func captureIntoScratch(opts snapshotCaptureOptions, gitDir, scratch string) (tree, commit string, err error) {
 	// The scratch dir is the git dir: its index is the temporary index and its
 	// config is the only config git reads, so the workspace .git/config and
 	// .git/index are untouched. The workspace objects are a read-only
 	// alternate; the store fetch rehashes them, so a forged object fails closed.
 	scratchGit := func(args ...string) (string, error) {
-		return runSnapshotGit(opts, scratch, append([]string{"--git-dir=" + scratch, "--work-tree=" + opts.Workspace}, args...)...)
+		return runSnapshotGit(opts.GitBin, scratch, append([]string{"--git-dir=" + scratch, "--work-tree=" + opts.Workspace}, args...)...)
 	}
-	if _, err := runSnapshotGit(opts, scratch, snapshotInitArgs(opts.GitHead, scratch)...); err != nil {
+	if _, err := runSnapshotGit(opts.GitBin, scratch, snapshotInitArgs(opts.GitHead, scratch)...); err != nil {
 		return "", "", err
 	}
 	if err := writeSnapshotAlternates(scratch, filepath.Join(gitDir, "objects")); err != nil {
@@ -131,6 +135,18 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 		return "", "", err
 	}
 	return tree, commit, nil
+}
+
+// withScratchGitDir runs fn with a fresh owner-only directory that serves as a
+// private git dir, and removes the directory afterwards. Snapshot capture and
+// restore share it, so git never reads the session clone .git.
+func withScratchGitDir(prefix string, fn func(scratch string) error) error {
+	scratch, err := os.MkdirTemp("", prefix) // hardened-fs-exempt: this creates a fresh owner-only directory with O_EXCL semantics
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
+	return fn(scratch)
 }
 
 // writeSnapshotAlternates makes the workspace object store a read-only
@@ -166,18 +182,18 @@ func publishSnapshot(opts snapshotCaptureOptions, scratch string) error {
 	defer func() { _ = storeFile.Close() }()
 	storePath := storeFile.Name()
 
-	check := func() error { return requireSameDirectory(storeFile, storePath) }
+	check := func() error { return requireSameDirectory(storeFile, storePath, "snapshot store") }
 	if err := check(); err != nil {
 		return err
 	}
-	if _, err := runSnapshotGit(opts, storePath, snapshotInitArgs(opts.GitHead, storePath)...); err != nil {
+	if _, err := runSnapshotGit(opts.GitBin, storePath, snapshotInitArgs(opts.GitHead, storePath)...); err != nil {
 		return err
 	}
 	if err := check(); err != nil {
 		return err
 	}
 	ref := "refs/workcell/snapshots/" + opts.SessionID + "/" + opts.SnapshotID
-	if _, err := runSnapshotGit(opts, storePath, "--git-dir="+storePath,
+	if _, err := runSnapshotGit(opts.GitBin, storePath, "--git-dir="+storePath,
 		"-c", "core.fsync=all", "-c", "core.fsyncMethod=fsync",
 		"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", scratch,
 		"refs/workcell/snapshot:"+ref); err != nil {
@@ -207,26 +223,28 @@ func snapshotInitArgs(gitHead, dir string) []string {
 }
 
 // requireSameDirectory fails when path no longer names the directory the
-// descriptor holds, so a store component swapped for a symlink or another
-// directory during a git run is detected before the result is trusted.
-func requireSameDirectory(dir *os.File, path string) error {
+// descriptor holds, so a component of the snapshot store or the session
+// workspace that was swapped for a symlink or another directory during a git
+// run is detected before the result is trusted. label names the directory in
+// the error.
+func requireSameDirectory(dir *os.File, path, label string) error {
 	held, err := dir.Stat()
 	if err != nil {
 		return err
 	}
 	now, err := os.Stat(path) // hardened-fs-exempt: this stats the path by name on purpose, to prove it still names the directory the descriptor holds
 	if err != nil {
-		return fmt.Errorf("the snapshot store path changed: %w", err)
+		return fmt.Errorf("the %s path changed: %w", label, err)
 	}
 	if !os.SameFile(held, now) {
-		return fmt.Errorf("the snapshot store path changed while it was in use: %s", path)
+		return fmt.Errorf("the %s path changed while it was in use: %s", label, path)
 	}
 	return nil
 }
 
 // runSnapshotGit runs git with a scrubbed environment and no hooks, system or
 // global config, fsmonitor, or external diff.
-func runSnapshotGit(opts snapshotCaptureOptions, dir string, args ...string) (string, error) {
+func runSnapshotGit(gitBin, dir string, args ...string) (string, error) {
 	home := os.Getenv("HOME")
 	if home == "" {
 		home = "/"
@@ -237,10 +255,10 @@ func runSnapshotGit(opts snapshotCaptureOptions, dir string, args ...string) (st
 		"-c", "diff.external=",
 		"-c", "color.ui=false",
 	}, args...)
-	cmd := exec.Command(opts.GitBin, full...)
+	cmd := exec.Command(gitBin, full...)
 	cmd.Dir = dir
 	cmd.Env = []string{
-		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:" + filepath.Dir(opts.GitBin),
+		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:" + filepath.Dir(gitBin),
 		"HOME=" + home,
 		"LC_ALL=C",
 		"LANG=C",
