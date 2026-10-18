@@ -4634,14 +4634,14 @@ var precommitUpstreamPinGateChecks = []check{
 	{
 		kind:       kindRegexPresent,
 		regex:      `scripts/update-upstream-pins\.sh" --check`,
-		message:    "Expected repo pre-commit hook to gate commits on pending pinned upstream updates",
+		message:    "Expected repo pre-commit hook to report pending pinned upstream updates",
 		targetFile: ".githooks/pre-commit",
 	},
 }
 
 // CheckPrecommitUpstreamPinGate runs the single repo pre-commit hook
 // upstream-pin-gate invariant against the repo rooted at rootDir.  It returns nil
-// when the hook gates commits on pending pinned upstream updates (the shell's
+// when the hook runs the pinned upstream check (the shell's
 // exit 0), or an error whose message equals the shell's stderr (the shell's exit
 // 1).
 func CheckPrecommitUpstreamPinGate(rootDir string) error {

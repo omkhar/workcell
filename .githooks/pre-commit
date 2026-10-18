@@ -26,6 +26,10 @@ else
   status=$?
 fi
 
+# The hook reports and never blocks. The upstream-refresh workflow opens the
+# bump PRs, and CI pin hygiene and the release preflight fail on stale pins.
+# Blocking every local commit on each daily pin (for example the Debian
+# snapshot date) added no protection (issue 894).
 printf '%s\n' "${output}" >&2
 if grep -q 'GitHub API rate limit reached' <<<"${output}"; then
   # The check could not run, so no pin is known to be pending.
@@ -33,10 +37,9 @@ if grep -q 'GitHub API rate limit reached' <<<"${output}"; then
   # The hook runs the worktree pin script, so it passes no GitHub credential.
   echo "Retry after the reset that the message above names." >&2
 elif [[ "${status}" -eq 1 ]]; then
-  echo "Pinned upstream updates are available." >&2
-  echo "Run ./scripts/update-upstream-pins.sh --apply from a clean worktree or trigger the upstream-refresh workflow before committing unrelated changes." >&2
+  echo "Pinned upstream updates are available; the commit continues." >&2
+  echo "The upstream-refresh workflow opens their bump PRs. To refresh now, run ./scripts/update-upstream-pins.sh --apply from a clean worktree." >&2
 else
-  echo "Pinned upstream pre-commit check failed." >&2
-  echo "Set WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 only if you intentionally need to bypass the hook." >&2
+  echo "The pinned upstream check failed with status ${status}; the commit continues." >&2
 fi
-exit "${status}"
+exit 0
