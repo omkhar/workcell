@@ -18,10 +18,11 @@ import (
 func TestGeneratedFilesMatchGolden(t *testing.T) {
 	manifests := loadRepoManifests(t)
 	for golden, render := range map[string]func([]Manifest) ([]byte, error){
-		"internal/adapters/data_gen.go":              RenderDataGo,
-		"internal/providerid/providerid_gen.go":      RenderProviderIDGo,
-		"scripts/lib/launcher/generated-adapters.sh": RenderLauncherShell,
-		"runtime/container/generated-adapters.sh":    RenderRuntimeShell,
+		"internal/adapters/data_gen.go":                   RenderDataGo,
+		"internal/providerid/providerid_gen.go":           RenderProviderIDGo,
+		"scripts/lib/launcher/generated-adapters.sh":      RenderLauncherShell,
+		"runtime/container/generated-adapters.sh":         RenderRuntimeShell,
+		"runtime/container/rust/src/generated_targets.rs": RenderLauncherRust,
 	} {
 		got, err := render(manifests)
 		if err != nil {
@@ -90,6 +91,31 @@ func TestRenderersFollowManifests(t *testing.T) {
 	}
 	if strings.Contains(string(launcher)+string(runtime), "zz-planned") || !strings.Contains(string(runtime), "| zz-bare) ;;") {
 		t.Error("shell renders must skip planned manifests and keep the others")
+	}
+}
+
+// TestRenderLauncherRustFollowsManifests is the negative control for the
+// Rust golden: a planned manifest has no row, and a row uses the binary.
+func TestRenderLauncherRustFollowsManifests(t *testing.T) {
+	got, err := RenderLauncherRust([]Manifest{{ID: "zz-planned", Tier: "planned"}, {ID: "zz-bare", Tier: "uncertified", Binary: "zz"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := generatedHeader + `// PROVIDER_LAUNCH_TARGETS routes each supported adapter binary to the
+// provider wrapper.
+const PROVIDER_LAUNCH_TARGETS: &[LaunchTarget] = &[
+    LaunchTarget {
+        name: "zz",
+        script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
+        approved_invocations: &[
+            "/usr/local/bin/zz",
+            "/usr/local/libexec/workcell/core/zz",
+        ],
+    },
+];
+`
+	if string(got) != want {
+		t.Errorf("RenderLauncherRust =\n%s\nwant\n%s", got, want)
 	}
 }
 

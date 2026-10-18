@@ -44,11 +44,12 @@ Adapter rules:
 Each adapter directory has an `adapter.toml` manifest (strict schema and
 loader: `internal/adapters/manifest.go`). The manifest is the source of the
 per-provider credential keys, container paths, reserved targets, and egress
-endpoints. Run the four `scripts/generate-adapters-*.sh` generators to
+endpoints. Run the five `scripts/generate-adapters-*.sh` generators to
 generate `internal/adapters/data_gen.go`,
 `internal/providerid/providerid_gen.go`,
-`scripts/lib/launcher/generated-adapters.sh`, and
-`runtime/container/generated-adapters.sh` from the manifests. Do not edit the
+`scripts/lib/launcher/generated-adapters.sh`,
+`runtime/container/generated-adapters.sh`, and
+`runtime/container/rust/src/generated_targets.rs` from the manifests. Do not edit the
 generated files by hand. Also add the provider configuration tree under
 `adapters/<name>/`.
 

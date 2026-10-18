@@ -42,42 +42,9 @@ const LAUNCH_TARGETS: &[LaunchTarget] = &[
     },
 ];
 
-// PROVIDER_LAUNCH_TARGETS routes each supported adapter binary to the
-// provider wrapper.
-const PROVIDER_LAUNCH_TARGETS: &[LaunchTarget] = &[
-    LaunchTarget {
-        name: "codex",
-        script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
-        approved_invocations: &[
-            "/usr/local/bin/codex",
-            "/usr/local/libexec/workcell/core/codex",
-        ],
-    },
-    LaunchTarget {
-        name: "claude",
-        script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
-        approved_invocations: &[
-            "/usr/local/bin/claude",
-            "/usr/local/libexec/workcell/core/claude",
-        ],
-    },
-    LaunchTarget {
-        name: "copilot",
-        script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
-        approved_invocations: &[
-            "/usr/local/bin/copilot",
-            "/usr/local/libexec/workcell/core/copilot",
-        ],
-    },
-    LaunchTarget {
-        name: "gemini",
-        script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
-        approved_invocations: &[
-            "/usr/local/bin/gemini",
-            "/usr/local/libexec/workcell/core/gemini",
-        ],
-    },
-];
+// scripts/generate-adapters-launcher-rust.sh writes PROVIDER_LAUNCH_TARGETS
+// from adapters/*/adapter.toml.
+include!("../generated_targets.rs");
 
 #[derive(Debug)]
 struct LaunchRequest {

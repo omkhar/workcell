@@ -238,6 +238,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-adapters-providerid.sh"
   "${ROOT_DIR}/scripts/generate-adapters-launcher-shell.sh"
   "${ROOT_DIR}/scripts/generate-adapters-runtime-shell.sh"
+  "${ROOT_DIR}/scripts/generate-adapters-launcher-rust.sh"
   "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/install-release.sh"
   "${ROOT_DIR}/scripts/install-workcell.sh"

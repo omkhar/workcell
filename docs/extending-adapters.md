@@ -11,10 +11,13 @@ from it, and `scripts/generate-adapters-providerid.sh` generates
 `scripts/generate-adapters-launcher-shell.sh` generates
 `scripts/lib/launcher/generated-adapters.sh`, and
 `scripts/generate-adapters-runtime-shell.sh` generates
-`runtime/container/generated-adapters.sh`. Run all four generators after a
-manifest change. A registry change
-is only one part of an adapter change. Runtime dispatch, policy, seed logic,
-validation, and documents must change together.
+`runtime/container/generated-adapters.sh`. The fifth generator writes
+`runtime/container/rust/src/generated_targets.rs`, the provider rows of the
+Rust launcher table.
+
+Run all five generators after a manifest change. A registry change is only one
+part of an adapter change. Runtime dispatch, policy, seed logic, validation,
+and documents must change together.
 
 ## Add a Credential Type
 
@@ -25,7 +28,7 @@ In `adapters/<provider>/adapter.toml`:
 1. Add a `[credentials.<key>]` table.
 2. Set its `container_path` under `/opt/workcell/host-inputs/credentials/`.
 3. Add its provider-home destination to `[home] reserved_targets`.
-4. Run the four `scripts/generate-adapters-*.sh` generators, and commit the
+4. Run the five `scripts/generate-adapters-*.sh` generators, and commit the
    generated files. The generated-artifact check fails when a committed file
    is stale.
 
@@ -111,13 +114,16 @@ For a new provider:
    outside `AllProviders`.
 3. When the adapter is ready, change the tier. Add the binary, install method,
    credential keys, paths, reserved targets, and egress endpoints to the
-   manifest. Then run the four `scripts/generate-adapters-*.sh` generators. Do
+   manifest. Then run the five `scripts/generate-adapters-*.sh` generators. Do
    not edit `CredentialMetadataProviders`, `AllProviders`, the registry rows,
-   `provider_endpoints`, or `workcell_supported_agent` by hand.
+   `provider_endpoints`, `workcell_supported_agent`, or
+   `PROVIDER_LAUNCH_TARGETS` by hand.
 4. Add launcher help output. The generated `workcell_supported_agent` supplies
    the launcher `--agent` validation.
 5. Add runtime entry-point and wrapper dispatch. The generated
-   `workcell_supported_agent` supplies the provider wrapper target check.
+   `workcell_supported_agent` supplies the provider wrapper target check. The
+   generated `PROVIDER_LAUNCH_TARGETS` supplies the Rust launcher row for the
+   binary.
 6. Add the provider binary to each applicable exec-guard and protected-runtime
    list for development mode. The generated `workcell_supported_agent`
    supplies the direct provider command block.
