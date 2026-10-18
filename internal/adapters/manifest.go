@@ -299,6 +299,11 @@ func validateManifest(m Manifest, schema int) error {
 	if err := validateFlags(m.Flags); err != nil {
 		return err
 	}
+	// reject_manifest_args passes an uncertified adapter's options only through
+	// [flags].allow, so an empty list would refuse every option or hide a typo.
+	if m.Tier == "uncertified" && len(m.Flags.Allow) == 0 {
+		return errors.New("an uncertified manifest needs a non-empty [flags] allow list")
+	}
 	switch m.Install.Method {
 	case "binary":
 		if m.Install.VersionArg == "" || m.Install.Package != "" {

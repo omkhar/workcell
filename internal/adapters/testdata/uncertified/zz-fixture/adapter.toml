@@ -1,0 +1,21 @@
+# Test fixture: an uncertified adapter manifest. It is not in adapters/, so no
+# build ships it. The uncertified tier tests render the generated files with it.
+
+schema = 1
+id = "zz-fixture"
+tier = "uncertified"
+binary = "zz-fixture"
+
+[install]
+method = "npm"
+package = "zz-fixture"
+provenance = "scripts/verify-zz-fixture-release.sh"
+
+[egress]
+endpoints = ["api.zz-fixture.example:443"]
+
+[flags]
+subcommands = ["run"]
+other_commands = ["serve", "mcp"]
+allow = ["-h", "--help", "-m", "--model"]
+deny = ["-y", "--yolo"]

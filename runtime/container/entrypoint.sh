@@ -30,6 +30,8 @@ readonly WORKCELL_COPILOT_HOST_TOKEN_FILE="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONT
 
 # shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
+# shellcheck source=runtime/container/generated-adapters.sh
+source /usr/local/libexec/workcell/generated-adapters.sh
 # shellcheck source=runtime/container/provider-policy.sh
 source /usr/local/libexec/workcell/provider-policy.sh
 # shellcheck source=runtime/container/home-control-plane.sh

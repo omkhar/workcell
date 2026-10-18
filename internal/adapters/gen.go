@@ -104,12 +104,50 @@ func RenderLauncherShell(manifests []Manifest) ([]byte, error) {
 }
 
 // RenderRuntimeShell renders runtime/container/generated-adapters.sh: the
-// supported provider ids that the runtime wrappers read.
+// supported provider ids, their tiers, and the [flags] lists of each
+// uncertified adapter that the runtime policy reads.
 func RenderRuntimeShell(manifests []Manifest) ([]byte, error) {
 	var b strings.Builder
 	b.WriteString(shellHeader)
 	writeShellSupportedAgent(&b, manifests)
+	writeShellAdapterTier(&b, manifests)
+	b.WriteString("\n# workcell_manifest_flags prints the [flags] list $2 (allow, deny, or\n# other_commands) of uncertified adapter $1, one entry per line.\nworkcell_manifest_flags() {\n  case \"$1:$2\" in\n")
+	for _, m := range manifests {
+		if m.Tier != "uncertified" {
+			continue
+		}
+		for _, list := range []struct {
+			name  string
+			items []string
+		}{{"allow", m.Flags.Allow}, {"deny", m.Flags.Deny}, {"other_commands", m.Flags.OtherCommands}} {
+			if len(list.items) == 0 {
+				fmt.Fprintf(&b, "    %s:%s) ;;\n", m.ID, list.name)
+				continue
+			}
+			// validateFlags limits each entry to a plain token, so single quotes hold it.
+			fmt.Fprintf(&b, "    %s:%s)\n      printf '%%s\\n' '%s'\n      ;;\n", m.ID, list.name, strings.Join(list.items, "' '"))
+		}
+	}
+	b.WriteString("    *)\n      return 1\n      ;;\n  esac\n}\n")
 	return []byte(b.String()), nil
+}
+
+// writeShellAdapterTier renders workcell_adapter_tier: the manifest tier of
+// each supported adapter id. A planned or unknown id has no tier.
+func writeShellAdapterTier(b *strings.Builder, manifests []Manifest) {
+	b.WriteString("\n# workcell_adapter_tier prints the manifest tier of supported adapter $1.\nworkcell_adapter_tier() {\n  case \"$1\" in\n")
+	for _, tier := range []string{"certified", "uncertified"} {
+		var ids []string
+		for _, m := range manifests {
+			if m.Tier == tier {
+				ids = append(ids, m.ID)
+			}
+		}
+		if len(ids) > 0 {
+			fmt.Fprintf(b, "    %s)\n      echo %s\n      ;;\n", strings.Join(ids, " | "), tier)
+		}
+	}
+	b.WriteString("    *)\n      return 1\n      ;;\n  esac\n}\n")
 }
 
 // RenderLauncherRust renders runtime/container/rust/src/generated_targets.rs:

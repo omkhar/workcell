@@ -1,5 +1,11 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 
+# Language boundary: this file holds every provider argument policy, the four
+# reviewed reject_unsafe_<id>_args functions and reject_manifest_args for an
+# uncertified adapter. AGENTS.md puts new policy in Go, but one policy domain
+# must have one owner, so a new policy joins the others here until the whole
+# file moves to Go in one change (issue 901).
+
 workcell_die() {
   echo "$*" >&2
   exit 2
@@ -562,6 +568,62 @@ reject_unsafe_copilot_args() {
   done
 }
 
+# workcell_manifest_list ID LIST prints [flags] LIST of uncertified adapter ID.
+# A missing list stops the launch: the manifest data must name every list.
+workcell_manifest_list() {
+  workcell_manifest_flags "$1" "$2" ||
+    workcell_die "Workcell has no manifest [flags] $2 list for adapter: $1"
+}
+
+workcell_word_in_list() {
+  local word="$1"
+  local item
+
+  shift
+  for item in "$@"; do
+    [[ "${item}" == "${word}" ]] && return 0
+  done
+  return 1
+}
+
+# reject_manifest_args ID ARGS... passes the provider args of uncertified
+# adapter ID only through its manifest [flags]. An option, compared before any
+# "=value", must be in allow and not in deny. A word that names one of
+# other_commands is refused. This is the only policy for a CLI that no review
+# certified, so it applies in every mode, breakglass included.
+reject_manifest_args() {
+  local id="$1"
+  local list=""
+  local arg=""
+  local name=""
+  local -a allow=()
+  local -a deny=()
+  local -a commands=()
+
+  shift
+  list="$(workcell_manifest_list "${id}" allow)" || exit 2
+  [[ -n "${list}" ]] || workcell_die "Workcell has no manifest [flags] allow list for adapter: ${id}"
+  mapfile -t allow <<<"${list}"
+  list="$(workcell_manifest_list "${id}" deny)" || exit 2
+  [[ -z "${list}" ]] || mapfile -t deny <<<"${list}"
+  list="$(workcell_manifest_list "${id}" other_commands)" || exit 2
+  [[ -z "${list}" ]] || mapfile -t commands <<<"${list}"
+
+  for arg in "$@"; do
+    if [[ "${arg}" == -* ]]; then
+      name="${arg%%=*}"
+      if workcell_word_in_list "${name}" "${deny[@]}"; then
+        workcell_die "Workcell blocked a denied ${id} option: ${name}"
+      fi
+      if ! workcell_word_in_list "${name}" "${allow[@]}"; then
+        workcell_die "Workcell blocked a ${id} option that its manifest does not allow: ${name}"
+      fi
+    elif workcell_word_in_list "${arg}" "${commands[@]}"; then
+      workcell_die "Workcell blocked a ${id} command that its manifest does not allow: ${arg}"
+    fi
+  done
+}
+
 # entrypoint.sh validates the full provider command before launch. After that,
 # provider-wrapper.sh calls the per-provider reject helpers directly because it
 # has already fixed the launch target and only needs to re-check user argv.
@@ -591,6 +653,13 @@ validate_command_args() {
       ;;
     gemini)
       reject_unsafe_gemini_args "${@:2}"
+      ;;
+    *)
+      # A provider without a reviewed policy runs only as an uncertified
+      # adapter, behind its manifest allowlist.
+      [[ "$(workcell_adapter_tier "${expected_command}")" == "uncertified" ]] ||
+        workcell_die "Workcell has no provider policy for: ${expected_command}"
+      reject_manifest_args "${expected_command}" "${@:2}"
       ;;
   esac
 }

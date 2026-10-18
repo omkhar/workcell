@@ -156,6 +156,24 @@ list (see `adapters/README.md`). Put each other top-level command in
 `other_commands`. Run `scripts/check-flag-inventory.sh --write` to create
 `tests/fixtures/flags/<provider>.txt`.
 
+An uncertified adapter (`tier = "uncertified"`) has no reviewed
+`reject_unsafe_<provider>_args` function. For this adapter,
+`reject_manifest_args` in `runtime/container/provider-policy.sh` is the
+argument policy:
+
+- The manifest must have a `[flags]` `allow` list that is not empty.
+- An option passes only when `allow` contains it. The policy compares the text
+  before the first `=`.
+- The policy refuses an option in `deny` and a word in `other_commands`
+  (`internal/adapters/uncertified_test.go`).
+- The policy applies in every mode, `breakglass` included.
+- A provider without a reviewed function and without the uncertified tier
+  fails closed (`internal/adapters/uncertified_test.go`).
+
+The generator writes the `[flags]` lists of each uncertified adapter to
+`runtime/container/generated-adapters.sh` (`workcell_manifest_flags`), with the
+tier of each adapter (`workcell_adapter_tier`).
+
 ### 4. Build the managed control plane
 
 In non-breakglass modes, build the provider home from these sources:
