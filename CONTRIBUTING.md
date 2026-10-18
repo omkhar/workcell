@@ -181,8 +181,10 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
 14. Check comments and review threads again immediately before merge.
 
 The pre-commit hook reports pending pin bumps and does not block the commit.
-The upstream-refresh workflow opens the bump PRs, and CI pin hygiene and the
-release preflight fail on stale pins.
+CI pin hygiene and the release preflight fail on stale pins. The
+upstream-refresh workflow opens a bump PR only when its App credentials are
+set and the candidate does not change `.github/workflows/`. Otherwise, publish
+the candidate on the host as `docs/github-workflows.md` shows.
 
 The hook checks the pins with GitHub API calls and passes no GitHub
 credential, because it runs the pin script of the worktree. GitHub allows 60
