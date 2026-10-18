@@ -48,3 +48,28 @@ verify_registry_package() {
 
   rm -f "${metadata_path}"
 }
+
+# verify_lock_package_tree LOCK_PATH NAME fails unless the registry confirms
+# the lockfile entry of NAME and of each direct and optional dependency of
+# NAME. The image installs one platform package, so each one gets the check.
+verify_lock_package_tree() {
+  local lock_path="$1"
+  local root_name="$2"
+  local package_names package_name package_path version
+  package_names="$(jq -r --arg path "node_modules/${root_name}" '
+    .packages[$path] | (.dependencies // {}) + (.optionalDependencies // {}) | keys[]
+  ' "${lock_path}")"
+  while IFS= read -r package_name; do
+    [[ -n "${package_name}" ]] || continue
+    package_path="node_modules/${package_name}"
+    version="$(extract_lock_field "${lock_path}" "${package_path}" "version")"
+    if [[ -z "${version}" ]]; then
+      echo "${lock_path} has no top-level entry for ${package_name}" >&2
+      exit 1
+    fi
+    # A scoped name keeps its @ and escapes its slash, as the registry expects.
+    verify_registry_package "${package_name}" "${package_path}" "${package_name/\//%2f}" "${version}" \
+      "$(extract_lock_field "${lock_path}" "${package_path}" "resolved")" \
+      "$(extract_lock_field "${lock_path}" "${package_path}" "integrity")"
+  done <<<"${root_name}"$'\n'"${package_names}"
+}
