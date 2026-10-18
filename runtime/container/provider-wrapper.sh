@@ -519,10 +519,12 @@ case "${AGENT_NAME}" in
     done
     # The workspace config and .opencode/ directories are repository input,
     # so OpenCode reads only the session-home and the managed configuration.
-    # OPENCODE_CONFIG_CONTENT applies after the session-home file. OpenCode
+    # OPENCODE_CONFIG_CONTENT applies after the session-home file. A snapshot
+    # starts git with its own --git-dir, --work-tree and -c options, and that
+    # start ended with EPERM in a live session, so snapshots are off. OpenCode
     # refuses --auto before the run command, so the managed autonomy option
     # goes last; the policy refuses --, so no later argument is literal text.
-    OPENCODE_CONFIG_CONTENT='{"autoupdate":false,"share":"disabled"}' \
+    OPENCODE_CONFIG_CONTENT='{"autoupdate":false,"share":"disabled","snapshot":false}' \
       OPENCODE_DISABLE_PROJECT_CONFIG=1 \
       OPENCODE_DISABLE_AUTOUPDATE=1 \
       OPENCODE_DISABLE_MODELS_FETCH=1 \
