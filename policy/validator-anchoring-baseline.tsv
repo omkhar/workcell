@@ -106,6 +106,7 @@ internal/metadatautil	dockerPinnedInputValidator.validateProviderVersions	2f0141
 internal/metadatautil	dockerPinnedInputValidator.validateValidatorDeadcode	4a31dbf9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.validateValidatorHadolint	fa92ca1d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerfileInstructions	33adfa7b	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	dockerfileStageStarts	3f5cf821	reviewed: this is the Dockerfile stage decoder; the match reads the comment and continuation markers of each line as Docker does, so a FROM inside a continued instruction never counts
 internal/metadatautil	envOperands	ef3d60e0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	evaluates	08bbcfda,21e7aa8e,c914c99c	the matches read the parsed argv words of one command: the barrier names, and the $, backtick and brace spellings of its command word
 internal/metadatautil	exitCodeEmitted	859244aa,db0686c6,e4cb9292	unreviewed debt: review the subject, then port or justify

@@ -370,6 +370,14 @@ func TestCheckPinnedInputsRejectsRuntimeStageTailDrift(t *testing.T) {
 		{"stage-after-guard", "  && exit 1\n", "  && exit 1\n\nFROM runtime AS default-final\n", stagesWant},
 		{"guard-does-not-fail", "  && exit 1\n", "  && exit 0\n", guardWant},
 		{"guard-extra-instruction", "  && exit 1\n", "  && exit 1\n\nLABEL decoy=1\n", guardWant},
+		// A FROM line inside a continued instruction is not a stage, so it
+		// cannot hide a RUN after the install in a fake uncertified stage.
+		{"continued-fake-uncertified-header", "\nFROM runtime AS runtime-uncertified\n",
+			"\nLABEL decoy=1 \\\nFROM runtime AS runtime-uncertified\nRUN touch /decoy\n\nFROM runtime AS runtime-uncertified\n",
+			"must not mutate the filesystem after the apt broker runtime install"},
+		// A guard header inside a continued instruction is not the guard stage.
+		{"continued-fake-guard-header", "\nFROM runtime-base AS require-build-target\n",
+			"\nLABEL decoy=1 \\\nFROM runtime-base AS require-build-target\n", stagesWant},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirePinnedInputsErrorContains(t, rewriteAptBrokerDockerfile(t, tc.old, tc.new), tc.want)
