@@ -607,14 +607,43 @@ func TestDockerfilePinnedArgsIgnoreDecoys(t *testing.T) {
 	}
 }
 
+// rustTopLevelIncludes counts the include!(path); items at nesting depth 0
+// that no attribute guards, as rustLaunchTargets counts its table.
+func rustTopLevelIncludes(t *testing.T, source, path string) int {
+	tokens, err := rustTokens(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := []string{"include", "!", "(", path, ")", ";"}
+	count, depth := 0, 0
+	for i, token := range tokens {
+		switch token {
+		case "{", "(", "[":
+			depth++
+		case "}", ")", "]":
+			depth--
+		}
+		if depth == 0 && slices.Equal(tokens[i:min(i+len(item), len(tokens))], item) && (i == 0 || tokens[i-1] == ";" || tokens[i-1] == "}") {
+			count++
+		}
+	}
+	return count
+}
+
 func TestManifestsMatchRustLaunchTargets(t *testing.T) {
 	launcher := readRepoFile(t, "runtime/container/rust/src/bin/workcell-launcher.rs")
 	if core, ok := rustLaunchTargets(launcher, "LAUNCH_TARGETS"); !ok || len(core) != 0 {
 		t.Errorf("LAUNCH_TARGETS must parse and hold no provider row (ok=%v): %v", ok, core)
 	}
-	providers, ok := rustLaunchTargets(launcher, "PROVIDER_LAUNCH_TARGETS")
+	if _, ok := rustLaunchTargets(launcher, "PROVIDER_LAUNCH_TARGETS"); ok {
+		t.Error("workcell-launcher.rs declares PROVIDER_LAUNCH_TARGETS by hand; it must include the generated table")
+	}
+	if n := rustTopLevelIncludes(t, launcher, `"../generated_targets.rs"`); n != 1 {
+		t.Errorf("workcell-launcher.rs includes generated_targets.rs %d times at top level, want 1", n)
+	}
+	providers, ok := rustLaunchTargets(readRepoFile(t, "runtime/container/rust/src/generated_targets.rs"), "PROVIDER_LAUNCH_TARGETS")
 	if !ok {
-		t.Error("PROVIDER_LAUNCH_TARGETS does not parse")
+		t.Error("generated PROVIDER_LAUNCH_TARGETS does not parse")
 	}
 	var names []string
 	for _, target := range providers {

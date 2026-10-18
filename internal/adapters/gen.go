@@ -17,6 +17,7 @@ var GenTargets = map[string]func([]Manifest) ([]byte, error){
 	"providerid":     RenderProviderIDGo,
 	"launcher-shell": RenderLauncherShell,
 	"runtime-shell":  RenderRuntimeShell,
+	"launcher-rust":  RenderLauncherRust,
 }
 
 // RenderDataGo renders internal/adapters/data_gen.go: the providers registry
@@ -108,6 +109,23 @@ func RenderRuntimeShell(manifests []Manifest) ([]byte, error) {
 	var b strings.Builder
 	b.WriteString(shellHeader)
 	writeShellSupportedAgent(&b, manifests)
+	return []byte(b.String()), nil
+}
+
+// RenderLauncherRust renders runtime/container/rust/src/generated_targets.rs:
+// the PROVIDER_LAUNCH_TARGETS table that src/bin/workcell-launcher.rs
+// includes. Each non-planned manifest binary runs the provider wrapper.
+func RenderLauncherRust(manifests []Manifest) ([]byte, error) {
+	var b strings.Builder
+	b.WriteString(generatedHeader)
+	b.WriteString("// PROVIDER_LAUNCH_TARGETS routes each supported adapter binary to the\n// provider wrapper.\nconst PROVIDER_LAUNCH_TARGETS: &[LaunchTarget] = &[\n")
+	for _, m := range manifests {
+		if m.Tier == "planned" {
+			continue
+		}
+		fmt.Fprintf(&b, "    LaunchTarget {\n        name: %q,\n        script_path: \"/usr/local/libexec/workcell/provider-wrapper.sh\",\n        approved_invocations: &[\n            \"/usr/local/bin/%s\",\n            \"/usr/local/libexec/workcell/core/%s\",\n        ],\n    },\n", m.Binary, m.Binary, m.Binary)
+	}
+	b.WriteString("];\n")
 	return []byte(b.String()), nil
 }
 
