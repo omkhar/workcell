@@ -2399,11 +2399,12 @@ fi
 exit 2
 EOF
 chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh"
-if HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit.out 2>&1; then
-  echo "Expected repo pre-commit hook to block commits when pinned upstream updates are pending" >&2
+# The hook reports pending pins and never blocks the commit (issue 894).
+if ! HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit.out 2>&1; then
+  echo "Expected repo pre-commit hook to report pending pinned upstream updates without blocking the commit" >&2
   exit 1
 fi
-grep -q 'Pinned upstream updates are available' /tmp/workcell-precommit.out
+grep -q 'Pinned upstream updates are available; the commit continues' /tmp/workcell-precommit.out
 grep -q 'update-upstream-pins.sh --apply' /tmp/workcell-precommit.out
 if ! WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 HOME="${PRECOMMIT_FIXTURE_ROOT}" \
   "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit-skip.out 2>&1; then
@@ -2415,8 +2416,9 @@ if grep -q 'Pinned upstream updates are available' /tmp/workcell-precommit-skip.
   exit 1
 fi
 
-# A rate limit is not a pending pin: the hook still blocks and names the limit.
-# It runs the worktree pin script, so no GitHub credential passes through it.
+# A rate limit is not a pending pin: the hook names the limit and does not
+# block. It runs the worktree pin script, so no GitHub credential passes
+# through it.
 cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh" <<'EOF'
 #!/bin/bash
 if [[ "${1:-}" == "--check" ]]; then
@@ -2427,9 +2429,9 @@ fi
 exit 2
 EOF
 chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh"
-if WORKCELL_GITHUB_API_TOKEN_FILE=/nonexistent/workcell-token HOME="${PRECOMMIT_FIXTURE_ROOT}" \
+if ! WORKCELL_GITHUB_API_TOKEN_FILE=/nonexistent/workcell-token HOME="${PRECOMMIT_FIXTURE_ROOT}" \
   "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit-ratelimit.out 2>&1; then
-  echo "Expected repo pre-commit hook to block commits when the pin check hits the rate limit" >&2
+  echo "Expected repo pre-commit hook to report a rate limit without blocking the commit" >&2
   exit 1
 fi
 grep -q 'token_file=unset' /tmp/workcell-precommit-ratelimit.out

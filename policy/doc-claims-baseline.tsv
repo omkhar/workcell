@@ -52,7 +52,6 @@ CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or call
 CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by another script; no lane runs it directly
-CONTRIBUTING.md	unwired-script	scripts/publish-provider-bump-pr.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 README.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
 README.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path

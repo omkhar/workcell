@@ -7269,7 +7269,7 @@ func writePrecommitUpstreamPinGateRepo(t *testing.T, body string) string {
 }
 
 func TestCheckPrecommitUpstreamPinGate(t *testing.T) {
-	const wantErr = "Expected repo pre-commit hook to gate commits on pending pinned upstream updates"
+	const wantErr = "Expected repo pre-commit hook to report pending pinned upstream updates"
 	happy := "#!/bin/bash\n\"${ROOT_DIR}/scripts/update-upstream-pins.sh\" --check\n"
 	tests := []struct {
 		name    string
