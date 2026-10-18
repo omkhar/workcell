@@ -215,8 +215,9 @@ The `provider` candidate contains only these changes:
 - Provider `ARG` lines and SHA-256 assignments in `runtime/container/Dockerfile`
 - The Gemini CLI pin in `runtime/container/providers/package.json` and `package-lock.json`
 - The Codex command inventory in `tests/fixtures/codex-subcommands.txt`
-- The OpenCode CLI pin in `runtime/container/providers-uncertified/package.json` and `package-lock.json`.
+- The OpenCode and Amp CLI pins in `runtime/container/providers-uncertified/package.json` and `package-lock.json`.
   The scope guard does not allow these files, so a candidate that changes them does not auto-merge.
+  Amp publishes a build about every four hours, so most refresh runs move its pin.
 
 The `toolchain` candidate contains the base images, the Debian snapshot, the Go and Rust toolchains, and the CI and release tools.
 Both candidates can change `runtime/container/Dockerfile`, but they do not change the same lines.

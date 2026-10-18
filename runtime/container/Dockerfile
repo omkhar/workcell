@@ -737,7 +737,9 @@ COPY --from=uncertified-provider-builder --chown=0:0 --chmod=0755 /out/amp /usr/
 
 USER 0:0
 RUN ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/opencode \
-  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/opencode
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/opencode \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/amp \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/amp
 USER 65532:65532
 
 # Each build names its target. A build without --target reaches this stage and

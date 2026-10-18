@@ -441,6 +441,9 @@ case "${AGENT_NAME}:${WORKCELL_AGENT_AUTONOMY}" in
   opencode:yolo)
     MANAGED_AUTONOMY_ARGS=(--auto)
     ;;
+  amp:yolo)
+    MANAGED_AUTONOMY_ARGS=(--dangerously-allow-all)
+    ;;
 esac
 
 declare -a MANAGED_COPILOT_SAFETY_ARGS=(
@@ -532,6 +535,21 @@ case "${AGENT_NAME}" in
       exec /usr/local/libexec/workcell/real/opencode \
       "$@" \
       "${MANAGED_AUTONOMY_ARGS[@]}"
+    ;;
+  amp)
+    reject_manifest_args amp "$@"
+    for env_name in "${!AMP_@}"; do
+      unset "${env_name}"
+    done
+    # Amp reads its server URL, API key and settings path from AMP_*
+    # variables, so only the managed ones reach it: no update check, and no
+    # terminal access from ampcode.com. The managed autonomy option is global,
+    # so it goes before a command.
+    AMP_SKIP_UPDATE_CHECK=1 \
+      AMP_REMOTE_CONTROL_TERMINAL=0 \
+      exec /usr/local/libexec/workcell/real/amp \
+      "${MANAGED_AUTONOMY_ARGS[@]}" \
+      "$@"
     ;;
   *)
     workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"

@@ -1681,6 +1681,13 @@ seed_opencode_home() {
   workcell_prepare_session_directory "${HOME}/.config/opencode" "OpenCode config directory"
 }
 
+# Workcell stages no Amp credential. The Amp device login in the session
+# stores the account key in the session home.
+seed_amp_home() {
+  workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/amp/"
+  workcell_prepare_session_directory "${HOME}/.config/amp" "Amp config directory"
+}
+
 workcell_seed_shared_credentials() {
   workcell_prepare_session_directory "${HOME}/.config/gh" "GitHub CLI config directory"
   workcell_copy_manifest_credential_file github_config "${HOME}/.config/gh/config.yml" || true
@@ -1703,6 +1710,9 @@ seed_agent_home() {
       ;;
     opencode)
       seed_opencode_home
+      ;;
+    amp)
+      seed_amp_home
       ;;
     *)
       workcell_die "Unsupported agent: $1"
