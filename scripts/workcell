@@ -237,6 +237,7 @@ Options:
   --agent codex|claude|copilot|gemini
                                 Provider to run (required)
                                 antigravity is recognized as planned but unsupported
+                                opencode is uncertified: it needs --allow-uncertified-agent
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
   --target colima|docker-desktop|aws-ec2-ssm|gcp-vm

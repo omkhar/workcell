@@ -7,7 +7,7 @@
 # workcell_supported_agent succeeds when $1 is a supported adapter id.
 workcell_supported_agent() {
   case "$1" in
-    claude | codex | copilot | gemini) ;;
+    claude | codex | copilot | gemini | opencode) ;;
     *)
       return 1
       ;;
@@ -19,6 +19,9 @@ workcell_adapter_tier() {
   case "$1" in
     claude | codex | copilot | gemini)
       echo certified
+      ;;
+    opencode)
+      echo uncertified
       ;;
     *)
       return 1
@@ -40,6 +43,9 @@ provider_endpoints() {
       ;;
     gemini)
       echo "generativelanguage.googleapis.com:443 ai.google.dev:443"
+      ;;
+    opencode)
+      echo "opencode.ai:443"
       ;;
     *)
       return 1

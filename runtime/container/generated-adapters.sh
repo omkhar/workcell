@@ -7,7 +7,7 @@
 # workcell_supported_agent succeeds when $1 is a supported adapter id.
 workcell_supported_agent() {
   case "$1" in
-    claude | codex | copilot | gemini) ;;
+    claude | codex | copilot | gemini | opencode) ;;
     *)
       return 1
       ;;
@@ -20,6 +20,9 @@ workcell_adapter_tier() {
     claude | codex | copilot | gemini)
       echo certified
       ;;
+    opencode)
+      echo uncertified
+      ;;
     *)
       return 1
       ;;
@@ -30,6 +33,15 @@ workcell_adapter_tier() {
 # other_commands) of uncertified adapter $1, one entry per line.
 workcell_manifest_flags() {
   case "$1:$2" in
+    opencode:allow)
+      printf '%s\n' '-c' '--command' '--continue' '--agent' '--dir' '-f' '--file' '--fork' '--format' '-h' '--help' '-i' '--interactive' '--log-level' '-m' '--mini' '--model' '--no-replay' '--print-logs' '--prompt' '--pure' '--replay-limit' '-s' '--session' '--thinking' '--title' '-v' '--variant' '--version'
+      ;;
+    opencode:deny)
+      printf '%s\n' '--attach' '--auto' '--cors' '--dangerously-skip-permissions' '--hostname' '--mdns' '--mdns-domain' '-p' '--password' '--port' '--share' '-u' '--username' '--yolo'
+      ;;
+    opencode:other_commands)
+      printf '%s\n' 'completion' 'acp' 'mcp' 'attach' 'debug' 'providers' 'auth' 'agent' 'upgrade' 'uninstall' 'serve' 'web' 'models' 'stats' 'export' 'import' 'github' 'pr' 'session' 'plugin' 'plug' 'db'
+      ;;
     *)
       return 1
       ;;
