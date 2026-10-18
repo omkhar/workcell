@@ -373,32 +373,43 @@ func TestLauncherRefusesUncertifiedOptionMisuse(t *testing.T) {
 // deny and other_commands entry fails, and the yargs spellings of a refused
 // option (an attached value, --no- negation, camel case) fail too.
 func TestOpencodeManifestPolicy(t *testing.T) {
+	checkShippedManifestPolicy(t, "opencode", "--model", "opencode/demo", [][]string{
+		nil, {"run", "fix the failing test"}, {"--model", "opencode/demo", "run", "hi"},
+		{"-m", "opencode/demo", "--continue"}, {"--prompt=--auto"}, {"subdir"},
+	}, []string{
+		// The managed autonomy, network listener, remote attach and share
+		// options stay refused even when a manifest edit drops them from deny.
+		"--auto", "--yolo", "--dangerously-skip-permissions", "--share", "--port", "--hostname", "--attach",
+		"--no-auto", "--dangerouslySkipPermissions", "--printLogs", "--mdnsDomain", "--", "-mx",
+	})
+}
+
+// checkShippedManifestPolicy runs the shipped uncertified manifest id through
+// validate_command_args: each accepted argv passes, every allow entry passes,
+// and each refused word, every deny entry (also with an attached value) and
+// every other_commands entry fails, alone and after the allowed option
+// allowedFlag allowedValue.
+func checkShippedManifestPolicy(t *testing.T, id, allowedFlag, allowedValue string, accepted [][]string, refused []string) {
+	t.Helper()
 	manifests := loadRepoManifests(t)
-	i := slices.IndexFunc(manifests, func(m Manifest) bool { return m.ID == "opencode" })
+	i := slices.IndexFunc(manifests, func(m Manifest) bool { return m.ID == id })
 	if i < 0 || manifests[i].Tier != "uncertified" {
-		t.Fatal("adapters/opencode must be an uncertified manifest")
+		t.Fatalf("adapters/%s must be an uncertified manifest", id)
 	}
 	flags := manifests[i].Flags
 	run := func(args ...string) (int, string) {
-		return runRuntimePolicy(t, manifests, "validate_command_args", append([]string{"opencode", "opencode"}, args...)...)
+		return runRuntimePolicy(t, manifests, "validate_command_args", append([]string{id, id}, args...)...)
 	}
-	for _, args := range [][]string{
-		nil, {"run", "fix the failing test"}, {"--model", "opencode/demo", "run", "hi"},
-		{"-m", "opencode/demo", "--continue"}, {"--prompt=--auto"}, {"subdir"},
-	} {
+	for _, args := range accepted {
 		if code, stderr := run(args...); code != 0 {
-			t.Errorf("opencode %q exited %d, want 0: %s", args, code, stderr)
+			t.Errorf("%s %q exited %d, want 0: %s", id, args, code, stderr)
 		}
 	}
 	for _, flag := range flags.Allow {
 		if code, stderr := run(flag, "value"); code != 0 {
-			t.Errorf("allowed opencode option %s exited %d: %s", flag, code, stderr)
+			t.Errorf("allowed %s option %s exited %d: %s", id, flag, code, stderr)
 		}
 	}
-	// The managed autonomy, network listener, remote attach and share options
-	// stay refused even when a manifest edit drops them from deny.
-	refused := []string{"--auto", "--yolo", "--dangerously-skip-permissions", "--share", "--port", "--hostname", "--attach",
-		"--no-auto", "--dangerouslySkipPermissions", "--printLogs", "--mdnsDomain", "--", "-mx"}
 	for _, flag := range flags.Deny {
 		refused = append(refused, flag)
 		if len(flag) > 2 { // a long option
@@ -407,11 +418,11 @@ func TestOpencodeManifestPolicy(t *testing.T) {
 	}
 	for _, arg := range append(refused, flags.OtherCommands...) {
 		if code, _ := run(arg); code != 2 {
-			t.Errorf("opencode %q exited %d, want the policy refusal (2)", arg, code)
+			t.Errorf("%s %q exited %d, want the policy refusal (2)", id, arg, code)
 		}
 		// A refused word after an allowed one still fails.
-		if code, _ := run("--model", "opencode/demo", arg); code != 2 {
-			t.Errorf("opencode --model opencode/demo %q exited %d, want 2", arg, code)
+		if code, _ := run(allowedFlag, allowedValue, arg); code != 2 {
+			t.Errorf("%s %s %s %q exited %d, want 2", id, allowedFlag, allowedValue, arg, code)
 		}
 	}
 }
