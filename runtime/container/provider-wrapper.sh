@@ -519,15 +519,17 @@ case "${AGENT_NAME}" in
     done
     # The workspace config and .opencode/ directories are repository input,
     # so OpenCode reads only the session-home and the managed configuration.
-    # OPENCODE_CONFIG_CONTENT applies after the session-home file.
+    # OPENCODE_CONFIG_CONTENT applies after the session-home file. OpenCode
+    # refuses --auto before the run command, so the managed autonomy option
+    # goes last; the policy refuses --, so no later argument is literal text.
     OPENCODE_CONFIG_CONTENT='{"autoupdate":false,"share":"disabled"}' \
       OPENCODE_DISABLE_PROJECT_CONFIG=1 \
       OPENCODE_DISABLE_AUTOUPDATE=1 \
       OPENCODE_DISABLE_MODELS_FETCH=1 \
       OPENCODE_DISABLE_LSP_DOWNLOAD=1 \
       exec /usr/local/libexec/workcell/real/opencode \
-      "${MANAGED_AUTONOMY_ARGS[@]}" \
-      "$@"
+      "$@" \
+      "${MANAGED_AUTONOMY_ARGS[@]}"
     ;;
   *)
     workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"
