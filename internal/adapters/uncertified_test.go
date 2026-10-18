@@ -136,7 +136,7 @@ func TestRenderRuntimeShellUncertifiedTables(t *testing.T) {
 	}
 	for _, want := range []string{
 		"    claude | codex | copilot | gemini)\n      echo certified\n",
-		"    opencode | zz-fixture)\n      echo uncertified\n",
+		"    amp | opencode | zz-fixture)\n      echo uncertified\n",
 		"    zz-fixture:allow)\n      printf '%s\\n' '-h' '--help' '-m' '--model'\n",
 		"    zz-fixture:deny)\n      printf '%s\\n' '-y' '--yolo'\n",
 		"    zz-fixture:other_commands)\n      printf '%s\\n' 'serve' 'mcp'\n",
@@ -381,6 +381,21 @@ func TestOpencodeManifestPolicy(t *testing.T) {
 		// options stay refused even when a manifest edit drops them from deny.
 		"--auto", "--yolo", "--dangerously-skip-permissions", "--share", "--port", "--hostname", "--attach",
 		"--no-auto", "--dangerouslySkipPermissions", "--printLogs", "--mdnsDomain", "--", "-mx",
+	})
+}
+
+// TestAmpManifestPolicy runs the shipped amp manifest through
+// validate_command_args. A hidden command that the help does not list (review,
+// sync) and a command alias (t, up) fail like a listed command.
+func TestAmpManifestPolicy(t *testing.T) {
+	checkShippedManifestPolicy(t, "amp", "--mode", "high", [][]string{
+		nil, {"-x", "fix the failing test"}, {"--mode", "high", "-x", "hi"}, {"login"},
+		{"logout", "--all"}, {"version"}, {"--execute=--dangerously-allow-all is text"},
+	}, []string{
+		// The managed autonomy, remote execution, runner and terminal access
+		// options stay refused even when a manifest edit drops them from deny.
+		"--dangerously-allow-all", "--executor", "-ox", "--orb-execute", "--no-tui", "--remote-control-terminal",
+		"--settings-file", "--mcp-config", "--", "-xm", "review", "sync", "t", "up",
 	})
 }
 
