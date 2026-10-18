@@ -301,6 +301,9 @@ func TestLauncherGatesUncertifiedAdapter(t *testing.T) {
 	}
 	root := repoCopyWithUncertifiedFixture(t)
 	const refusal = "Workcell adapter zz-fixture is uncertified: no review certified its CLI. Add --allow-uncertified-agent"
+	if code, _, stderr := launcherRun(t, root, "--agent", "zz-fixture", "--allow-uncertified-agent", "--allow-uncertified-agent", "--dry-run"); code != 2 || !strings.Contains(stderr, "--allow-uncertified-agent may be given only once.") {
+		t.Errorf("a repeated --allow-uncertified-agent exited %d, want 2 with the once-only refusal: %s", code, stderr)
+	}
 	for _, args := range [][]string{
 		{"--agent", "zz-fixture", "--dry-run"},
 		{"--agent", "zz-fixture", "--inspect"},

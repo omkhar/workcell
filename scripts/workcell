@@ -9215,6 +9215,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --allow-uncertified-agent)
+      # The option unlocks a lower-assurance path, so a repeat is refused, not
+      # collapsed.
+      if [[ "${ALLOW_UNCERTIFIED_AGENT}" -eq 1 ]]; then
+        echo "--allow-uncertified-agent may be given only once." >&2
+        exit 2
+      fi
       ALLOW_UNCERTIFIED_AGENT=1
       shift
       ;;
