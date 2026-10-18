@@ -39,6 +39,14 @@ func TestGeneratedFilesMatchGolden(t *testing.T) {
 // each change the output in the expected way.
 func TestRenderersFollowManifests(t *testing.T) {
 	manifests := slices.Clone(loadRepoManifests(t))
+	// The supported ids of the repository manifests, then the zz-bare case.
+	var supported []string
+	for _, m := range manifests {
+		if m.Tier != "planned" {
+			supported = append(supported, m.ID)
+		}
+	}
+	supported = append(supported, "zz-bare")
 	committed, err := RenderDataGo(manifests)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +73,7 @@ func TestRenderersFollowManifests(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`var AllProviders = []string{"claude", "codex", "copilot", "gemini", "zz-bare"}`,
+		`var AllProviders = []string{"` + strings.Join(supported, `", "`) + `"}`,
 		`var CredentialMetadataProviders = []string{"claude", "codex", "copilot", "gemini"}`,
 	} {
 		if !strings.Contains(string(ids), want) {
@@ -77,7 +85,7 @@ func TestRenderersFollowManifests(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"    claude | codex | copilot | gemini | zz-bare) ;;\n",
+		"    " + strings.Join(supported, " | ") + ") ;;\n",
 		"    claude)\n      echo \"changed.example:443\"\n",
 		"    zz-bare)\n      echo \"\"\n",
 	} {

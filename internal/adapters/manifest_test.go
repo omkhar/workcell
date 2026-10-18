@@ -673,11 +673,16 @@ func TestManifestsMatchRustLaunchTargets(t *testing.T) {
 
 func TestManifestInstallPinsExist(t *testing.T) {
 	pinned := dockerfilePinnedArgs(readRepoFile(t, "runtime/container/Dockerfile"))
-	var pkg struct {
-		Dependencies map[string]string `json:"dependencies"`
-	}
-	if err := json.Unmarshal([]byte(readRepoFile(t, "runtime/container/providers/package.json")), &pkg); err != nil {
-		t.Fatal(err)
+	// An uncertified npm CLI is pinned apart from the Tier 1 provider packages.
+	pins := map[string]map[string]string{}
+	for tier, path := range map[string]string{"certified": "runtime/container/providers/package.json", "uncertified": "runtime/container/providers-uncertified/package.json"} {
+		var pkg struct {
+			Dependencies map[string]string `json:"dependencies"`
+		}
+		if err := json.Unmarshal([]byte(readRepoFile(t, path)), &pkg); err != nil {
+			t.Fatal(err)
+		}
+		pins[tier] = pkg.Dependencies
 	}
 	for _, m := range loadRepoManifests(t) {
 		if m.Tier == "planned" {
@@ -694,8 +699,8 @@ func TestManifestInstallPinsExist(t *testing.T) {
 			t.Errorf("%s: Dockerfile has no pinned ARG %s", m.ID, m.Install.VersionArg)
 		}
 		// The runtime runs this exact package (Dockerfile and provider-wrapper.sh).
-		if want := map[string]string{providerid.Gemini: "@google/gemini-cli"}[m.ID]; m.Install.Package != want || want != "" && pkg.Dependencies[want] == "" {
-			t.Errorf("%s: package = %q, want %q as a providers/package.json dependency", m.ID, m.Install.Package, want)
+		if want := map[string]string{providerid.Gemini: "@google/gemini-cli", "opencode": "opencode-ai"}[m.ID]; m.Install.Package != want || want != "" && pins[m.Tier][want] == "" {
+			t.Errorf("%s: package = %q, want %q as a %s provider package.json dependency", m.ID, m.Install.Package, want, m.Tier)
 		}
 		if _, err := os.Stat(filepath.Join(repoRoot, m.Install.Provenance)); err != nil {
 			t.Errorf("%s: provenance script: %v", m.ID, err)

@@ -438,6 +438,9 @@ case "${AGENT_NAME}:${WORKCELL_AGENT_AUTONOMY}" in
       "--available-tools=view,create,edit,apply_patch,grep,glob"
     )
     ;;
+  opencode:yolo)
+    MANAGED_AUTONOMY_ARGS=(--auto)
+    ;;
 esac
 
 declare -a MANAGED_COPILOT_SAFETY_ARGS=(
@@ -508,6 +511,27 @@ case "${AGENT_NAME}" in
       "$(gemini_provider_script_path)" \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
+    ;;
+  opencode)
+    reject_manifest_args opencode "$@"
+    for env_name in "${!OPENCODE_@}"; do
+      unset "${env_name}"
+    done
+    # The workspace config and .opencode/ directories are repository input,
+    # so OpenCode reads only the session-home and the managed configuration.
+    # OPENCODE_CONFIG_CONTENT applies after the session-home file. A snapshot
+    # starts git with its own --git-dir, --work-tree and -c options, and that
+    # start ended with EPERM in a live session, so snapshots are off. OpenCode
+    # refuses --auto before the run command, so the managed autonomy option
+    # goes last; the policy refuses --, so no later argument is literal text.
+    OPENCODE_CONFIG_CONTENT='{"autoupdate":false,"share":"disabled","snapshot":false}' \
+      OPENCODE_DISABLE_PROJECT_CONFIG=1 \
+      OPENCODE_DISABLE_AUTOUPDATE=1 \
+      OPENCODE_DISABLE_MODELS_FETCH=1 \
+      OPENCODE_DISABLE_LSP_DOWNLOAD=1 \
+      exec /usr/local/libexec/workcell/real/opencode \
+      "$@" \
+      "${MANAGED_AUTONOMY_ARGS[@]}"
     ;;
   *)
     workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"

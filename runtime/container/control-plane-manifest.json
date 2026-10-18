@@ -228,7 +228,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "0ee1327fae499db23c10b485b1caf915de98be87be609a0a7e9db66ea6ea0cda"
+      "sha256": "22924ee60d2a5538ece089975315bf61ed535455c578af93e8859e5417b1a805"
     },
     {
       "kind": "runtime-control-plane",
@@ -246,7 +246,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "9337d65169240184764dab5d493be4a7383d895a32f69035859e85fcd851be95"
+      "sha256": "df5d6581f00599cac2d15b2b596d3e37085cfafbfe67beda3491ccbfd393eb04"
     },
     {
       "kind": "runtime-control-plane",
@@ -264,7 +264,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "fbaa00dfe345139b48553160189fc971909ffb1f9dac844df8d5294ff6c6832c"
+      "sha256": "1fb66901499f81e86fae38be9cdd8f7bebd7694ccaf4cf34ec90ad7c69928fe3"
     },
     {
       "kind": "runtime-control-plane",

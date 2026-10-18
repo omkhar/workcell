@@ -45,6 +45,7 @@ enum ProtectedRuntime {
     Codex,
     Claude,
     Copilot,
+    Opencode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,6 +91,11 @@ const PROTECTED_RUNTIME_PATHS: &[(ProtectedRuntime, &str)] = &[
     (
         ProtectedRuntime::Copilot,
         "/usr/local/libexec/workcell/real/copilot",
+    ),
+    // Only the runtime-uncertified image has it; a missing path matches nothing.
+    (
+        ProtectedRuntime::Opencode,
+        "/usr/local/libexec/workcell/real/opencode",
     ),
 ];
 
@@ -1603,6 +1609,7 @@ fn approved_wrapper_allows_runtime(wrapper: ApprovedWrapper, kind: ProtectedRunt
             ProtectedRuntime::Codex
                 | ProtectedRuntime::Claude
                 | ProtectedRuntime::Copilot
+                | ProtectedRuntime::Opencode
                 | ProtectedRuntime::Node
         ),
         ApprovedWrapper::Git => kind == ProtectedRuntime::Git,
@@ -4110,6 +4117,18 @@ mod tests {
             ProtectedRuntime::Copilot,
             ApprovedWrapper::Provider
         ));
+        assert!(!protected_runtime_exec_blocked(
+            ProtectedRuntime::Opencode,
+            ApprovedWrapper::Provider
+        ));
+        assert!(protected_runtime_exec_blocked(
+            ProtectedRuntime::Opencode,
+            ApprovedWrapper::Development
+        ));
+        assert!(PROTECTED_RUNTIME_PATHS.contains(&(
+            ProtectedRuntime::Opencode,
+            "/usr/local/libexec/workcell/real/opencode"
+        )));
         assert!(protected_runtime_exec_blocked(
             ProtectedRuntime::Copilot,
             ApprovedWrapper::Development

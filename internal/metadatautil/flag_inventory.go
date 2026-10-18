@@ -16,9 +16,12 @@ import (
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
-// The flag inventory binds each certified adapter's CLI options to its manifest.
-// scripts/check-flag-inventory.sh renders tests/fixtures/flags/<id>.txt from the
-// CLI help in the runtime image; CheckFlagInventory fails on unclassified flags.
+// The flag inventory binds each certified and uncertified adapter's CLI options
+// to its manifest. scripts/check-flag-inventory.sh renders the certified
+// tests/fixtures/flags/<id>.txt from the CLI help in the runtime image; an
+// uncertified CLI is only in the runtime-uncertified image, so its fixture is
+// written from that image by hand. CheckFlagInventory fails on unclassified
+// flags of either tier.
 
 var (
 	// An option line starts with at most six spaces of indentation, so the
@@ -112,7 +115,12 @@ func RenderFlagFixture(m adapters.Manifest, version string, flags []string) []by
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Option inventory for the PINNED runtime %s CLI. The stamp must equal the pin.\n", m.Binary)
 	fmt.Fprintf(&b, "# %s-version: %s\n", m.ID, version)
-	fmt.Fprintf(&b, "# Regenerate: scripts/check-flag-inventory.sh --write. Classify: adapters/%s/adapter.toml [flags].\n", m.ID)
+	regenerate := "scripts/check-flag-inventory.sh --write"
+	if m.Tier == "uncertified" {
+		// The probe image of check-flag-inventory.sh has no uncertified CLI.
+		regenerate = "workcell-citools flag-inventory write with the help from the runtime-uncertified image"
+	}
+	fmt.Fprintf(&b, "# Regenerate: %s. Classify: adapters/%s/adapter.toml [flags].\n", regenerate, m.ID)
 	for _, flag := range flags {
 		b.WriteString(flag + "\n")
 	}
@@ -136,13 +144,13 @@ func FlagInventoryPlan(root string) (string, error) {
 // RenderFlagFixtureFromHelp renders the fixture for adapter id from its help
 // output files, stamped with the current pin.
 func RenderFlagFixtureFromHelp(root, id string, helpPaths []string) ([]byte, error) {
-	manifests, err := certifiedManifests(root)
+	manifests, err := inventoriedManifests(root)
 	if err != nil {
 		return nil, err
 	}
 	i := slices.IndexFunc(manifests, func(m adapters.Manifest) bool { return m.ID == id })
 	if i < 0 {
-		return nil, fmt.Errorf("no certified adapter %q", id)
+		return nil, fmt.Errorf("no certified or uncertified adapter %q", id)
 	}
 	m := manifests[i]
 	version, err := adapterPin(root, m)
@@ -223,11 +231,11 @@ func CompareFlagFixture(root, id string, helpPaths []string) error {
 	return nil
 }
 
-// CheckFlagInventory fails when a certified adapter has no fixture, a fixture
-// stamp differs from the provider pin, or a fixture flag is in neither the
-// manifest's [flags] allow nor deny list.
+// CheckFlagInventory fails when a certified or uncertified adapter has no
+// fixture, a fixture stamp differs from the provider pin, or a fixture flag is
+// in neither the manifest's [flags] allow nor deny list.
 func CheckFlagInventory(root string) error {
-	manifests, err := certifiedManifests(root)
+	manifests, err := inventoriedManifests(root)
 	if err != nil {
 		return err
 	}
@@ -258,12 +266,12 @@ func CheckFlagInventory(root string) error {
 	return nil
 }
 
-// RestampFlagFixtures sets each certified fixture's stamp to the current pin
+// RestampFlagFixtures sets each inventoried fixture's stamp to the current pin
 // and leaves its flags unchanged. Container smoke then proves the flags. It
 // reads, validates and replaces each fixture through one no-follow parent
 // descriptor, so a swapped symlink cannot redirect the replacement.
 func RestampFlagFixtures(root string) error {
-	manifests, err := certifiedManifests(root)
+	manifests, err := inventoriedManifests(root)
 	if err != nil {
 		return err
 	}
@@ -331,24 +339,39 @@ func parseFlagFixture(path, id string, data []byte) (string, []string, error) {
 }
 
 func certifiedManifests(root string) ([]adapters.Manifest, error) {
+	return manifestsOfTier(root, "certified")
+}
+
+// inventoriedManifests returns every adapter whose CLI has a flag fixture: the
+// certified and the uncertified ones.
+func inventoriedManifests(root string) ([]adapters.Manifest, error) {
+	return manifestsOfTier(root, "certified", "uncertified")
+}
+
+func manifestsOfTier(root string, tiers ...string) ([]adapters.Manifest, error) {
 	all, err := adapters.LoadManifests(filepath.Join(root, "adapters"))
 	if err != nil {
 		return nil, err
 	}
 	var out []adapters.Manifest
 	for _, m := range all {
-		if m.Tier == "certified" {
+		if slices.Contains(tiers, m.Tier) {
 			out = append(out, m)
 		}
 	}
 	return out, nil
 }
 
-// adapterPin reads the version the existing pin owners hold for adapter m.
+// adapterPin reads the version the existing pin owners hold for adapter m. An
+// uncertified npm CLI is pinned apart from the Tier 1 provider packages.
 func adapterPin(root string, m adapters.Manifest) (string, error) {
 	if m.Install.Method == "npm" {
 		var pkg providersPackageJSON
-		path := filepath.Join(root, "runtime", "container", "providers", "package.json")
+		packages := "providers"
+		if m.Tier == "uncertified" {
+			packages = "providers-uncertified"
+		}
+		path := filepath.Join(root, "runtime", "container", packages, "package.json")
 		if err := readJSONFile(path, &pkg); err != nil {
 			return "", err
 		}
