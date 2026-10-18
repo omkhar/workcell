@@ -180,8 +180,11 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
 13. Mark the PR ready only after all required checks and reviews pass.
 14. Check comments and review threads again immediately before merge.
 
-The pre-commit hook blocks unrelated commits when stable provider pin bumps are
-pending and points you at `./scripts/publish-provider-bump-pr.sh`.
+The pre-commit hook reports pending pin bumps and does not block the commit.
+CI pin hygiene and the release preflight fail on stale pins. The
+upstream-refresh workflow opens a bump PR only when its App credentials are
+set and the candidate does not change `.github/workflows/`. Otherwise, publish
+the candidate on the host as `docs/github-workflows.md` shows.
 
 The hook checks the pins with GitHub API calls and passes no GitHub
 credential, because it runs the pin script of the worktree. GitHub allows 60
