@@ -2415,8 +2415,8 @@ if grep -q 'Pinned upstream updates are available' /tmp/workcell-precommit-skip.
   exit 1
 fi
 
-# A rate limit is not a pending pin: the hook still blocks, names the limit,
-# and passes the token file path through its sanitized environment.
+# A rate limit is not a pending pin: the hook still blocks and names the limit.
+# It runs the worktree pin script, so no GitHub credential passes through it.
 cat >"${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh" <<'EOF'
 #!/bin/bash
 if [[ "${1:-}" == "--check" ]]; then
@@ -2432,7 +2432,7 @@ if WORKCELL_GITHUB_API_TOKEN_FILE=/nonexistent/workcell-token HOME="${PRECOMMIT_
   echo "Expected repo pre-commit hook to block commits when the pin check hits the rate limit" >&2
   exit 1
 fi
-grep -q 'token_file=/nonexistent/workcell-token' /tmp/workcell-precommit-ratelimit.out
+grep -q 'token_file=unset' /tmp/workcell-precommit-ratelimit.out
 grep -q 'hit the GitHub API rate limit, so it did not run' /tmp/workcell-precommit-ratelimit.out
 if grep -q 'Pinned upstream updates are available' /tmp/workcell-precommit-ratelimit.out; then
   echo "Expected repo pre-commit hook to report a rate limit, not pending pins" >&2

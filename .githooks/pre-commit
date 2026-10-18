@@ -7,7 +7,6 @@ if [[ "${WORKCELL_PRECOMMIT_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     TMPDIR="${TMPDIR:-/tmp}" \
     WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT="${WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT:-}" \
     WORKCELL_SKIP_PROVIDER_BUMP_PRECOMMIT="${WORKCELL_SKIP_PROVIDER_BUMP_PRECOMMIT:-}" \
-    WORKCELL_GITHUB_API_TOKEN_FILE="${WORKCELL_GITHUB_API_TOKEN_FILE:-}" \
     WORKCELL_PRECOMMIT_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
 fi
@@ -31,7 +30,8 @@ printf '%s\n' "${output}" >&2
 if grep -q 'GitHub API rate limit reached' <<<"${output}"; then
   # The check could not run, so no pin is known to be pending.
   echo "The pinned upstream check hit the GitHub API rate limit, so it did not run." >&2
-  echo "Retry after the reset, or set WORKCELL_GITHUB_API_TOKEN_FILE to a file that holds a GitHub token." >&2
+  # The hook runs the worktree pin script, so it passes no GitHub credential.
+  echo "Retry after the reset that the message above names." >&2
 elif [[ "${status}" -eq 1 ]]; then
   echo "Pinned upstream updates are available." >&2
   echo "Run ./scripts/update-upstream-pins.sh --apply from a clean worktree or trigger the upstream-refresh workflow before committing unrelated changes." >&2
