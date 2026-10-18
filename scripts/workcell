@@ -2976,19 +2976,24 @@ codex_rules_effective_assurance_with_session_assurance() {
   workcell_effective_codex_rules_assurance "${CODEX_RULES_MUTABILITY}" "${AGENT_AUTONOMY}" "${session_assurance}"
 }
 
+# lower_assurance_reasons prints the acknowledged lower-assurance reasons as one
+# '+'-joined label, or nothing. Concurrent acknowledgements stack, so no signal
+# is dropped (e.g. both control-plane VCS visibility and repo-defined MCP
+# servers acknowledged on the same launch).
+lower_assurance_reasons() {
+  local -a reasons=()
+  [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]] && reasons+=("control-plane-vcs")
+  [[ "${ALLOW_REPO_MCP}" -eq 1 ]] && reasons+=("repo-mcp")
+  # Bash 3.2 (macOS /bin/bash) treats an empty array as unset under set -u.
+  [[ "${#reasons[@]}" -gt 0 ]] || return 0
+  local IFS='+'
+  printf '%s' "${reasons[*]}"
+}
+
 session_assurance_initial() {
-  # Concurrent risk acknowledgements stack into one '+'-joined reason label so
-  # neither signal is dropped by an earlier return (e.g. both control-plane VCS
-  # visibility and repo-defined MCP servers acknowledged on the same launch).
-  local -a lower_assurance_reasons=()
-  [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]] && lower_assurance_reasons+=("control-plane-vcs")
-  [[ "${ALLOW_REPO_MCP}" -eq 1 ]] && lower_assurance_reasons+=("repo-mcp")
-  if [[ "${#lower_assurance_reasons[@]}" -gt 0 ]]; then
-    local joined_reasons
-    joined_reasons="$(
-      IFS='+'
-      printf '%s' "${lower_assurance_reasons[*]}"
-    )"
+  local joined_reasons
+  joined_reasons="$(lower_assurance_reasons)"
+  if [[ -n "${joined_reasons}" ]]; then
     printf 'lower-assurance-%s\n' "${joined_reasons}"
     return 0
   fi
@@ -9843,17 +9848,9 @@ if [[ "${MODE}" == "breakglass" ]]; then
 elif [[ "${MODE}" == "development" ]]; then
   EXECUTION_PATH="lower-assurance-development"
 else
-  # Concurrent risk acknowledgements stack into one '+'-joined execution path
-  # (mirroring session_assurance_initial) so an acked repo-MCP escape hatch is
-  # visible on execution_path even alongside control-plane VCS visibility.
-  EXECUTION_PATH_REASONS=()
-  [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]] && EXECUTION_PATH_REASONS+=("control-plane-vcs")
-  [[ "${ALLOW_REPO_MCP}" -eq 1 ]] && EXECUTION_PATH_REASONS+=("repo-mcp")
-  if [[ "${#EXECUTION_PATH_REASONS[@]}" -gt 0 ]]; then
-    EXECUTION_PATH_JOINED="$(
-      IFS='+'
-      printf '%s' "${EXECUTION_PATH_REASONS[*]}"
-    )"
+  # The execution path stacks the same reasons as session_assurance_initial.
+  EXECUTION_PATH_JOINED="$(lower_assurance_reasons)"
+  if [[ -n "${EXECUTION_PATH_JOINED}" ]]; then
     EXECUTION_PATH="lower-assurance-${EXECUTION_PATH_JOINED}"
   fi
 fi
