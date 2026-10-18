@@ -281,6 +281,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
   "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
+  "${ROOT_DIR}/runtime/container/install-provider-packages.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
   "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
