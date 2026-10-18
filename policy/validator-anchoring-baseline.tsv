@@ -6,6 +6,9 @@
 # widened to every match; give it a real reason or port it.
 # Seeded from origin/main 14040a17; rebased onto c5fa6469.
 internal/adapters	LoadManifests	c2333b01	the pattern checks a directory entry name, not file content
+internal/adapters	TestAdapterAssuranceMapping	7a8a3d56	a test assertion on the refusal text or rendered output that the test itself produces
+internal/adapters	TestLauncherGatesUncertifiedAdapter	a25cba0d,4c687e3c,f4b8724b,bd0a172d,04c13f61,2e5b3c39,5cfb6935,b39a7da7	a test assertion on the refusal text or rendered output that the test itself produces
+internal/adapters	TestLauncherRefusesUncertifiedOptionMisuse	4ba4808d	a test assertion on the refusal text or rendered output that the test itself produces
 internal/adapters	TestManifestsMatchLauncherAgentDispatch	257a40f3,57540d48,57540d48,c71e9e89	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	TestRejectManifestArgsAllowsOnlyTheManifestAllowlist	7e026f3f	a test assertion on the refusal text or rendered output that the test itself produces
 internal/adapters	TestRejectManifestArgsFailsClosed	78d94112,f5fbbae8	a test assertion on the refusal text or rendered output that the test itself produces

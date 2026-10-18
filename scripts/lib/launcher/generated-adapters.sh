@@ -14,6 +14,18 @@ workcell_supported_agent() {
   esac
 }
 
+# workcell_adapter_tier prints the manifest tier of supported adapter $1.
+workcell_adapter_tier() {
+  case "$1" in
+    claude | codex | copilot | gemini)
+      echo certified
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # provider_endpoints prints the fixed egress endpoints of adapter $1.
 provider_endpoints() {
   case "$1" in

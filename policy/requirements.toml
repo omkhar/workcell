@@ -64,11 +64,12 @@ docs = [
 
 [functional.FR-004]
 title = "Explicit lower-assurance modes"
-summary = "Development, breakglass, prompt autonomy, arbitrary command, control-plane VCS, and acknowledged repo-defined MCP paths stay explicit and visibly lower assurance."
-workflows = ["launch_mode", "launch_mode_development", "launch_agent_autonomy"]
+summary = "Development, breakglass, prompt autonomy, arbitrary command, control-plane VCS, acknowledged repo-defined MCP, and uncertified adapter paths stay explicit and visibly lower assurance."
+workflows = ["launch_mode", "launch_mode_development", "launch_agent_autonomy", "launch_allow_uncertified_agent"]
 evidence = [
   "tests/scenarios/shared/test-assurance-dry-run.sh",
   "scripts/verify-invariants.sh",
+  "internal/adapters/uncertified_test.go",
 ]
 docs = [
   "README.md",

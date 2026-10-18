@@ -2344,6 +2344,9 @@ bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 WORKCELL_RUNTIME_BUILD_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-runtime-build-retry-harness.sh"
 {
   printf 'set -euo pipefail\n'
+  # run_runtime_image_build_with_retries reads the launcher global that names
+  # the Dockerfile target.
+  printf 'RUNTIME_IMAGE_TARGET=runtime\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" write_latest_log_pointer
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" record_validated_profile_state

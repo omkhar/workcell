@@ -524,3 +524,13 @@ docs = ["docs/injection-policy.md", "docs/invariants.md", "man/workcell.1"]
 evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios/shared/test-egress-proxy-smoke.sh", "scripts/verify-invariants.sh"]
 requirements = ["nonfunctional.NFR-001"]
 target_state = "retain"
+
+[workflows.launch_allow_uncertified_agent]
+title = "Lower-assurance launch of an uncertified adapter"
+support = "supported"
+canonical = "--allow-uncertified-agent"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/invariants.md", "docs/mode-map.md", "man/workcell.1"]
+evidence = ["internal/adapters/uncertified_test.go"]
+requirements = ["functional.FR-004"]
+target_state = "retain"

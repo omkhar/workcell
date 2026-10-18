@@ -503,6 +503,22 @@ so both warnings are surfaced.
 A symlinked MCP surface, or one reached through a symlinked parent directory,
 is refused.
 .TP
+.B --allow-uncertified-agent
+Run an adapter whose manifest tier is
+.BR uncertified .
+No review certified its CLI. Without this option, Workcell refuses the
+adapter. With a certified adapter, Workcell refuses the option. The session
+runs the
+.B runtime-uncertified
+image stage. Provider arguments pass only through the manifest
+.B [flags] allow
+list, in every mode. Workcell records
+.B session_assurance_initial=lower-assurance-uncertified-adapter
+and, in strict mode,
+.BR execution_path=lower-assurance-uncertified-adapter .
+Other reasons stack with it, for example
+.BR lower-assurance-repo-mcp+uncertified-adapter .
+.TP
 .B --allow-arbitrary-command
 Launch the runtime image with a direct container entrypoint after
 .BR -- .
