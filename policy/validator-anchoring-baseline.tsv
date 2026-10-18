@@ -455,6 +455,7 @@ internal/testkit	TestValidatorPasswdRefusesAColonInTheHomeField	d38fa2c0	unrevie
 internal/testkit	TestValidatorPasswdRefusesSymlinkedWorkspaceTmp	40890f51,46122120	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidatorRunnersRequireWorkspaceMountPreflight	02ca0b49,2b82f19c,32d2af0e,6c75d6a8,6e1e2546,752c8310,b2d4f803	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestVerifyInvariantsUsesDedicatedSanitizedEntrypoint	1bc188ca	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestVerifyLockPackageTree	ba2560dc	the search checks the output of a stubbed lib run, not script text
 internal/testkit	TestVerifyReleaseArtifactAcceptsCorrectlySignedArtifact	06e02a86	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestVerifyReleaseArtifactPinsRequestedIdentities	6f8963fb,6f8963fb	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestVerifyReleaseArtifactRejectsBadSignature	f45f8aca	unreviewed debt in a test: review the subject, then port or justify
