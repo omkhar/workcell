@@ -11,8 +11,9 @@ Workcell stages no Amp credential. Amp needs an Amp account. When the session
 home has no Amp key, Amp starts its device login: it prints an
 `ampcode.com` URL and a code. Open the URL on the host, and confirm the code.
 Amp then saves the account in the session home. The manifest egress
-allowlist names only `ampcode.com:443`. The Amp service serves the login, the
-threads, and the model calls.
+allowlist names `ampcode.com:443` and `authapi.ampcode.com:443`. The Amp
+service serves the threads and the model calls, and the device login polls
+`authapi.ampcode.com`.
 
 ## Managed control-plane files
 

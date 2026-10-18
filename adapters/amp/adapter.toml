@@ -16,11 +16,12 @@ provenance = "scripts/verify-upstream-amp-release.sh"
 [home]
 reserved_targets = ["/state/agent-home/.config/amp"]
 
-# The Amp service (ampcode.com) serves the login, the threads, and the model
-# calls. Workcell stages no Amp credential; the device login in the session
-# stores the key in the session home.
+# The Amp service (ampcode.com) serves the threads and the model calls. The
+# device login polls authapi.ampcode.com, the apiURL of
+# https://ampcode.com/api/auth/oauth-config. Workcell stages no Amp credential;
+# the device login in the session saves the account in the session home.
 [egress]
-endpoints = ["ampcode.com:443"]
+endpoints = ["ampcode.com:443", "authapi.ampcode.com:443"]
 
 # Classifies tests/fixtures/flags/amp.txt. The default command starts the
 # terminal UI, and -x runs one prompt. other_commands names every top-level

@@ -33,7 +33,7 @@ workcell_adapter_tier() {
 provider_endpoints() {
   case "$1" in
     amp)
-      echo "ampcode.com:443"
+      echo "ampcode.com:443 authapi.ampcode.com:443"
       ;;
     claude)
       echo "api.anthropic.com:443 claude.ai:443 console.anthropic.com:443"

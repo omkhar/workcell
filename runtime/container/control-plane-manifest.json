@@ -30,7 +30,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/generated-adapters.sh",
-      "sha256": "2b6e4d1f9957368e75bc495c57782453111949dfeb3c1ddf488ab140c388367c"
+      "sha256": "056985e0028f9ac6f708a66d09b84b1960d65a8342e6035e7345abc219c3e0ca"
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle",
@@ -198,7 +198,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/amp/README.md",
       "runtime_path": "/opt/workcell/adapters/amp/README.md",
-      "sha256": "79571ff044fb24781393c5e66eaa8eeabc66461a8348e60835de0856487f2ac5"
+      "sha256": "0049ee2849a0cceb7cc37d405638b77dfc8c9bf48ddf25fab3dc41a7c3217e85"
     },
     {
       "kind": "runtime-control-plane",
