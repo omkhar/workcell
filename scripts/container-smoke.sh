@@ -516,7 +516,7 @@ run_detached_tty_attach_probe() {
   local -a command_args=("$@")
   local command_string=""
 
-  if script --help 2>&1 | grep -q -- ' -c, --command '; then
+  if script --help 2>&1 | grep -- ' -c, --command ' >/dev/null; then
     printf -v command_string '%q ' "${command_args[@]}"
     script -qef -c "${command_string% }" "${transcript_path}"
     return
@@ -628,7 +628,7 @@ copilot_token_handoff_dir_for_bundle() {
 }
 
 workspace_import_mounts() {
-  if [[ -d "${WORKSPACE_IMPORT_ROOT}" ]] && find "${WORKSPACE_IMPORT_ROOT}" -type f -print -quit | grep -q .; then
+  if [[ -d "${WORKSPACE_IMPORT_ROOT}" ]] && find "${WORKSPACE_IMPORT_ROOT}" -type f -print -quit | grep . >/dev/null; then
     printf -- '%s\0' \
       -v \
       "$(workcell_docker_host_path "${WORKSPACE_IMPORT_ROOT}"):/opt/workcell/workspace-control-plane:ro"
@@ -3035,7 +3035,7 @@ fi
 docker_cmd start "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null
 DETACHED_TTY_SMOKE_READY=0
 for _ in $(seq 1 50); do
-  if docker_cmd logs "${DETACHED_TTY_SMOKE_CONTAINER}" 2>&1 | tr -d '\r' | grep -qx 'detached-tty-ok'; then
+  if docker_cmd logs "${DETACHED_TTY_SMOKE_CONTAINER}" 2>&1 | tr -d '\r' | grep -x 'detached-tty-ok' >/dev/null; then
     DETACHED_TTY_SMOKE_READY=1
     break
   fi
@@ -5105,19 +5105,19 @@ run_container_stdin gemini bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3
     set -euo pipefail
     out="$(gemini --version 2>&1)"
     echo "$out"
-    if echo "$out" | grep -q "Failed to save project registry"; then
+    if echo "$out" | grep "Failed to save project registry" >/dev/null; then
       echo "unexpected Gemini project registry warning" >&2
       exit 1
     fi
-    if echo "$out" | grep -q "There was an error saving your latest settings changes"; then
+    if echo "$out" | grep "There was an error saving your latest settings changes" >/dev/null; then
       echo "unexpected Gemini settings write warning" >&2
       exit 1
     fi
-    if echo "$out" | grep -q "system configuration contains deprecated settings"; then
+    if echo "$out" | grep "system configuration contains deprecated settings" >/dev/null; then
       echo "unexpected Gemini system settings deprecation warning" >&2
       exit 1
     fi
-    echo "$out" | grep -Eq "([0-9]+\\.){2}[0-9]+"
+    echo "$out" | grep -E "([0-9]+\\.){2}[0-9]+" >/dev/null
     test -f "$HOME/.gemini/settings.json"
     test -f "$HOME/.gemini/GEMINI.md"
     test -f "$HOME/.gemini/projects.json"

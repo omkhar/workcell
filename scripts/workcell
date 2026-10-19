@@ -834,7 +834,7 @@ maybe_reap_stale_profile_processes() {
       ;;
   esac
 
-  if ((status_rc == 3)) && profile_process_pids "${profile}" | grep -q .; then
+  if ((status_rc == 3)) && profile_process_pids "${profile}" | grep . >/dev/null; then
     reap_stale_profile_processes "${profile}" || return $?
   fi
 }
@@ -851,7 +851,7 @@ refresh_managed_profile() {
     delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
   reap_stale_profile_processes "${COLIMA_PROFILE}" || return $?
   remove_profile_state_dirs "${COLIMA_PROFILE}"
-  if profile_process_pids "${COLIMA_PROFILE}" | grep -q .; then
+  if profile_process_pids "${COLIMA_PROFILE}" | grep . >/dev/null; then
     echo "Failed to fully tear down managed Colima profile ${COLIMA_PROFILE} during refresh." >&2
     return 1
   fi
@@ -8061,7 +8061,7 @@ register_workspace_import_root_mount() {
   local destination="/opt/workcell/workspace-control-plane"
 
   [[ -d "${source}" ]] || return 0
-  if ! find "${source}" -type f -print -quit | grep -q .; then
+  if ! find "${source}" -type f -print -quit | grep . >/dev/null; then
     return 0
   fi
 
