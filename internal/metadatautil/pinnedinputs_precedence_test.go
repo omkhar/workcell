@@ -136,10 +136,9 @@ func TestCheckPinnedInputsValidatesUncertifiedProviderLock(t *testing.T) {
 	}
 }
 
-// The goose pin of the runtime-uncertified build keeps its release URL, its
-// sha256 check, one stable version, one sha256 ARG per architecture, and the
-// case arm that selects the musl archive and the sha256 ARG of each
-// architecture.
+// The goose pin of the runtime-uncertified build keeps one stable version, one
+// sha256 ARG per architecture, and one RUN that runs set -eu, the download of
+// the release archive, its sha256, the match with a pin and the extract.
 func TestCheckPinnedInputsValidatesGoosePin(t *testing.T) {
 	for _, tc := range []struct {
 		name, old, new, want string
@@ -148,31 +147,67 @@ func TestCheckPinnedInputsValidatesGoosePin(t *testing.T) {
 			name: "download host",
 			old:  "https://github.com/aaif-goose/goose/releases/download/",
 			new:  "https://mirror.example/goose/releases/download/",
-			want: "goose release download URL",
+			want: "one RUN instruction that names the goose release URL, found 0",
 		},
 		{
-			name: "checksum check",
-			old:  `echo "${GOOSE_SHA256}  /tmp/goose.tar.gz" | sha256sum -c -`,
-			new:  `echo "${GOOSE_SHA256}  /tmp/goose.tar.gz"`,
-			want: "goose archive checksum verification",
+			name: "decoy URL in another RUN",
+			old:  "FROM runtime-base AS runtime-builder\n",
+			new:  "RUN echo \"https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}.tar.gz\"\nFROM runtime-base AS runtime-builder\n",
+			want: "one RUN instruction that names the goose release URL, found 2",
+		},
+		{
+			name: "no set -eu",
+			old:  "RUN set -eu; \\\n  read",
+			new:  "RUN read",
+			want: "must start with set -eu, once and in order",
+		},
+		{
+			name: "a command before set -eu",
+			old:  "RUN set -eu; \\\n",
+			new:  "RUN true; set -eu; \\\n",
+			want: "must start with set -eu, once and in order",
+		},
+		{
+			name: "commented download",
+			old:  "  curl --ipv4 -fsSL",
+			new:  "  : curl --ipv4 -fsSL",
+			want: "must download the goose release URL into /tmp/goose.tar.gz, once and in order",
+		},
+		{
+			name: "no sha256",
+			old:  "  sha256sum /tmp/goose.tar.gz > /tmp/goose.sum; \\\n",
+			new:  "  : > /tmp/goose.sum; \\\n",
+			want: "must write the sha256 of /tmp/goose.tar.gz to /tmp/goose.sum, once and in order",
+		},
+		{
+			name: "one pin",
+			old:  ` -e "${GOOSE_SHA256_AMD64}  /tmp/goose.tar.gz"`,
+			new:  "",
+			want: "must match /tmp/goose.sum with one of the sha256 pins, once and in order",
+		},
+		{
+			name: "extract before the check",
+			old:  "  tar -xzf /tmp/goose.tar.gz -C /tmp ./goose; \\\n",
+			new:  "",
+			want: "must extract /tmp/goose.tar.gz, once and in order",
+		},
+		{
+			name: "ignored match",
+			old:  " /tmp/goose.sum; \\\n  tar",
+			new:  " /tmp/goose.sum || true; \\\n  tar",
+			want: "the goose install RUN must equal the reviewed command list",
+		},
+		{
+			name: "errexit off",
+			old:  "RUN set -eu; \\\n",
+			new:  "RUN set -eu; set +e; \\\n",
+			want: "must start with set -eu, once and in order",
 		},
 		{
 			name: "version",
 			old:  "ARG GOOSE_VERSION=",
 			new:  "ARG GOOSE_VERSION=v",
 			want: `GOOSE_VERSION "v1.55.0" is not a stable X.Y.Z version`,
-		},
-		{
-			name: "architecture",
-			old:  `GOOSE_ARCH="x86_64-unknown-linux-musl"`,
-			new:  `GOOSE_ARCH="x86_64-unknown-linux-gnu"`,
-			want: "goose amd64 checksum selection",
-		},
-		{
-			name: "checksum selection",
-			old:  `GOOSE_SHA256="${GOOSE_SHA256_ARM64}"`,
-			new:  `GOOSE_SHA256="${GOOSE_SHA256_AMD64}"`,
-			want: "goose arm64 checksum selection",
 		},
 		{
 			name: "checksum pin",

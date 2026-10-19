@@ -24,3 +24,18 @@ func TestGooseDockerfilePinRejectsTextEvasions(t *testing.T) {
 		return err
 	})
 }
+
+// TestGooseInstallRunRejectsEvasions runs the shared evasion corpus on the
+// download and on the pin match of the goose RUN body: every row that turns
+// the command into text, gates it or moves it fails the check.
+func TestGooseInstallRunRejectsEvasions(t *testing.T) {
+	download := `curl --ipv4 -fsSL "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}.tar.gz" --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 30 -o /tmp/goose.tar.gz`
+	match := `grep -qxF -e "${GOOSE_SHA256_ARM64}  /tmp/goose.tar.gz" -e "${GOOSE_SHA256_AMD64}  /tmp/goose.tar.gz" /tmp/goose.sum`
+	body := "set -eu\nread -r GOOSE_ARCH < /tmp/goose-arch\n" + download + "\nsha256sum /tmp/goose.tar.gz > /tmp/goose.sum\n" + match + "\ntar -xzf /tmp/goose.tar.gz -C /tmp ./goose\n"
+	if err := metadatautil.ValidateGooseInstallRun(body); err != nil {
+		t.Fatalf("the reviewed body is rejected: %v", err)
+	}
+	for _, anchor := range []string{download, match} {
+		RequireRejectsAllEvasions(t, body, anchor, "the goose install", metadatautil.ValidateGooseInstallRun)
+	}
+}
