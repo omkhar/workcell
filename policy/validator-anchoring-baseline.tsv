@@ -57,6 +57,7 @@ internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	
 internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	7ec6e521	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes	5170f81d	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateWorkflowLaneManifestExpandsMatrixAndPathFilters	4370e2b0	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestPlanGooseRelease	e8e3a2d5,59cbcdfd	the search checks the skip reasons of a stub plan, not file content
 internal/metadatautil	TestPlanWorkflowLanesRespectsPathsLabelsAndGitHubOnlyModes	49487938,49487938	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestPrepareCodexSubcommandFixtureAdvancesUnchangedNamespace	4d36d4b0,979afa46	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestSelectCodexStableHonorsMaxVersionAndReportsSkippedRelease	c18cb7e1	unreviewed debt in a test: review the subject, then port or justify
@@ -86,6 +87,10 @@ internal/metadatautil	ValidateReleaseWorkflowGitHubAttestationFlow	48cf7c8e,c5fc
 internal/metadatautil	ValidateRequirements	6960f23b	the prefix checks a requirement ID field
 internal/metadatautil	ValidateUpstreamRefreshWorkflow	ab15fa41,f83a4e4c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	afterDeclaration	8e5f5463	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewrite the goose ARG pins, and the result must read back through gooseDockerfilePin as the target pin
+internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
+internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
+internal/metadatautil	readGoosePinInstructions	39ba5691	the pattern checks a stable X.Y.Z version on the value of the one ARG instruction
 internal/metadatautil	applyPlanText	429ed54b,9666434d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	assignmentPrefix	28c9a340	the match reads the parsed argv words of one command
 internal/metadatautil	assignmentRun	64f729a5	unreviewed debt: review the subject, then port or justify
