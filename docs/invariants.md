@@ -166,15 +166,16 @@ reviewed inputs into provider homes.
 
 The mask includes these files:
 
-- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.goosehints`, and `.mcp.json`
+- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.mcp.json`
 - `.github/mcp.json` and `.github/copilot-instructions.md`
+- `.goosehints` at any depth, in the working tree or the Git index
 
 The mask includes these directories:
 
 - `.codex/`, `.claude/`, `.copilot/`, `.gemini/`, `.amp/`, and `.goose/`
 - `.github/instructions/`, `.github/copilot/`, `.github/hooks/`,
   `.github/agents/`, and `.github/skills/`
-- `.agents/skills/`
+- `.agents/skills/` and `.agents/plugins/`
 - `.vscode/`, `.idea/`, `.cursor/`, and `.zed/`
 
 The `.gemini/` mask does not copy a tracked `.gemini/.env` file. The Gemini

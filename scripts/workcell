@@ -8386,14 +8386,42 @@ replace_shadow_symlinks_with_placeholder() {
 WORKSPACE_CONTROL_PLANE_DIRS=(
   .codex .claude .copilot .gemini .amp .goose
   .github/instructions .github/copilot .github/hooks .github/agents .github/skills
-  .agents/skills
+  .agents/skills .agents/plugins
   .vscode .idea .cursor .zed
 )
 
 # Workspace control-plane files that the safe path masks, at the top only.
 WORKSPACE_CONTROL_PLANE_FILES=(
-  AGENTS.md CLAUDE.md GEMINI.md .goosehints .mcp.json .github/mcp.json .github/copilot-instructions.md
+  AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md
 )
+
+# Workspace control-plane file names that the safe path masks at any depth:
+# goose reads .goosehints in each directory it works in.
+WORKSPACE_CONTROL_PLANE_NESTED_FILES=(.goosehints)
+
+# workspace_control_plane_nested_file_paths prints, NUL-separated, the
+# workspace-relative path of each WORKSPACE_CONTROL_PLANE_NESTED_FILES name in
+# the working tree or the Git index, at any depth.
+workspace_control_plane_nested_file_paths() {
+  local workspace="$1"
+  local name="" path=""
+
+  # Pipes, not process substitutions, so pipefail returns the status of find
+  # and git ls-files and a failed walk cannot drop a file without an error.
+  for name in "${WORKSPACE_CONTROL_PLANE_NESTED_FILES[@]}"; do
+    find "${workspace}" \( -name .git -type d -prune \) -o \( \( -type f -o -type l \) -name "${name}" \) -print0 |
+      while IFS= read -r -d '' path; do
+        printf '%s\0' "${path#"${workspace}/"}"
+      done || return 1
+    workspace_is_git_worktree "${workspace}" || continue
+    run_clean_host_command git -C "${workspace}" ls-files -z --cached |
+      while IFS= read -r -d '' path; do
+        if [[ "${path}" == "${name}" ]] || [[ "${path}" == */"${name}" ]]; then
+          printf '%s\0' "${path}"
+        fi
+      done || return 1
+  done
+}
 
 git_index_control_plane_dir_roots() {
   local workspace="$1"
@@ -8757,6 +8785,12 @@ prepare_workspace_control_plane_shadow() {
     exit 2
   fi
 
+  local nested_control_files="${CONTROL_PLANE_SHADOW_ROOT}/nested-control-files"
+  if ! workspace_control_plane_nested_file_paths "${workspace}" | LC_ALL=C sort -zu >"${nested_control_files}"; then
+    echo "Refusing workspace: Workcell could not inventory the nested control-plane files: ${workspace}" >&2
+    exit 2
+  fi
+
   if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
     while IFS= read -r -d '' path; do
       rel="${path#"${workspace}/"}"
@@ -8771,6 +8805,10 @@ prepare_workspace_control_plane_shadow() {
       [[ "${rel}" == */* ]] || continue
       register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
     done
+
+    while IFS= read -r -d '' rel; do
+      register_workspace_control_plane_file_mount "${workspace}" "${rel}"
+    done <"${nested_control_files}"
 
     for rel in "${WORKSPACE_CONTROL_PLANE_FILES[@]}"; do
       if workspace_rel_is_mcp_surface "${rel}"; then
@@ -8815,6 +8853,13 @@ prepare_workspace_control_plane_shadow() {
     while IFS= read -r -d '' rel; do
       add_shadow_dir_mount "${workspace}" "${rel}"
     done < <(git_index_control_plane_dir_roots "${workspace}" | LC_ALL=C sort -zu)
+
+    while IFS= read -r -d '' rel; do
+      # A symlinked parent could redirect the masked path outside the
+      # workspace, so fail closed before masking through it.
+      refuse_symlinked_workspace_parent_component "${workspace}" "${rel}"
+      add_shadow_file_mount "${workspace}" "${rel}"
+    done <"${nested_control_files}"
 
     for rel in "${WORKSPACE_CONTROL_PLANE_FILES[@]}"; do
       if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
