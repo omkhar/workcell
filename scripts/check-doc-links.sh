@@ -183,7 +183,7 @@ cat "${claim_found}" >>"${claim_hits}"
 
 # A rule is declared when a comment line of the baseline text names it.
 declares_rule() {
-  printf '%s\n' "$1" | grep '^#' | grep -qE "(^|[^a-z-])$2([^a-z-]|$)"
+  printf '%s\n' "$1" | grep '^#' | grep -E "(^|[^a-z-])$2([^a-z-]|$)" >/dev/null
 }
 claims_text="$(cat "${claims_baseline}")"
 hit_rules="$(cut -f2 "${claim_hits}" | sort -u)"

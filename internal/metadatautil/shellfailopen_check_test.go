@@ -297,6 +297,23 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"|| inside a [[ ]] test", "x=\"$([[ \"$a\" == b || \"$c\" == d ]] && printf y)\"\n", ""},
 		{"quoted $( runs nothing", "x=$(echo '$(git' x) || exit 1\n", ""},
 		{"escaped ; is an argument", "if ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
+		{"quiet grep after a pipe under pipefail", "set -euo pipefail\nif ! echo \"$x\" | grep -Fq -- y; then exit 1; fi\n", "quiet-grep-pipe"},
+		{"split quiet flag after a pipe", "set -o pipefail\necho \"$x\" | grep -E -q y || exit 1\n", "quiet-grep-pipe"},
+		{"command grep after a pipe", "set -o pipefail\nyes | command grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"long quiet option", "set -o pipefail\nyes | grep --quiet y || exit 1\n", "quiet-grep-pipe"},
+		{"silent option after another flag", "set -o pipefail\nyes | grep -F --silent y || exit 1\n", "quiet-grep-pipe"},
+		{"fgrep through env", "set -o pipefail\nyes | env fgrep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"long option that is not quiet", "set -o pipefail\nyes | grep --max-count=1 y >/dev/null || exit 1\n", ""},
+		{"quiet grep after |&", "set -o pipefail\nyes |& grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"quiet option after an operand", "set -o pipefail\nyes | grep -e y -q || exit 1\n", "quiet-grep-pipe"},
+		{"long quiet option after a long operand", "set -o pipefail\nyes | grep --regexp y --quiet || exit 1\n", "quiet-grep-pipe"},
+		{"q as the operand of -e", "set -o pipefail\nyes | grep -eq >/dev/null || exit 1\n", ""},
+		{"-q of a later command in the list", "set -o pipefail\nyes | grep y >/dev/null && ls -q || exit 1\n", ""},
+		{"-q after the end of options", "set -o pipefail\nyes | grep -- -q >/dev/null || exit 1\n", ""},
+		{"quiet grep without pipefail", "echo \"$x\" | grep -q y || exit 1\n", ""},
+		{"grep that reads all input", "set -o pipefail\necho \"$x\" | grep -F -- y >/dev/null || exit 1\n", ""},
+		{"quiet grep after ||", "set -o pipefail\ntest -n \"$x\" || grep -q y f || exit 1\n", ""},
+		{"marked quiet grep", "set -o pipefail\n# fail-closed: find stops after one line\nfind . -print -quit | grep -q . || exit 1\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

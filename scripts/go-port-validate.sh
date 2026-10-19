@@ -23,7 +23,7 @@ require_tool gofmt
     go_files+=("${item}")
   done < <(find "${ROOT_DIR}/cmd" "${ROOT_DIR}/internal" -type f -name '*.go' -print0 | sort -z)
   if [[ "${#go_files[@]}" -gt 0 ]]; then
-    if gofmt -l "${go_files[@]}" | grep -q .; then
+    if gofmt -l "${go_files[@]}" | grep . >/dev/null; then
       echo "Go files are not formatted with gofmt." >&2
       exit 1
     fi
