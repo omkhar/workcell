@@ -27,12 +27,19 @@ func ValidateRuntimeMounts(configPath, workspace, profile, mountType string) err
 	return validateManagedMounts(config["mounts"], workspace, profile)
 }
 
+// CacheRoot returns the Colima cache root of the host for the real home home.
+// The launcher stages host inputs, shadows and token handoffs under it, and
+// keeps the session snapshot store there.
+func CacheRoot(home string) string {
+	return filepath.Join(home, "Library", "Caches", "colima")
+}
+
 func expectedReadOnlyCacheMounts() (map[string]bool, error) {
 	home, err := canonicalizeConfigPath(userHome())
 	if err != nil {
 		return nil, err
 	}
-	cacheRoot := filepath.Join(home, "Library", "Caches", "colima")
+	cacheRoot := CacheRoot(home)
 	roots := []string{
 		filepath.Join(cacheRoot, "workcell-host-inputs"),
 		filepath.Join(cacheRoot, "workcell-shadow"),
@@ -53,7 +60,7 @@ func expectedTokenHandoffMount() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return canonicalizeConfigPath(filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff"))
+	return canonicalizeConfigPath(filepath.Join(CacheRoot(home), "workcell-token-handoff"))
 }
 
 func validateManagedMounts(mountsRaw any, workspace, profile string) error {

@@ -3790,7 +3790,7 @@ reject_symlinked_host_path_components() {
     fi
     if [[ -L "${current}" ]]; then
       echo "Refusing to use ${label} through symlink component: ${current}" >&2
-      echo "Remove the symlink and rerun so Workcell-owned staging stays under ${REAL_HOME}/Library/Caches/colima." >&2
+      echo "Remove the symlink and rerun so Workcell-owned staging stays under $(colima_staging_cache_root)." >&2
       return 2
     fi
   done
@@ -5735,12 +5735,12 @@ why_main() {
 
 default_injection_bundle_parent() {
   reject_symlinked_colima_staging_cache_roots || return $?
-  resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
+  resolve_host_path "$(colima_staging_cache_root)/workcell-host-inputs"
 }
 
 default_copilot_token_handoff_parent() {
   reject_symlinked_colima_staging_cache_roots || return $?
-  resolve_host_path "${REAL_HOME}/Library/Caches/colima/workcell-token-handoff"
+  resolve_host_path "$(colima_staging_cache_root)/workcell-token-handoff"
 }
 
 cleanup_stale_injection_bundles() {
@@ -7676,7 +7676,8 @@ start_managed_profile() {
   local attempt=1
   local max_attempts=2
   local workspace_mount="${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"
-  local cache_root="${REAL_HOME}/Library/Caches/colima"
+  local cache_root=""
+  cache_root="$(colima_staging_cache_root)"
   local host_inputs_root="${cache_root}/workcell-host-inputs"
   local shadow_root="${cache_root}/workcell-shadow"
   local token_handoff_root="${cache_root}/workcell-token-handoff"
@@ -8664,7 +8665,8 @@ prepare_workspace_control_plane_shadow() {
   # stays insulated from post-launch edits to the source checkout. Defaults to
   # the source when they are the same (direct/in-place workspace).
   local session_workspace="${3:-$1}"
-  local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
+  local shadow_parent=""
+  shadow_parent="$(colima_staging_cache_root)/workcell-shadow"
   local rel path git_dir git_rel commondir_hits
   local git_walk_complete=0
   local module_walk_complete=0
