@@ -5,7 +5,7 @@
   "description": "Pinned npm CLI dependencies of uncertified Workcell adapters for the runtime-uncertified image",
   "license": "Apache-2.0",
   "dependencies": {
-    "@ampcode/cli": "0.0.1792166439-g8235ca",
+    "@ampcode/cli": "0.0.1792238457-g6ec988",
     "opencode-ai": "1.19.3"
   }
 }
