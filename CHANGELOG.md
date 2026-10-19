@@ -31,6 +31,14 @@ The GitHub Releases page contains old details that are not in this file.
   stages no Amp credential: Amp needs an Amp account, and its device login in
   the session saves the account in the session home. The pin follows the Amp
   build line, `0.0.<build>-g<commit>`, after the cool-off.
+- `--agent goose --allow-uncertified-agent` runs the goose CLI (the
+  `aaif-goose/goose` 1.55.0 GitHub release), the third uncertified adapter.
+  The `runtime-uncertified` build downloads the static musl archive and checks
+  its sha256. `scripts/verify-upstream-goose-release.sh` checks the pin against
+  the release digests, and `scripts/update-provider-pins.sh` refreshes it after
+  the cool-off. Its egress allowlist is `api.anthropic.com:443`. Workcell
+  stages no goose credential: `goose configure` in the session saves the
+  Anthropic API key in the session home.
 - `runtime/container/Dockerfile` ends with a `require-build-target` stage that
   fails, so each runtime image build names its target
   (`internal/metadatautil/apt_broker_build_test.go`).
