@@ -47,6 +47,14 @@ const PROVIDER_LAUNCH_TARGETS: &[LaunchTarget] = &[
         ],
     },
     LaunchTarget {
+        name: "goose",
+        script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
+        approved_invocations: &[
+            "/usr/local/bin/goose",
+            "/usr/local/libexec/workcell/core/goose",
+        ],
+    },
+    LaunchTarget {
         name: "opencode",
         script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
         approved_invocations: &[
