@@ -151,16 +151,9 @@ type npmRegistryMetadata struct {
 	Time     map[string]string `json:"time"`
 }
 
-type codexReleaseMetadata struct {
-	TagName    string `json:"tag_name"`
-	Prerelease bool   `json:"prerelease"`
-	Assets     []struct {
-		Name   string `json:"name"`
-		Digest string `json:"digest"`
-	} `json:"assets"`
-}
-
-type copilotReleaseMetadata struct {
+// githubReleaseMetadata is the part of a GitHub release document that the
+// provider bumps read.
+type githubReleaseMetadata struct {
 	TagName     string `json:"tag_name"`
 	Prerelease  bool   `json:"prerelease"`
 	PublishedAt string `json:"published_at"`
@@ -638,7 +631,7 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			return currentSelection(candidate.Source), nil
 		}
 		releaseURL := fmt.Sprintf(sources.CodexReleaseAPIURLFmt, candidate.Raw)
-		var release codexReleaseMetadata
+		var release githubReleaseMetadata
 		if err := fetchJSON(client, releaseURL, &release); err != nil {
 			return ProviderBumpSelection{}, err
 		}
@@ -646,7 +639,7 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			skipped = appendSkippedProviderRelease(skipped, candidate, "GitHub release is marked prerelease")
 			continue
 		}
-		checksums, reasons, invalidMetadata := codexReleaseChecksums(release)
+		checksums, reasons, invalidMetadata := releaseAssetChecksums(release, codexReleaseAssets)
 		if len(reasons) != 0 {
 			details := strings.Join(reasons, "; ")
 			if invalidMetadata {
@@ -698,21 +691,29 @@ func holdCodexOnUnclassifiedCLISurface(selection ProviderBumpSelection, sources 
 	}, nil
 }
 
-func codexReleaseChecksums(release codexReleaseMetadata) (map[string]string, []string, bool) {
-	assets := []struct {
-		key  string
-		name string
-	}{
-		{"arm64", "codex-aarch64-unknown-linux-musl.tar.gz"},
-		{"amd64", "codex-x86_64-unknown-linux-musl.tar.gz"},
-		{"code_mode_host_arm64", "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz"},
-		{"code_mode_host_amd64", "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz"},
-	}
+// releaseAsset is one release archive that a provider pin checksums, keyed
+// by its plan checksum key.
+type releaseAsset struct {
+	key  string
+	name string
+}
+
+var codexReleaseAssets = []releaseAsset{
+	{"arm64", "codex-aarch64-unknown-linux-musl.tar.gz"},
+	{"amd64", "codex-x86_64-unknown-linux-musl.tar.gz"},
+	{"code_mode_host_arm64", "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz"},
+	{"code_mode_host_amd64", "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz"},
+}
+
+// releaseAssetChecksums returns the sha256 digest of each asset in release.
+// The reasons name each asset that is missing or has a bad digest, and the
+// flag is true when a digest is bad rather than missing.
+func releaseAssetChecksums(release githubReleaseMetadata, assets []releaseAsset) (map[string]string, []string, bool) {
 	checksums := make(map[string]string, len(assets))
 	reasons := make([]string, 0, len(assets))
 	invalidMetadata := false
 	for _, asset := range assets {
-		digest, err := releaseAssetDigest(release, asset.name)
+		digest, err := githubReleaseAssetDigest(release, asset.name)
 		if err == nil {
 			checksums[asset.key] = digest
 			continue
@@ -723,6 +724,25 @@ func codexReleaseChecksums(release codexReleaseMetadata) (map[string]string, []s
 		}
 	}
 	return checksums, reasons, invalidMetadata
+}
+
+// githubReleaseCLI names a CLI that a GitHub release ships as one Linux
+// archive per Docker architecture, with the names its messages use.
+type githubReleaseCLI struct {
+	id     string // the policy and plan key, for example copilot
+	label  string // Copilot
+	title  string // GitHub Copilot CLI
+	assets []releaseAsset
+}
+
+var copilotReleaseCLI = githubReleaseCLI{
+	id:    providerid.Copilot,
+	label: "Copilot",
+	title: "GitHub Copilot CLI",
+	assets: []releaseAsset{
+		{"arm64", "copilot-linux-arm64.tar.gz"},
+		{"amd64", "copilot-linux-x64.tar.gz"},
+	},
 }
 
 func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
@@ -737,18 +757,24 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
+	return selectGitHubReleaseStable(copilotReleaseCLI, releases, currentVersion, cutoff, maxVersion)
+}
+
+// selectGitHubReleaseStable selects the newest stable vX.Y.Z release of cli
+// that is older than cutoff, is not above maxVersion, and ships every asset.
+func selectGitHubReleaseStable(cli githubReleaseCLI, releases []githubReleaseMetadata, currentVersion string, cutoff time.Time, maxVersion string) (ProviderBumpSelection, error) {
 	current, hasCurrentVersion := parseStableVersion(currentVersion)
 	maxAllowed, hasMaxVersion := parseStableVersion(maxVersion)
 	if maxVersion != "" && !hasMaxVersion {
-		return ProviderBumpSelection{}, fmt.Errorf("provider.copilot.max_version must be an exact stable version, found %q", maxVersion)
+		return ProviderBumpSelection{}, fmt.Errorf("provider.%s.max_version must be an exact stable version, found %q", cli.id, maxVersion)
 	}
 	if hasCurrentVersion && hasMaxVersion && compareStableVersions(current, maxAllowed) > 0 {
-		return ProviderBumpSelection{}, fmt.Errorf("current Copilot version %s exceeds provider.copilot.max_version %s", currentVersion, maxVersion)
+		return ProviderBumpSelection{}, fmt.Errorf("current %s version %s exceeds provider.%s.max_version %s", cli.label, currentVersion, cli.id, maxVersion)
 	}
 
 	type releaseCandidate struct {
 		version stableVersion
-		release copilotReleaseMetadata
+		release githubReleaseMetadata
 	}
 	candidates := make([]releaseCandidate, 0, len(releases))
 	skipped := make([]ProviderBumpSkippedRelease, 0)
@@ -771,7 +797,7 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 		}
 		publishedAt, err := time.Parse(time.RFC3339, release.PublishedAt)
 		if err != nil {
-			return ProviderBumpSelection{}, fmt.Errorf("parse GitHub Copilot CLI release publish time for %s: %w", release.TagName, err)
+			return ProviderBumpSelection{}, fmt.Errorf("parse %s release publish time for %s: %w", cli.title, release.TagName, err)
 		}
 		version.Source = publishedAt.UTC()
 		if !cutoff.IsZero() && version.Source.After(cutoff) {
@@ -814,21 +840,13 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 		if candidate.version.Raw == currentVersion {
 			return currentSelection(candidate.version.Source), nil
 		}
-		armDigest, armErr := copilotReleaseAssetDigest(candidate.release, "copilot-linux-arm64.tar.gz")
-		amdDigest, amdErr := copilotReleaseAssetDigest(candidate.release, "copilot-linux-x64.tar.gz")
-		if armErr != nil || amdErr != nil {
-			reasons := make([]string, 0, 2)
-			if armErr != nil {
-				reasons = append(reasons, armErr.Error())
-			}
-			if amdErr != nil {
-				reasons = append(reasons, amdErr.Error())
-			}
-			if (armErr == nil || errors.Is(armErr, errReleaseAssetNotFound)) && (amdErr == nil || errors.Is(amdErr, errReleaseAssetNotFound)) {
+		checksums, reasons, invalidMetadata := releaseAssetChecksums(candidate.release, cli.assets)
+		if len(reasons) != 0 {
+			if !invalidMetadata {
 				skipped = appendSkippedProviderRelease(skipped, candidate.version, "missing supported Linux release assets: "+strings.Join(reasons, "; "))
 				continue
 			}
-			return ProviderBumpSelection{}, fmt.Errorf("copilot release %s has invalid Linux asset metadata: %s", candidate.version.Raw, strings.Join(reasons, "; "))
+			return ProviderBumpSelection{}, fmt.Errorf("%s release %s has invalid Linux asset metadata: %s", cli.id, candidate.version.Raw, strings.Join(reasons, "; "))
 		}
 		return ProviderBumpSelection{
 			Channel:         "stable",
@@ -837,10 +855,7 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 			PublishedAt:     candidate.version.Source.Format(time.RFC3339),
 			Changed:         candidate.version.Raw != currentVersion,
 			SkippedReleases: skipped,
-			Checksums: map[string]string{
-				"arm64": armDigest,
-				"amd64": amdDigest,
-			},
+			Checksums:       checksums,
 		}, nil
 	}
 	return currentSelection(time.Time{}), nil
@@ -1058,7 +1073,7 @@ func appendSkippedProviderRelease(skipped []ProviderBumpSkippedRelease, version 
 	return append(skipped, entry)
 }
 
-func releaseAssetDigest(release codexReleaseMetadata, assetName string) (string, error) {
+func githubReleaseAssetDigest(release githubReleaseMetadata, assetName string) (string, error) {
 	for _, asset := range release.Assets {
 		if asset.Name != assetName {
 			continue
@@ -1072,22 +1087,8 @@ func releaseAssetDigest(release codexReleaseMetadata, assetName string) (string,
 	return "", fmt.Errorf("%w: %s", errReleaseAssetNotFound, assetName)
 }
 
-func copilotReleaseAssetDigest(release copilotReleaseMetadata, assetName string) (string, error) {
-	for _, asset := range release.Assets {
-		if asset.Name != assetName {
-			continue
-		}
-		digest := strings.TrimPrefix(asset.Digest, "sha256:")
-		if !isHexDigest(digest) {
-			return "", fmt.Errorf("release asset %s is missing a valid sha256 digest", assetName)
-		}
-		return digest, nil
-	}
-	return "", fmt.Errorf("%w: %s", errReleaseAssetNotFound, assetName)
-}
-
-func fetchCopilotReleases(client *http.Client, releaseAPIURL string) ([]copilotReleaseMetadata, error) {
-	var releases []copilotReleaseMetadata
+func fetchCopilotReleases(client *http.Client, releaseAPIURL string) ([]githubReleaseMetadata, error) {
+	var releases []githubReleaseMetadata
 	pageSize, err := copilotReleasePageSize(releaseAPIURL)
 	if err != nil {
 		return nil, err
@@ -1098,7 +1099,7 @@ func fetchCopilotReleases(client *http.Client, releaseAPIURL string) ([]copilotR
 	}
 
 	for page := 1; page <= copilotReleaseMaxPages && nextURL != ""; page++ {
-		var pageReleases []copilotReleaseMetadata
+		var pageReleases []githubReleaseMetadata
 		header, err := fetchJSONResponse(client, nextURL, &pageReleases)
 		if err != nil {
 			return nil, err
