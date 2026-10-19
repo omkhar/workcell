@@ -9,7 +9,7 @@ package providerid
 // every manifest whose tier is not planned. Many call sites (validators,
 // manifests, sort orders) depend on a stable order; use this slice
 // instead of declaring a local one.
-var AllProviders = []string{"claude", "codex", "copilot", "gemini", "opencode"}
+var AllProviders = []string{"amp", "claude", "codex", "copilot", "gemini", "opencode"}
 
 // CredentialMetadataProviders is the canonical order for provider credential
 // metadata tables: every manifest that declares credentials. Membership here

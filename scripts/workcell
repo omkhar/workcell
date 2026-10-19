@@ -237,7 +237,7 @@ Options:
   --agent codex|claude|copilot|gemini
                                 Provider to run (required)
                                 antigravity is recognized as planned but unsupported
-                                opencode is uncertified: it needs --allow-uncertified-agent
+                                opencode and amp are uncertified: they need --allow-uncertified-agent
   --agent-autonomy yolo|prompt  Provider approval posture (default: yolo)
   --agent-arg VALUE             Additional provider argv to append (repeatable)
   --target colima|docker-desktop|aws-ec2-ssm|gcp-vm
@@ -8380,98 +8380,34 @@ replace_shadow_symlinks_with_placeholder() {
   lock_tree_readonly "${source_root}"
 }
 
+# Workspace control-plane directories that the safe path masks, in match
+# order. Each one matches at any depth in the Git index. The find walks match
+# a name without a slash at any depth, and a path with a slash at the top only.
+WORKSPACE_CONTROL_PLANE_DIRS=(
+  .codex .claude .copilot .gemini .amp
+  .github/instructions .github/copilot .github/hooks .github/agents .github/skills
+  .agents/skills
+  .vscode .idea .cursor .zed
+)
+
 git_index_control_plane_dir_roots() {
   local workspace="$1"
-  local path=""
+  local path="" dir=""
 
   workspace_is_git_worktree "${workspace}" || return 0
   while IFS= read -r -d '' path; do
-    case "${path}" in
-      .codex/*)
-        printf '%s\0' ".codex"
-        ;;
-      .claude/*)
-        printf '%s\0' ".claude"
-        ;;
-      .copilot/*)
-        printf '%s\0' ".copilot"
-        ;;
-      .gemini/*)
-        printf '%s\0' ".gemini"
-        ;;
-      .github/instructions/*)
-        printf '%s\0' ".github/instructions"
-        ;;
-      .github/copilot/*)
-        printf '%s\0' ".github/copilot"
-        ;;
-      .github/hooks/*)
-        printf '%s\0' ".github/hooks"
-        ;;
-      .github/agents/*)
-        printf '%s\0' ".github/agents"
-        ;;
-      .github/skills/*)
-        printf '%s\0' ".github/skills"
-        ;;
-      .agents/skills/*)
-        printf '%s\0' ".agents/skills"
-        ;;
-      .vscode/*)
-        printf '%s\0' ".vscode"
-        ;;
-      .idea/*)
-        printf '%s\0' ".idea"
-        ;;
-      .cursor/*)
-        printf '%s\0' ".cursor"
-        ;;
-      .zed/*)
-        printf '%s\0' ".zed"
-        ;;
-      */.codex/*)
-        printf '%s\0' "${path%%/.codex/*}/.codex"
-        ;;
-      */.claude/*)
-        printf '%s\0' "${path%%/.claude/*}/.claude"
-        ;;
-      */.copilot/*)
-        printf '%s\0' "${path%%/.copilot/*}/.copilot"
-        ;;
-      */.gemini/*)
-        printf '%s\0' "${path%%/.gemini/*}/.gemini"
-        ;;
-      */.github/instructions/*)
-        printf '%s\0' "${path%%/.github/instructions/*}/.github/instructions"
-        ;;
-      */.github/copilot/*)
-        printf '%s\0' "${path%%/.github/copilot/*}/.github/copilot"
-        ;;
-      */.github/hooks/*)
-        printf '%s\0' "${path%%/.github/hooks/*}/.github/hooks"
-        ;;
-      */.github/agents/*)
-        printf '%s\0' "${path%%/.github/agents/*}/.github/agents"
-        ;;
-      */.github/skills/*)
-        printf '%s\0' "${path%%/.github/skills/*}/.github/skills"
-        ;;
-      */.agents/skills/*)
-        printf '%s\0' "${path%%/.agents/skills/*}/.agents/skills"
-        ;;
-      */.vscode/*)
-        printf '%s\0' "${path%%/.vscode/*}/.vscode"
-        ;;
-      */.idea/*)
-        printf '%s\0' "${path%%/.idea/*}/.idea"
-        ;;
-      */.cursor/*)
-        printf '%s\0' "${path%%/.cursor/*}/.cursor"
-        ;;
-      */.zed/*)
-        printf '%s\0' "${path%%/.zed/*}/.zed"
-        ;;
-    esac
+    for dir in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
+      if [[ "${path}" == "${dir}"/* ]]; then
+        printf '%s\0' "${dir}"
+        continue 2
+      fi
+    done
+    for dir in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
+      if [[ "${path}" == */"${dir}"/* ]]; then
+        printf '%s\0' "${path%%/"${dir}"/*}/${dir}"
+        continue 2
+      fi
+    done
   done < <(run_clean_host_command git -C "${workspace}" ls-files -z --cached)
 }
 
@@ -8702,6 +8638,13 @@ prepare_workspace_control_plane_shadow() {
   WORKSPACE_IMPORT_MOUNTS=()
   [[ "${mode}" == "breakglass" ]] && return 0
 
+  # The find -name tests of the control-plane directory names.
+  local -a control_dir_name_tests=()
+  for rel in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
+    [[ "${rel}" == */* ]] && continue
+    control_dir_name_tests+=(${control_dir_name_tests[@]+-o} -name "${rel}")
+  done
+
   prepare_colima_staging_cache_roots || return $?
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
 
@@ -8816,10 +8759,11 @@ prepare_workspace_control_plane_shadow() {
     done < <(
       find "${workspace}" \
         \( -name .git -type d -prune \) -o \
-        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .copilot -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+        \( \( -type d -o -type l \) \( "${control_dir_name_tests[@]}" \) \) -print0
     )
 
-    for rel in .github/instructions .github/copilot .github/hooks .github/agents .github/skills .agents/skills; do
+    for rel in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
+      [[ "${rel}" == */* ]] || continue
       register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
     done
 
@@ -8855,9 +8799,10 @@ prepare_workspace_control_plane_shadow() {
     done < <(
       find "${workspace}" \
         \( -name .git -type d -prune \) -o \
-        \( \( -type d -o -type l \) \( -name .codex -o -name .claude -o -name .copilot -o -name .gemini -o -name .vscode -o -name .idea -o -name .cursor -o -name .zed \) \) -print0
+        \( \( -type d -o -type l \) \( "${control_dir_name_tests[@]}" \) \) -print0
     )
-    for rel in .github/instructions .github/copilot .github/hooks .github/agents .github/skills .agents/skills; do
+    for rel in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
+      [[ "${rel}" == */* ]] || continue
       if [[ -d "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
         add_shadow_dir_mount "${workspace}" "${rel}"
       fi

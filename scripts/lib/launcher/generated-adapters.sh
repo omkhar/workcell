@@ -7,7 +7,7 @@
 # workcell_supported_agent succeeds when $1 is a supported adapter id.
 workcell_supported_agent() {
   case "$1" in
-    claude | codex | copilot | gemini | opencode) ;;
+    amp | claude | codex | copilot | gemini | opencode) ;;
     *)
       return 1
       ;;
@@ -20,7 +20,7 @@ workcell_adapter_tier() {
     claude | codex | copilot | gemini)
       echo certified
       ;;
-    opencode)
+    amp | opencode)
       echo uncertified
       ;;
     *)
@@ -32,6 +32,9 @@ workcell_adapter_tier() {
 # provider_endpoints prints the fixed egress endpoints of adapter $1.
 provider_endpoints() {
   case "$1" in
+    amp)
+      echo "ampcode.com:443 authapi.ampcode.com:443"
+      ;;
     claude)
       echo "api.anthropic.com:443 claude.ai:443 console.anthropic.com:443"
       ;;

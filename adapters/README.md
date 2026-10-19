@@ -14,6 +14,7 @@ and behavior):
 Uncertified adapters (a launch needs `--allow-uncertified-agent`):
 
 - [`opencode/`](opencode/README.md)
+- [`amp/`](amp/README.md)
 
 Unsupported fail-closed scaffolds:
 

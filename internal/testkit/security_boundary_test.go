@@ -336,18 +336,11 @@ func TestWorkcellShadowsCopilotRepoHookControlPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(content)
-	sharedDirList := `for rel in .github/instructions .github/copilot .github/hooks .github/agents .github/skills .agents/skills; do`
-	for _, expected := range []string{
-		`.github/hooks/*)`,
-		`printf '%s\0' ".github/hooks"`,
-		`*/.github/hooks/*)`,
-		`"${path%%/.github/hooks/*}/.github/hooks"`,
-		sharedDirList,
-	} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("%s must include Copilot repo hook control-plane masking entry %q", scriptPath, expected)
-		}
+	// git_index_control_plane_dir_roots and both find walks read one list.
+	if !strings.Contains(script, "\n  .github/instructions .github/copilot .github/hooks .github/agents .github/skills\n") {
+		t.Fatalf("%s must list .github/hooks in WORKSPACE_CONTROL_PLANE_DIRS", scriptPath)
 	}
+	sharedDirList := "for rel in \"${WORKSPACE_CONTROL_PLANE_DIRS[@]}\"; do\n      [[ \"${rel}\" == */* ]] || continue\n"
 	if strings.Count(script, sharedDirList) != 2 {
 		t.Fatalf("%s must use the Copilot repo hook control-plane list for both readonly VCS and safe-path shadowing", scriptPath)
 	}
@@ -671,6 +664,33 @@ done
 	code, output := runBashProbe(t, probe, nil)
 	if code != 0 {
 		t.Fatalf("control-plane mask materialized a workspace .gemini/.env: exit %d: %s", code, output)
+	}
+}
+
+// TestGitIndexControlPlaneDirRoots runs git_index_control_plane_dir_roots on a
+// fixture index: each listed control-plane directory is a root at the top and
+// below it, and a look-alike name is not.
+func TestGitIndexControlPlaneDirRoots(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	workspace := t.TempDir()
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n -e '/^WORKSPACE_CONTROL_PLANE_DIRS=($/,/^)$/p' -e '/^workspace_is_git_worktree() {$/,/^}$/p' -e '/^git_index_control_plane_dir_roots() {$/,/^}$/p' %[1]s)"
+run_clean_host_command() { "$@"; }
+cd %[2]s
+git init -q
+for path in .amp/settings.json nested/.amp/plugins/p.js .codex/config.toml .github/hooks/h.json x/.agents/skills/s.md y/.github/hooks/h.json .ampx/a plain.txt; do
+  mkdir -p "$(dirname "${path}")"
+  printf 'x\n' >"${path}"
+done
+git add -A
+git_index_control_plane_dir_roots %[2]s | LC_ALL=C sort -zu | tr '\0' ' '
+`, ShellQuote(scriptPath), ShellQuote(workspace))
+	code, output := runBashProbe(t, probe, nil)
+	want := ".amp .codex .github/hooks nested/.amp x/.agents/skills y/.github/hooks "
+	if code != 0 || output != want {
+		t.Fatalf("git_index_control_plane_dir_roots = %q (exit %d), want %q", output, code, want)
 	}
 }
 

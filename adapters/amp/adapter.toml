@@ -1,0 +1,58 @@
+# Workcell adapter manifest; see adapters/README.md. No review certified this
+# CLI, so its options pass only through [flags] allow (reject_manifest_args).
+
+schema = 1
+id = "amp"
+tier = "uncertified"
+binary = "amp"
+
+[install]
+method = "npm"
+package = "@ampcode/cli"
+provenance = "scripts/verify-upstream-amp-release.sh"
+
+# seed_amp_home creates the Amp config directory, so an injection policy may
+# not stage a file there.
+[home]
+reserved_targets = ["/state/agent-home/.config/amp"]
+
+# The Amp service (ampcode.com) serves the threads and the model calls. The
+# device login polls authapi.ampcode.com, the apiURL of
+# https://ampcode.com/api/auth/oauth-config. Workcell stages no Amp credential;
+# the device login in the session saves the account in the session home.
+[egress]
+endpoints = ["ampcode.com:443", "authapi.ampcode.com:443"]
+
+# Classifies tests/fixtures/flags/amp.txt. The default command starts the
+# terminal UI, and -x runs one prompt. other_commands names every top-level
+# command and alias that the help lists, and the hidden commands that a
+# probe of each word in the pinned binary found (amp <word> --help). deny
+# names the remote executor, runner, orb, sharing and terminal-access
+# options, the settings-file and MCP-config inputs, and the hidden
+# --dangerously-allow-all option.
+[flags]
+subcommands = ["login", "logout", "version"]
+other_commands = [
+  "account", "add-chatgpt-sub", "app", "apps", "attach-executor-diagnostics",
+  "clone", "completions", "config", "diagnostics", "domains", "files",
+  "git-credential-helper", "git-setup", "headless-bootstrap", "install",
+  "internal", "keyboard-tester", "l", "last", "mcp", "net", "oauth-clients",
+  "orb", "perma-orbs", "permission", "permissions", "plugin", "plugins",
+  "portal", "projects", "report", "report-bug", "review", "runner", "secrets",
+  "sign-commit", "skill", "skills", "st", "status", "svc", "sync", "t",
+  "thread", "threads", "tool", "tools", "top", "up", "update", "usage",
+]
+allow = [
+  "--all", "--color", "--execute", "--fast", "--features", "-h", "--help",
+  "-l", "--label", "--log-level", "-m", "--mode", "--no-archive-after-execute",
+  "--no-color", "--no-ide", "--no-notifications",
+  "--no-remote-control-terminal", "--notifications", "--plugin-ready-timeout",
+  "--stream-json", "--stream-json-input", "--stream-json-thinking",
+  "--timings", "--title", "-V", "-v", "--version", "-x",
+]
+deny = [
+  "--amp-env", "--attach", "--dangerously-allow-all", "--desktop",
+  "--executor", "--ide", "--log-file", "--mcp-config", "--no-tui", "-ox",
+  "--orb-execute", "--orb-size", "--project", "--remote-control-terminal",
+  "--runner-dir", "--settings-file", "--share", "--visibility",
+]

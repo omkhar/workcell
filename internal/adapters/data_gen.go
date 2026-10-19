@@ -10,6 +10,17 @@ package adapters
 // rendering in the injection bundle (see ReservedTargets()).
 var providers = []providerDefinition{
 	{
+		id:                       "amp",
+		sharedCredentialsEnabled: false,
+		tables: providerTables{
+			credentialKeys:           []string{},
+			credentialContainerPaths: map[string]string{},
+			reservedTargets: []string{
+				"/state/agent-home/.config/amp",
+			},
+		},
+	},
+	{
 		id:                       "claude",
 		sharedCredentialsEnabled: true,
 		tables: providerTables{

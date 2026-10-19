@@ -7,7 +7,7 @@
 # workcell_supported_agent succeeds when $1 is a supported adapter id.
 workcell_supported_agent() {
   case "$1" in
-    claude | codex | copilot | gemini | opencode) ;;
+    amp | claude | codex | copilot | gemini | opencode) ;;
     *)
       return 1
       ;;
@@ -20,7 +20,7 @@ workcell_adapter_tier() {
     claude | codex | copilot | gemini)
       echo certified
       ;;
-    opencode)
+    amp | opencode)
       echo uncertified
       ;;
     *)
@@ -33,6 +33,15 @@ workcell_adapter_tier() {
 # other_commands) of uncertified adapter $1, one entry per line.
 workcell_manifest_flags() {
   case "$1:$2" in
+    amp:allow)
+      printf '%s\n' '--all' '--color' '--execute' '--fast' '--features' '-h' '--help' '-l' '--label' '--log-level' '-m' '--mode' '--no-archive-after-execute' '--no-color' '--no-ide' '--no-notifications' '--no-remote-control-terminal' '--notifications' '--plugin-ready-timeout' '--stream-json' '--stream-json-input' '--stream-json-thinking' '--timings' '--title' '-V' '-v' '--version' '-x'
+      ;;
+    amp:deny)
+      printf '%s\n' '--amp-env' '--attach' '--dangerously-allow-all' '--desktop' '--executor' '--ide' '--log-file' '--mcp-config' '--no-tui' '-ox' '--orb-execute' '--orb-size' '--project' '--remote-control-terminal' '--runner-dir' '--settings-file' '--share' '--visibility'
+      ;;
+    amp:other_commands)
+      printf '%s\n' 'account' 'add-chatgpt-sub' 'app' 'apps' 'attach-executor-diagnostics' 'clone' 'completions' 'config' 'diagnostics' 'domains' 'files' 'git-credential-helper' 'git-setup' 'headless-bootstrap' 'install' 'internal' 'keyboard-tester' 'l' 'last' 'mcp' 'net' 'oauth-clients' 'orb' 'perma-orbs' 'permission' 'permissions' 'plugin' 'plugins' 'portal' 'projects' 'report' 'report-bug' 'review' 'runner' 'secrets' 'sign-commit' 'skill' 'skills' 'st' 'status' 'svc' 'sync' 't' 'thread' 'threads' 'tool' 'tools' 'top' 'up' 'update' 'usage'
+      ;;
     opencode:allow)
       printf '%s\n' '-c' '--command' '--continue' '--agent' '--dir' '-f' '--file' '--fork' '--format' '-h' '--help' '-i' '--interactive' '--log-level' '-m' '--mini' '--model' '--no-replay' '--print-logs' '--prompt' '--pure' '--replay-limit' '-s' '--session' '--thinking' '--title' '-v' '--variant' '--version'
       ;;
