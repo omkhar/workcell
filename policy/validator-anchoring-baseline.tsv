@@ -328,6 +328,7 @@ internal/metadatautil	workflowLanePathPattern	12b057e2,80c898e9	unreviewed debt:
 internal/metadatautil	workflowLaneRequiredLabels	af99a851	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowRefHits	67df4185,a8f1f86a,b5a33b9b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	wrappedCommand	3e44657e,53923640,6a96b240,6c88352a,8949f85e,b0f0a35b,c83453df,cd42118c,ce48222a,e200d8a8	unreviewed debt: review the subject, then port or justify
+internal/testkit	TestUninstallRefusesSymlinkedScript	d2735c1b	the search checks the output of an uninstall run through a symlink, not script text
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
 internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
 internal/testkit	RequireEncodedFieldIsInert	31229c8f	unreviewed debt: review the subject, then port or justify

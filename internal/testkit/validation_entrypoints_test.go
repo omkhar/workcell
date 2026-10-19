@@ -1352,6 +1352,36 @@ echo sandbox-survived`, "_", root, home, tempRoot)
 	}
 }
 
+// TestUninstallRefusesSymlinkedScript runs scripts/uninstall.sh through a
+// symlink in a directory that holds a hostile lib/launcher/host-detect.sh:
+// the script refuses the link and loads nothing from that directory.
+func TestUninstallRefusesSymlinkedScript(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "hostile-ran")
+	if err := os.MkdirAll(filepath.Join(dir, "lib", "launcher"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lib", "launcher", "host-detect.sh"), []byte("touch "+ShellQuote(marker)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "uninstall.sh")
+	if err := os.Symlink(filepath.Join(repoRoot(t), "scripts", "uninstall.sh"), link); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", link, "--dry-run")
+	cmd.Env = []string{"HOME=" + t.TempDir(), "PATH=" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 || !strings.Contains(string(out), "not through a symlink") {
+		t.Fatalf("symlinked uninstall.sh = %v, want exit 2 and the symlink refusal:\n%s", err, out)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("symlinked uninstall.sh ran the helper beside the link")
+	}
+}
+
 func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	t.Parallel()
 
