@@ -136,7 +136,7 @@ func TestRenderRuntimeShellUncertifiedTables(t *testing.T) {
 	}
 	for _, want := range []string{
 		"    claude | codex | copilot | gemini)\n      echo certified\n",
-		"    amp | opencode | zz-fixture)\n      echo uncertified\n",
+		"    amp | goose | opencode | zz-fixture)\n      echo uncertified\n",
 		"    zz-fixture:allow)\n      printf '%s\\n' '-h' '--help' '-m' '--model'\n",
 		"    zz-fixture:deny)\n      printf '%s\\n' '-y' '--yolo'\n",
 		"    zz-fixture:other_commands)\n      printf '%s\\n' 'serve' 'mcp'\n",
@@ -396,6 +396,21 @@ func TestAmpManifestPolicy(t *testing.T) {
 		// options stay refused even when a manifest edit drops them from deny.
 		"--dangerously-allow-all", "--executor", "-ox", "--orb-execute", "--no-tui", "--remote-control-terminal",
 		"--settings-file", "--mcp-config", "--", "-xm", "review", "sync", "t", "up",
+	})
+}
+
+// TestGooseManifestPolicy runs the shipped goose manifest through
+// validate_command_args. A hidden command that the help does not list
+// (mcp-probe) and a command alias (gw, sched) fail like a listed command.
+func TestGooseManifestPolicy(t *testing.T) {
+	checkShippedManifestPolicy(t, "goose", "--model", "claude-demo", [][]string{
+		nil, {"run", "-t", "fix the failing test"}, {"session", "--name", "demo"}, {"s", "-r"},
+		{"configure"}, {"info", "-v"}, {"run", "--text=--with-extension is text"},
+	}, []string{
+		// The extension, container and recipe inputs stay refused even when a
+		// manifest edit drops them from deny.
+		"--with-extension", "--with-builtin", "--with-streamable-http-extension", "--container",
+		"--recipe", "--", "-tq", "mcp", "mcp-probe", "gw", "sched", "serve",
 	})
 }
 

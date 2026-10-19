@@ -57,8 +57,9 @@ For provider auth maturity and rollout caveats, see
 
 An adapter manifest (`adapters/<id>/adapter.toml`) has a `tier` of `certified`,
 `uncertified`, or `planned`. The four providers above are `certified`. The
-`opencode` adapter ([`adapters/opencode/`](../adapters/opencode/README.md)) and
-the `amp` adapter ([`adapters/amp/`](../adapters/amp/README.md)) are
+`opencode` adapter ([`adapters/opencode/`](../adapters/opencode/README.md)),
+the `amp` adapter ([`adapters/amp/`](../adapters/amp/README.md))
+and the `goose` adapter ([`adapters/goose/`](../adapters/goose/README.md)) are
 `uncertified`.
 
 An `uncertified` adapter is a provider CLI that runs inside the bounded
