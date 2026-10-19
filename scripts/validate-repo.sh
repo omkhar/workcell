@@ -276,6 +276,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-workflow-lanes.sh"
   "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
   "${ROOT_DIR}/scripts/verify-reproducible-build.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-amp-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
