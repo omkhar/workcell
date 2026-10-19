@@ -8545,6 +8545,9 @@ register_workspace_control_plane_dir_mount() {
   local destination="/workspace/${relative_path}"
 
   [[ -e "${source_path}" ]] || return 0
+  # A symlinked parent (an .agents link for .agents/plugins) would make the
+  # mount source a directory outside the workspace.
+  refuse_symlinked_workspace_parent_component "${workspace}" "${relative_path}"
   if [[ -L "${source_path}" ]]; then
     echo "Workcell refuses symlinked workspace control directories even with --allow-control-plane-vcs: ${source_path}" >&2
     exit 2

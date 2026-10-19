@@ -747,6 +747,30 @@ workspace_control_plane_nested_file_paths %[2]s | LC_ALL=C sort -zu | tr '\0' ' 
 	}
 }
 
+// TestRegisterWorkspaceControlPlaneDirMountRefusesSymlinkedParent mounts a
+// slash-qualified control directory with --allow-control-plane-vcs: a real
+// .agents/plugins is mounted, and one reached through a symlinked .agents is
+// refused before any mount.
+func TestRegisterWorkspaceControlPlaneDirMountRefusesSymlinkedParent(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	root := t.TempDir()
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n -e '/^refuse_symlinked_workspace_parent_component() {$/,/^}$/p' -e '/^register_workspace_control_plane_dir_mount() {$/,/^}$/p' %[1]s)"
+register_shadow_mount() { echo "mount $2"; }
+mkdir -p %[2]s/real/.agents/plugins %[2]s/outside/plugins %[2]s/linked
+ln -s %[2]s/outside %[2]s/linked/.agents
+register_workspace_control_plane_dir_mount %[2]s/real .agents/plugins
+( register_workspace_control_plane_dir_mount %[2]s/linked .agents/plugins ) && echo "linked parent mounted" || echo "linked rc=$?"
+`, ShellQuote(scriptPath), ShellQuote(root))
+	code, output := runBashProbe(t, probe, nil)
+	if code != 0 || !strings.Contains(output, "mount /workspace/.agents/plugins\n") || !strings.Contains(output, "linked rc=2") ||
+		!strings.Contains(output, "parent component is a symlink") {
+		t.Fatalf("register_workspace_control_plane_dir_mount: exit %d, output:\n%s", code, output)
+	}
+}
+
 // TestHomeControlPlaneExportsEgressCACert covers the session CA trust: no
 // manifest or no listed CA leaves NODE_EXTRA_CA_CERTS and CODEX_CA_CERTIFICATE
 // unset, and never sets SSL_CERT_FILE, which the exec guard refuses;
