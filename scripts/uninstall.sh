@@ -98,7 +98,11 @@ if [[ -L "${BASH_SOURCE[0]}" ]]; then
 fi
 # shellcheck source=SCRIPTDIR/lib/launcher/host-detect.sh
 source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/launcher/host-detect.sh"
-COLIMA_CACHE_ROOT="$(colima_staging_cache_root)"
+# The launcher runs under env -i, so its cache root never reads XDG_CACHE_HOME.
+COLIMA_CACHE_ROOT="$(
+  unset XDG_CACHE_HOME
+  colima_staging_cache_root
+)"
 INJECTION_ROOT="${COLIMA_CACHE_ROOT}/workcell-host-inputs"
 SHADOW_ROOT="${COLIMA_CACHE_ROOT}/workcell-shadow"
 TOKEN_HANDOFF_ROOT="${COLIMA_CACHE_ROOT}/workcell-token-handoff"
