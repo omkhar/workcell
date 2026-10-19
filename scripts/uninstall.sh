@@ -87,9 +87,14 @@ COLIMA_HOME="${REAL_HOME}/.colima"
 INSTALL_PATH="${REAL_HOME}/.local/bin/workcell"
 MAN_PATH="${REAL_HOME}/.local/share/man/man1/workcell.1"
 STATE_ROOT="${REAL_HOME}/.local/state/workcell"
-INJECTION_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
-SHADOW_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
-TOKEN_HANDOFF_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-token-handoff"
+# The launcher's owner of the Colima cache root, so uninstall removes the
+# staging roots where the launcher made them.
+# shellcheck source=SCRIPTDIR/lib/launcher/host-detect.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/launcher/host-detect.sh"
+COLIMA_CACHE_ROOT="$(colima_staging_cache_root)"
+INJECTION_ROOT="${COLIMA_CACHE_ROOT}/workcell-host-inputs"
+SHADOW_ROOT="${COLIMA_CACHE_ROOT}/workcell-shadow"
+TOKEN_HANDOFF_ROOT="${COLIMA_CACHE_ROOT}/workcell-token-handoff"
 MACOS_CACHE_ROOT="${REAL_HOME}/Library/Caches/workcell"
 XDG_WORKCELL_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell"
 
