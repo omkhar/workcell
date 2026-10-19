@@ -34,19 +34,17 @@ func ValidateRuntimeMounts(configPath, workspace, profile, mountType string) err
 // colima_staging_cache_root in scripts/lib/launcher/host-detect.sh, and
 // TestCacheRootMatchesShellHelper keeps the two equal.
 func CacheRoot(home string) string {
-	return cacheRoot(runtime.GOOS, home, os.Getenv("XDG_CACHE_HOME"))
+	return cacheRoot(runtime.GOOS, home)
 }
 
-// cacheRoot is ~/Library/Caches/colima on macOS. On any other host it is
-// colima under XDG_CACHE_HOME, or under ~/.cache when XDG_CACHE_HOME is empty.
-func cacheRoot(goos, home, xdgCacheHome string) string {
+// cacheRoot is ~/Library/Caches/colima on macOS and ~/.cache/colima on any
+// other host. It ignores XDG_CACHE_HOME: the launcher reaches this root from
+// paths with and without the caller's environment, and they must agree.
+func cacheRoot(goos, home string) string {
 	if goos == "darwin" {
 		return filepath.Join(home, "Library", "Caches", "colima")
 	}
-	if xdgCacheHome == "" {
-		xdgCacheHome = filepath.Join(home, ".cache")
-	}
-	return filepath.Join(xdgCacheHome, "colima")
+	return filepath.Join(home, ".cache", "colima")
 }
 
 func expectedReadOnlyCacheMounts() (map[string]bool, error) {

@@ -14,7 +14,6 @@ import (
 func TestValidateRuntimeMountsAllowsWorkspaceAndReadOnlyCache(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
 	hostInputs := filepath.Join(CacheRoot(home), "workcell-host-inputs")
 	shadow := filepath.Join(CacheRoot(home), "workcell-shadow")
@@ -52,7 +51,6 @@ func TestValidateRuntimeMountsAllowsWorkspaceAndReadOnlyCache(t *testing.T) {
 func TestValidateRuntimeMountsRequiresWorkcellCacheMounts(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
 	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, tokenHandoff} {
@@ -81,7 +79,6 @@ func TestValidateRuntimeMountsRequiresWorkcellCacheMounts(t *testing.T) {
 func TestValidateRuntimeMountsRejectsUnexpectedWritableMount(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
 	other := filepath.Join(tmp, "other")
 	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
@@ -113,7 +110,6 @@ func TestValidateRuntimeMountsRejectsUnexpectedWritableMount(t *testing.T) {
 func TestValidateProfileConfigAcceptsManagedProfile(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
 	hostInputs := filepath.Join(CacheRoot(home), "workcell-host-inputs")
 	shadow := filepath.Join(CacheRoot(home), "workcell-shadow")
@@ -152,7 +148,6 @@ func TestValidateProfileConfigAcceptsManagedProfile(t *testing.T) {
 func TestValidateProfileConfigRequiresWorkcellCacheMounts(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
 	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, tokenHandoff} {
@@ -186,7 +181,6 @@ func TestValidateProfileConfigRequiresWorkcellCacheMounts(t *testing.T) {
 func TestValidateProfileConfigRejectsForwardAgent(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
 	hostInputs := filepath.Join(CacheRoot(home), "workcell-host-inputs")
 	shadow := filepath.Join(CacheRoot(home), "workcell-shadow")
@@ -230,7 +224,6 @@ func writeManagedConfig(t *testing.T, vmType, mountType string) (configPath, wor
 	t.Helper()
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
-	t.Setenv("XDG_CACHE_HOME", "")
 	workspace = filepath.Join(tmp, "workspace")
 	cache := CacheRoot(home)
 	hostInputs := filepath.Join(cache, "workcell-host-inputs")
@@ -309,7 +302,8 @@ func TestValidateProfileConfigAcceptsOnlySelectedVMAndMountType(t *testing.T) {
 // TestCacheRootMatchesShellHelper runs colima_staging_cache_root from
 // scripts/lib/launcher/host-detect.sh under a fake uname and checks that the
 // shell and Go rules give the same Colima cache root, so the launcher mounts
-// the paths that ValidateRuntimeMounts expects on macOS and on Linux.
+// the paths that ValidateRuntimeMounts expects on macOS and on Linux. A set
+// XDG_CACHE_HOME must not move the root.
 func TestCacheRootMatchesShellHelper(t *testing.T) {
 	helper, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "host-detect.sh"))
 	if err != nil {
@@ -319,7 +313,7 @@ func TestCacheRootMatchesShellHelper(t *testing.T) {
 		{"Darwin", "darwin", "", "/h/Library/Caches/colima"},
 		{"Darwin", "darwin", "/xdg", "/h/Library/Caches/colima"},
 		{"Linux", "linux", "", "/h/.cache/colima"},
-		{"Linux", "linux", "/xdg", "/xdg/colima"},
+		{"Linux", "linux", "/xdg", "/h/.cache/colima"},
 	} {
 		shim := t.TempDir()
 		if err := os.WriteFile(filepath.Join(shim, "uname"), []byte("#!/bin/sh\necho "+tc.uname+"\n"), 0o755); err != nil {
@@ -337,7 +331,7 @@ func TestCacheRootMatchesShellHelper(t *testing.T) {
 		if shell := strings.TrimSuffix(string(out), "\n"); shell != tc.want {
 			t.Errorf("%s xdg=%q: colima_staging_cache_root = %q, want %q", tc.uname, tc.xdg, shell, tc.want)
 		}
-		if got := cacheRoot(tc.goos, "/h", tc.xdg); got != tc.want {
+		if got := cacheRoot(tc.goos, "/h"); got != tc.want {
 			t.Errorf("%s xdg=%q: cacheRoot = %q, want %q", tc.uname, tc.xdg, got, tc.want)
 		}
 	}
