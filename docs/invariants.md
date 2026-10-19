@@ -166,12 +166,12 @@ reviewed inputs into provider homes.
 
 The mask includes these files:
 
-- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.mcp.json`
+- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.goosehints`, and `.mcp.json`
 - `.github/mcp.json` and `.github/copilot-instructions.md`
 
 The mask includes these directories:
 
-- `.codex/`, `.claude/`, `.copilot/`, `.gemini/`, and `.amp/`
+- `.codex/`, `.claude/`, `.copilot/`, `.gemini/`, `.amp/`, and `.goose/`
 - `.github/instructions/`, `.github/copilot/`, `.github/hooks/`,
   `.github/agents/`, and `.github/skills/`
 - `.agents/skills/`

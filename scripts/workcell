@@ -8384,7 +8384,7 @@ replace_shadow_symlinks_with_placeholder() {
 # order. Each one matches at any depth in the Git index. The find walks match
 # a name without a slash at any depth, and a path with a slash at the top only.
 WORKSPACE_CONTROL_PLANE_DIRS=(
-  .codex .claude .copilot .gemini .amp
+  .codex .claude .copilot .gemini .amp .goose
   .github/instructions .github/copilot .github/hooks .github/agents .github/skills
   .agents/skills
   .vscode .idea .cursor .zed
@@ -8392,7 +8392,7 @@ WORKSPACE_CONTROL_PLANE_DIRS=(
 
 # Workspace control-plane files that the safe path masks, at the top only.
 WORKSPACE_CONTROL_PLANE_FILES=(
-  AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md
+  AGENTS.md CLAUDE.md GEMINI.md .goosehints .mcp.json .github/mcp.json .github/copilot-instructions.md
 )
 
 git_index_control_plane_dir_roots() {

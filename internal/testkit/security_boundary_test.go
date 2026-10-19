@@ -680,7 +680,7 @@ eval "$(sed -n -e '/^WORKSPACE_CONTROL_PLANE_DIRS=($/,/^)$/p' -e '/^workspace_is
 run_clean_host_command() { "$@"; }
 cd %[2]s
 git init -q
-for path in .amp/settings.json nested/.amp/plugins/p.js .codex/config.toml .github/hooks/h.json x/.agents/skills/s.md y/.github/hooks/h.json .ampx/a plain.txt; do
+for path in .amp/settings.json nested/.amp/plugins/p.js .goose/config.yaml .codex/config.toml .github/hooks/h.json x/.agents/skills/s.md y/.github/hooks/h.json .ampx/a plain.txt; do
   mkdir -p "$(dirname "${path}")"
   printf 'x\n' >"${path}"
 done
@@ -688,9 +688,26 @@ git add -A
 git_index_control_plane_dir_roots %[2]s | LC_ALL=C sort -zu | tr '\0' ' '
 `, ShellQuote(scriptPath), ShellQuote(workspace))
 	code, output := runBashProbe(t, probe, nil)
-	want := ".amp .codex .github/hooks nested/.amp x/.agents/skills y/.github/hooks "
+	want := ".amp .codex .github/hooks .goose nested/.amp x/.agents/skills y/.github/hooks "
 	if code != 0 || output != want {
 		t.Fatalf("git_index_control_plane_dir_roots = %q (exit %d), want %q", output, code, want)
+	}
+}
+
+// TestWorkspaceControlPlaneFiles reads the file list that both safe-path
+// loops mask: each agent instruction file and each MCP config.
+func TestWorkspaceControlPlaneFiles(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n '/^WORKSPACE_CONTROL_PLANE_FILES=($/,/^)$/p' %[1]s)"
+printf '%%s ' "${WORKSPACE_CONTROL_PLANE_FILES[@]}"
+`, ShellQuote(scriptPath))
+	code, output := runBashProbe(t, probe, nil)
+	want := "AGENTS.md CLAUDE.md GEMINI.md .goosehints .mcp.json .github/mcp.json .github/copilot-instructions.md "
+	if code != 0 || output != want {
+		t.Fatalf("WORKSPACE_CONTROL_PLANE_FILES = %q (exit %d), want %q", output, code, want)
 	}
 }
 
