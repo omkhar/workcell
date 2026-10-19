@@ -241,7 +241,7 @@ internal/metadatautil	scopeGuardLockRootDepRE	fa166e49	unreviewed debt: review t
 internal/metadatautil	scopeGuardLockVersionRE	0d2a7fa2	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scopeGuardSplitLF	4f546323	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scriptRef	96b9da97	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	selectCopilotStable	605dc4a7	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	selectGitHubReleaseStable	94527446	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sentenceWords	e91bc492	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shebangInterpreter	92689fd9,9a831542	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellArrayOpen	728ab60a	unreviewed debt: review the subject, then port or justify
