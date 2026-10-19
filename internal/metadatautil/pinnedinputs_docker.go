@@ -661,6 +661,111 @@ func dockerfileInstructions(text string) string {
 	return instructions.String()
 }
 
+// dockerfileHeredocPattern matches each heredoc opener of an instruction:
+// <<WORD, <<-WORD and the quoted forms. A here-string or a shift also matches;
+// skipping its "body" can only hide a later instruction, which fails closed.
+var dockerfileHeredocPattern = regexp.MustCompile(`<<(-?)["']?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// dockerfileEscapeDirectivePattern matches the parser directive that changes
+// the line continuation character.
+var dockerfileEscapeDirectivePattern = regexp.MustCompile(`(?i)^#[\t ]*escape[\t ]*=`)
+
+// dockerfileLogicalInstructions splits text into the instructions a Docker
+// build runs: a line that ends in a backslash continues on the next line,
+// blank and comment lines are dropped (also inside a continuation), and the
+// body of each heredoc an instruction opens is skipped. It refuses a line
+// that does not start with an instruction keyword, an escape directive, an
+// unclosed heredoc and a trailing continuation, as a build does, so no decoy
+// text counts as an instruction.
+func dockerfileLogicalInstructions(text string) ([]string, error) {
+	var instructions []string
+	var current strings.Builder
+	type heredoc struct {
+		word     string
+		trimTabs bool
+	}
+	var heredocs []heredoc
+	for line := range strings.Lines(text) {
+		line = strings.TrimRight(line, "\r\n")
+		if len(heredocs) > 0 {
+			closer := line
+			if heredocs[0].trimTabs {
+				closer = strings.TrimLeft(closer, "\t")
+			}
+			if closer == heredocs[0].word {
+				heredocs = heredocs[1:]
+			}
+			continue
+		}
+		trimmed := strings.TrimLeft(line, " \t")
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			if dockerfileEscapeDirectivePattern.MatchString(trimmed) {
+				return nil, errors.New("the Dockerfile must not set a parser escape directive")
+			}
+			continue
+		}
+		if body, continued := strings.CutSuffix(strings.TrimRight(line, " \t"), "\\"); continued {
+			current.WriteString(body)
+			continue
+		}
+		current.WriteString(line)
+		instruction := current.String()
+		current.Reset()
+		if !dockerfileKeywords[strings.ToUpper(strings.Fields(instruction)[0])] {
+			return nil, fmt.Errorf("the Dockerfile line %q is not an instruction", instruction)
+		}
+		instructions = append(instructions, instruction)
+		for _, match := range dockerfileHeredocPattern.FindAllStringSubmatch(instruction, -1) {
+			heredocs = append(heredocs, heredoc{word: match[2], trimTabs: match[1] == "-"})
+		}
+	}
+	if len(heredocs) > 0 {
+		return nil, fmt.Errorf("the Dockerfile heredoc %s is not closed", heredocs[0].word)
+	}
+	if current.Len() > 0 {
+		return nil, errors.New("the Dockerfile ends inside a line continuation")
+	}
+	return instructions, nil
+}
+
+// dockerfileKeywords is the instruction set of the Dockerfile reference.
+var dockerfileKeywords = map[string]bool{
+	"ADD": true, "ARG": true, "CMD": true, "COPY": true, "ENTRYPOINT": true, "ENV": true, "EXPOSE": true,
+	"FROM": true, "HEALTHCHECK": true, "LABEL": true, "MAINTAINER": true, "ONBUILD": true, "RUN": true,
+	"SHELL": true, "STOPSIGNAL": true, "USER": true, "VOLUME": true, "WORKDIR": true,
+}
+
+// dockerfileArgPin returns the value of the one ARG name=value instruction
+// that declares name. Any other ARG or ENV declaration of name fails, since it
+// could change the value that the build uses.
+func dockerfileArgPin(instructions []string, name string) (string, error) {
+	var values []string
+	declarations := 0
+	for _, instruction := range instructions {
+		fields := strings.Fields(instruction)
+		if keyword := strings.ToUpper(fields[0]); keyword != "ARG" && keyword != "ENV" {
+			continue
+		}
+		for _, field := range fields[1:] {
+			if field == name || strings.HasPrefix(field, name+"=") {
+				declarations++
+			}
+		}
+		if len(fields) == 2 && fields[0] == "ARG" {
+			if value, ok := strings.CutPrefix(fields[1], name+"="); ok {
+				values = append(values, value)
+			}
+		}
+	}
+	if declarations != 1 || len(values) != 1 {
+		return "", fmt.Errorf("the Dockerfile must declare %s once, as ARG %s=VALUE", name, name)
+	}
+	return values[0], nil
+}
+
 func requireTextCount(text, needle string, want int, label, path string) error {
 	if count := strings.Count(text, needle); count != want {
 		return fmt.Errorf("%s in %s must occur exactly %d time(s), found %d", label, path, want, count)

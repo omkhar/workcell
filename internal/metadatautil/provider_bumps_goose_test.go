@@ -22,10 +22,11 @@ var (
 
 // gooseTestDockerfile is the goose pin shape of the runtime-uncertified build.
 func gooseTestDockerfile(version, arm, amd string) string {
-	return "FROM runtime-base AS uncertified-provider-builder\nARG GOOSE_VERSION=" + version + "\n" +
+	return "FROM runtime-base AS uncertified-provider-builder\n" +
+		"ARG GOOSE_VERSION=" + version + "\nARG GOOSE_SHA256_ARM64=" + arm + "\nARG GOOSE_SHA256_AMD64=" + amd + "\n" +
 		"RUN case \"${TARGETARCH}\" in \\\n" +
-		"    arm64) \\\n      GOOSE_ARCH=\"aarch64-unknown-linux-musl\"; \\\n      GOOSE_SHA256=\"" + arm + "\"; \\\n      ;; \\\n" +
-		"    amd64) \\\n      GOOSE_ARCH=\"x86_64-unknown-linux-musl\"; \\\n      GOOSE_SHA256=\"" + amd + "\"; \\\n      ;; \\\n" +
+		"    arm64) GOOSE_ARCH=\"aarch64-unknown-linux-musl\"; GOOSE_SHA256=\"${GOOSE_SHA256_ARM64}\" ;; \\\n" +
+		"    amd64) GOOSE_ARCH=\"x86_64-unknown-linux-musl\"; GOOSE_SHA256=\"${GOOSE_SHA256_AMD64}\" ;; \\\n" +
 		"  esac\n"
 }
 
@@ -49,15 +50,28 @@ func TestGooseDockerfilePin(t *testing.T) {
 	if err != nil || version != "1.55.0" || checksums["arm64"] != gooseTestArm || checksums["amd64"] != gooseTestAmd {
 		t.Fatalf("gooseDockerfilePin() = %q, %v, %v; want 1.55.0 and both checksums", version, checksums, err)
 	}
+	noVersion := strings.Replace(valid, "ARG GOOSE_VERSION=1.55.0\n", "", 1)
+	const once = "must declare GOOSE_VERSION once, as ARG GOOSE_VERSION=VALUE"
 	for name, tc := range map[string]struct {
 		text, want string
 	}{
-		"no version":         {strings.Replace(valid, "ARG GOOSE_VERSION=1.55.0\n", "", 1), "must pin one stable X.Y.Z ARG GOOSE_VERSION"},
-		"two versions":       {valid + "ARG GOOSE_VERSION=1.55.0\n", "must pin one stable X.Y.Z ARG GOOSE_VERSION"},
-		"a prerelease":       {strings.Replace(valid, "=1.55.0", "=2.0.0-rc-04-27-0", 1), "must pin one stable X.Y.Z ARG GOOSE_VERSION"},
-		"a wrong arm64 arch": {strings.Replace(valid, `"aarch64-unknown-linux-musl"`, `"aarch64-unknown-linux-gnu"`, 1), "one arm64 GOOSE_SHA256 for goose-aarch64-unknown-linux-musl.tar.gz"},
-		"two arm64 arms":     {valid + gooseTestDockerfile("1.55.0", gooseTestArm, gooseTestAmd)[len("FROM runtime-base AS uncertified-provider-builder\nARG GOOSE_VERSION=1.55.0\n"):], "one arm64 GOOSE_SHA256 for goose-aarch64-unknown-linux-musl.tar.gz"},
-		"a short amd64 sha":  {strings.Replace(valid, gooseTestAmd, gooseTestAmd[1:], 1), "one amd64 GOOSE_SHA256 for goose-x86_64-unknown-linux-musl.tar.gz"},
+		"no version":              {noVersion, once},
+		"two versions":            {valid + "ARG GOOSE_VERSION=1.55.0\n", once},
+		"an ENV override":         {valid + "ENV GOOSE_VERSION=1.56.0\n", once},
+		"a legacy ENV":            {valid + "ENV GOOSE_SHA256_ARM64 " + gooseTestAmd + "\n", "must declare GOOSE_SHA256_ARM64 once"},
+		"a two-pair ARG":          {noVersion + "ARG GOOSE_VERSION=1.55.0 X=1\n", once},
+		"a quoted version":        {strings.Replace(valid, "=1.55.0", `="1.55.0"`, 1), `GOOSE_VERSION "\"1.55.0\"" is not a stable`},
+		"a prerelease":            {strings.Replace(valid, "=1.55.0", "=2.0.0-rc-04-27-0", 1), `GOOSE_VERSION "2.0.0-rc-04-27-0" is not a stable`},
+		"no arm64 checksum":       {strings.Replace(valid, "ARG GOOSE_SHA256_ARM64="+gooseTestArm+"\n", "", 1), "must declare GOOSE_SHA256_ARM64 once"},
+		"a short amd64 sha":       {strings.Replace(valid, gooseTestAmd, gooseTestAmd[1:], 1), "GOOSE_SHA256_AMD64 for goose-x86_64-unknown-linux-musl.tar.gz is not a sha256"},
+		"a comment pin":           {"# ARG GOOSE_VERSION=1.55.0\n" + noVersion, once},
+		"a continued RUN pin":     {"RUN echo \\\nARG GOOSE_VERSION=1.55.0\n" + noVersion, once},
+		"a heredoc pin":           {"RUN cat <<EOF\nARG GOOSE_VERSION=1.55.0\nEOF\n" + noVersion, once},
+		"a dash heredoc pin":      {"RUN cat <<-'EOF'\nARG GOOSE_VERSION=1.55.0\n\tEOF\n" + noVersion, once},
+		"a second heredoc pin":    {"RUN cat <<A <<B\nA\nARG GOOSE_VERSION=1.55.0\nB\n" + noVersion, once},
+		"an unclosed heredoc":     {valid + "RUN cat <<EOF\nx\n", "the Dockerfile heredoc EOF is not closed"},
+		"an escape directive":     {"# escape=`\n" + valid, "must not set a parser escape directive"},
+		"a trailing continuation": {valid + "RUN true \\\n", "the Dockerfile ends inside a line continuation"},
 	} {
 		if _, _, err := gooseDockerfilePin(tc.text); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: gooseDockerfilePin() error = %v, want %q", name, err, tc.want)
@@ -112,6 +126,7 @@ func TestApplyUncertifiedReleaseBumpPlan(t *testing.T) {
 	newArm, newAmd := strings.Repeat("c", 64), strings.Repeat("d", 64)
 	cases := map[string]struct {
 		releases map[string]ProviderBumpSelection
+		before   string // the Dockerfile before apply, if not the 1.55.0 pin
 		want     string // the Dockerfile after apply, or the error text
 		wantErr  bool
 	}{
@@ -132,6 +147,13 @@ func TestApplyUncertifiedReleaseBumpPlan(t *testing.T) {
 			releases: map[string]ProviderBumpSelection{"goose": {TargetVersion: "2.0.0-rc-1", Changed: true, Checksums: map[string]string{"arm64": newArm, "amd64": newAmd}}},
 			want:     `the goose target version "2.0.0-rc-1" is not a stable X.Y.Z version`, wantErr: true,
 		},
+		"a pin the rewrite misses": {
+			releases: map[string]ProviderBumpSelection{"goose": {TargetVersion: "1.55.1", Changed: true, Checksums: map[string]string{"arm64": newArm, "amd64": newAmd}}},
+			// A trailing blank keeps the instruction valid, but the line
+			// rewrite no longer matches it.
+			before: strings.Replace(gooseTestDockerfile("1.55.0", gooseTestArm, gooseTestAmd), "=1.55.0\n", "=1.55.0 \n", 1),
+			want:   "the goose pin did not rewrite to 1.55.1", wantErr: true,
+		},
 		"a missing checksum": {
 			releases: map[string]ProviderBumpSelection{"goose": {TargetVersion: "1.55.1", Changed: true, Checksums: map[string]string{"arm64": newArm}}},
 			want:     "the goose target version 1.55.1 needs a valid amd64 sha256 checksum", wantErr: true,
@@ -142,6 +164,9 @@ func TestApplyUncertifiedReleaseBumpPlan(t *testing.T) {
 			dir := t.TempDir()
 			dockerfilePath := filepath.Join(dir, "Dockerfile")
 			before := gooseTestDockerfile("1.55.0", gooseTestArm, gooseTestAmd)
+			if tc.before != "" {
+				before = tc.before
+			}
 			mustWriteText(t, dockerfilePath, before)
 			content, err := json.Marshal(ProviderBumpPlan{UncertifiedReleases: tc.releases})
 			if err != nil {

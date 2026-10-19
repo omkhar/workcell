@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -473,32 +474,48 @@ var gooseReleaseCLI = githubReleaseCLI{
 	},
 }
 
-var gooseVersionLinePattern = regexp.MustCompile(`(?m)^ARG GOOSE_VERSION=(.*)$`)
-
-// gooseChecksumLinePattern matches the Dockerfile case arm of asset: its
-// GOOSE_ARCH, the archive name without the goose- prefix and the .tar.gz
-// suffix, and its GOOSE_SHA256 value in group 2.
-func gooseChecksumLinePattern(asset releaseAsset) *regexp.Regexp {
-	arch := strings.TrimSuffix(strings.TrimPrefix(asset.name, "goose-"), ".tar.gz")
-	return regexp.MustCompile(`(?ms)(` + asset.key + `\)\s+\\\s*GOOSE_ARCH="` + regexp.QuoteMeta(arch) + `";\s+\\\s*GOOSE_SHA256=")([0-9a-f]{64})(";)`)
+// gooseChecksumArg is the Dockerfile ARG that pins the sha256 of the asset
+// of architecture key.
+func gooseChecksumArg(key string) string {
+	return "GOOSE_SHA256_" + strings.ToUpper(key)
 }
 
 // gooseDockerfilePin returns the one stable GOOSE_VERSION of dockerfile and
-// the one GOOSE_SHA256 of each goose asset, keyed by architecture.
+// the one GOOSE_SHA256_<ARCH> of each goose asset, keyed by architecture. It
+// reads ARG instructions only, so a comment, a heredoc body or RUN text
+// cannot stand in for the pin.
 func gooseDockerfilePin(dockerfile string) (string, map[string]string, error) {
-	versions := gooseVersionLinePattern.FindAllStringSubmatch(dockerfile, -1)
-	if len(versions) != 1 || !stableVersionPattern.MatchString(versions[0][1]) {
-		return "", nil, errors.New("the Dockerfile must pin one stable X.Y.Z ARG GOOSE_VERSION")
+	version, checksums, err := readGoosePinInstructions(dockerfile)
+	if err != nil {
+		return "", nil, fmt.Errorf("the goose pin: %w", err)
+	}
+	return version, checksums, nil
+}
+
+func readGoosePinInstructions(dockerfile string) (string, map[string]string, error) {
+	instructions, err := dockerfileLogicalInstructions(dockerfile)
+	if err != nil {
+		return "", nil, err
+	}
+	version, err := dockerfileArgPin(instructions, "GOOSE_VERSION")
+	if err != nil {
+		return "", nil, err
+	}
+	if !stableVersionPattern.MatchString(version) {
+		return "", nil, fmt.Errorf("the Dockerfile GOOSE_VERSION %q is not a stable X.Y.Z version", version)
 	}
 	checksums := map[string]string{}
 	for _, asset := range gooseReleaseCLI.assets {
-		matches := gooseChecksumLinePattern(asset).FindAllStringSubmatch(dockerfile, -1)
-		if len(matches) != 1 {
-			return "", nil, fmt.Errorf("the Dockerfile must pin one %s GOOSE_SHA256 for %s", asset.key, asset.name)
+		checksum, err := dockerfileArgPin(instructions, gooseChecksumArg(asset.key))
+		if err != nil {
+			return "", nil, err
 		}
-		checksums[asset.key] = matches[0][2]
+		if !isHexDigest(checksum) {
+			return "", nil, fmt.Errorf("the Dockerfile %s for %s is not a sha256", gooseChecksumArg(asset.key), asset.name)
+		}
+		checksums[asset.key] = checksum
 	}
-	return versions[0][1], checksums, nil
+	return version, checksums, nil
 }
 
 func readGooseDockerfilePin(dockerfilePath string) (string, map[string]string, error) {
@@ -569,13 +586,22 @@ func applyGoosePin(dockerfile string, selection ProviderBumpSelection) (string, 
 	if _, _, err := gooseDockerfilePin(dockerfile); err != nil {
 		return "", err
 	}
-	updated := gooseVersionLinePattern.ReplaceAllLiteralString(dockerfile, "ARG GOOSE_VERSION="+selection.TargetVersion)
+	pins := map[string]string{"GOOSE_VERSION": selection.TargetVersion}
 	for _, asset := range gooseReleaseCLI.assets {
 		checksum := selection.Checksums[asset.key]
 		if !isHexDigest(checksum) {
 			return "", fmt.Errorf("the goose target version %s needs a valid %s sha256 checksum", selection.TargetVersion, asset.key)
 		}
-		updated = gooseChecksumLinePattern(asset).ReplaceAllString(updated, "${1}"+checksum+"${3}")
+		pins[gooseChecksumArg(asset.key)] = checksum
+	}
+	updated := dockerfile
+	for name, value := range pins {
+		updated = regexp.MustCompile(`(?m)^ARG `+name+`=\S*$`).ReplaceAllLiteralString(updated, "ARG "+name+"="+value)
+	}
+	// The result must read back as exactly the target pin, or apply fails.
+	version, checksums, err := gooseDockerfilePin(updated)
+	if err != nil || version != selection.TargetVersion || !maps.Equal(checksums, selection.Checksums) {
+		return "", fmt.Errorf("the goose pin did not rewrite to %s: %v", selection.TargetVersion, err)
 	}
 	return updated, nil
 }
