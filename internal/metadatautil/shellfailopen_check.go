@@ -154,7 +154,10 @@ var (
 	// shellQuietGrepPipe is a grep -q as a later pipeline stage. It exits at the
 	// first match, so under pipefail the stage before it can die of SIGPIPE and
 	// fail the pipeline although the text matched.
-	shellQuietGrepPipe = regexp.MustCompile(`(?:^|[^|])\|\s*grep\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*q`)
+	// The grep may run as egrep or fgrep and take its quiet option as -q,
+	// --quiet or --silent. The command text has no wrapper words such as
+	// command or env, so a wrapped grep matches too.
+	shellQuietGrepPipe = regexp.MustCompile(`(?:^|[^|])\|\s*[ef]?grep\s+(?:-\S+\s+)*?(?:-[A-Za-z]*q|--quiet\b|--silent\b)`)
 	// shellProcessSubst is a process substitution, <( or >(, as a redirection or an argument.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^$])[<>]\(`)
 	// shellLoopSubst is the done < <( loop form, the only one a wait "$!" or a completion sentinel covers.
