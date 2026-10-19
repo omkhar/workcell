@@ -699,7 +699,7 @@ func TestManifestInstallPinsExist(t *testing.T) {
 			t.Errorf("%s: Dockerfile has no pinned ARG %s", m.ID, m.Install.VersionArg)
 		}
 		// The runtime runs this exact package (Dockerfile and provider-wrapper.sh).
-		if want := map[string]string{providerid.Gemini: "@google/gemini-cli", "opencode": "opencode-ai"}[m.ID]; m.Install.Package != want || want != "" && pins[m.Tier][want] == "" {
+		if want := map[string]string{providerid.Gemini: "@google/gemini-cli", "opencode": "opencode-ai", "amp": "@ampcode/cli"}[m.ID]; m.Install.Package != want || want != "" && pins[m.Tier][want] == "" {
 			t.Errorf("%s: package = %q, want %q as a %s provider package.json dependency", m.ID, m.Install.Package, want, m.Tier)
 		}
 		if _, err := os.Stat(filepath.Join(repoRoot, m.Install.Provenance)); err != nil {

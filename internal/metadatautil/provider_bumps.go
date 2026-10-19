@@ -58,6 +58,9 @@ const (
 	copilotReleaseMaxPages        = 10
 )
 
+// buildStampedVersionExpr is the 0.0.<build>-g<commit> version form.
+const buildStampedVersionExpr = `0\.0\.[0-9]+-g[0-9a-f]+`
+
 var (
 	errReleaseAssetNotFound = errors.New("release asset not found")
 	stableVersionPattern    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
@@ -65,7 +68,7 @@ var (
 	// publishes each build as 0.0.<build>-g<commit>, for example @ampcode/cli.
 	// Its dist-tags.latest has the same form, and the build number orders
 	// the releases.
-	buildStampedVersionPattern              = regexp.MustCompile(`^0\.0\.[0-9]+-g[0-9a-f]+$`)
+	buildStampedVersionPattern              = regexp.MustCompile(`^` + buildStampedVersionExpr + `$`)
 	geminiDependencyPattern                 = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
 	claudeVersionLinePattern                = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
 	codexVersionLinePattern                 = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
