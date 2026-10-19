@@ -99,6 +99,7 @@ const (
 	ruleCommandSubstitution = "command-substitution"
 	ruleOrTrue              = "or-true"
 	ruleDevNull             = "dev-null"
+	ruleQuietGrepPipe       = "quiet-grep-pipe"
 )
 
 type shellFailOpenKey struct{ path, rule string }
@@ -150,6 +151,10 @@ var (
 	// tool's unless set -o pipefail ran before it and no set +o pipefail since.
 	shellInnerPipe = regexp.MustCompile(`(?:^|[^|])\|\s*[^\s;&|)}]`)
 	shellPipefail  = regexp.MustCompile(`\bset\s+([-+])[A-Za-z]*o\s+pipefail\b`)
+	// shellQuietGrepPipe is a grep -q as a later pipeline stage. It exits at the
+	// first match, so under pipefail the stage before it can die of SIGPIPE and
+	// fail the pipeline although the text matched.
+	shellQuietGrepPipe = regexp.MustCompile(`(?:^|[^|])\|\s*grep\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*q`)
 	// shellProcessSubst is a process substitution, <( or >(, as a redirection or an argument.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^$])[<>]\(`)
 	// shellLoopSubst is the done < <( loop form, the only one a wait "$!" or a completion sentinel covers.
@@ -368,6 +373,9 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
 			hits[ruleOrTrue] += shellSwallowingHandlers(command, later, false)
+			if pipefail {
+				hits[ruleQuietGrepPipe] += len(shellQuietGrepPipe.FindAllStringIndex(command, -1))
+			}
 			offset := 0 // A redirect belongs to the operand of the && || or | list it is written in, so git fetch || printf x 2>/dev/null hides no git status, and each operand's own status test counts, so the && after git fetch does not cover git gc 2>/dev/null. A redirect inside a substitution belongs to the command there, so $(git x 2>/dev/null) hides git's status while foo "$(git x)" 2>/dev/null hides foo's; each is read in its own text.
 			for _, operand := range shellListOperands(command) {
 				untested := !testedFrom(command[offset:])
@@ -389,7 +397,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				stdoutNull, kept = kept[len(kept)-closed], kept[:len(kept)-closed]
 			}
 		}
-		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull} {
+		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull, ruleQuietGrepPipe} {
 			for range hits[rule] {
 				findings = append(findings, ShellFailOpenFinding{Rule: rule, Line: statement.number})
 			}
@@ -1028,7 +1036,7 @@ func loadShellFailOpenBaseline(path string) (map[shellFailOpenKey]int, error) {
 			return nil, fmt.Errorf("%s:%d: expected PATH, RULE, COUNT and a non-empty REASON", shellFailOpenBaselinePath, number+1)
 		}
 		switch fields[1] {
-		case ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull:
+		case ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull, ruleQuietGrepPipe:
 		default:
 			return nil, fmt.Errorf("%s:%d: unknown rule %q", shellFailOpenBaselinePath, number+1, fields[1])
 		}

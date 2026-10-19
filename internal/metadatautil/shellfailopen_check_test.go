@@ -297,6 +297,12 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"|| inside a [[ ]] test", "x=\"$([[ \"$a\" == b || \"$c\" == d ]] && printf y)\"\n", ""},
 		{"quoted $( runs nothing", "x=$(echo '$(git' x) || exit 1\n", ""},
 		{"escaped ; is an argument", "if ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
+		{"quiet grep after a pipe under pipefail", "set -euo pipefail\nif ! echo \"$x\" | grep -Fq -- y; then exit 1; fi\n", "quiet-grep-pipe"},
+		{"split quiet flag after a pipe", "set -o pipefail\necho \"$x\" | grep -E -q y || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep without pipefail", "echo \"$x\" | grep -q y || exit 1\n", ""},
+		{"grep that reads all input", "set -o pipefail\necho \"$x\" | grep -F -- y >/dev/null || exit 1\n", ""},
+		{"quiet grep after ||", "set -o pipefail\ntest -n \"$x\" || grep -q y f || exit 1\n", ""},
+		{"marked quiet grep", "set -o pipefail\n# fail-closed: find stops after one line\nfind . -print -quit | grep -q . || exit 1\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

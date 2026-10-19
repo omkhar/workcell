@@ -1633,7 +1633,7 @@ expected_mount_paths=(
   "/opt/workcell/host-inputs/ssh/identity-0"
 )
 for expected_mount_path in "${expected_mount_paths[@]}"; do
-  if ! printf '%s\n' "${actual_mount_paths[@]}" | grep -Fxq "${expected_mount_path}"; then
+  if ! printf '%s\n' "${actual_mount_paths[@]}" | grep -Fx "${expected_mount_path}" >/dev/null; then
     echo "expected direct-mount spec to preserve all secret input mount paths" >&2
     exit 1
   fi
@@ -1686,7 +1686,7 @@ if [[ "${included_policy_source_names[*]}" != "fragment-docs.toml fragment-crede
   exit 1
 fi
 [[ "$(jq -r '.metadata.policy_entrypoint' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json")" == "policy-with-includes.toml" ]]
-if jq -r '.metadata.policy_sources[].path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json" | grep -Eq '^/'; then
+if jq -r '.metadata.policy_sources[].path' "${INJECTION_POLICY_FIXTURE_ROOT}/bundle-includes/manifest.json" | grep -E '^/' >/dev/null; then
   echo "policy source leaked an absolute host path" >&2
   exit 1
 fi
@@ -3102,39 +3102,39 @@ if [[ -e "${HOST_PATH_BASH_MARKER}" ]] || [[ -e "${HOST_PATH_DIRNAME_MARKER}" ]]
 fi
 
 EGRESS_PLAN_OUTPUT="$("${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan default 'localhost:443')"
-if ! echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'iptables -A WORKCELL_EGRESS -p tcp -d 127\.0\.0\.1 --dport 443 -j ACCEPT'; then
+if ! echo "${EGRESS_PLAN_OUTPUT}" | grep 'iptables -A WORKCELL_EGRESS -p tcp -d 127\.0\.0\.1 --dport 443 -j ACCEPT' >/dev/null; then
   echo "Expected dual-stack egress plan to include the IPv4 localhost rule" >&2
   exit 1
 fi
-if ! echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT'; then
+if ! echo "${EGRESS_PLAN_OUTPUT}" | grep 'ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT' >/dev/null; then
   echo "Expected dual-stack egress plan to include the IPv6 localhost rule" >&2
   exit 1
 fi
-if ! echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -j DROP'; then
+if ! echo "${EGRESS_PLAN_OUTPUT}" | grep 'ip6tables -A WORKCELL_EGRESS6 -j DROP' >/dev/null; then
   echo "Expected dual-stack egress plan to default-drop IPv6 traffic" >&2
   exit 1
 fi
-if echo "${EGRESS_PLAN_OUTPUT}" | grep -q 'disable_ipv6'; then
+if echo "${EGRESS_PLAN_OUTPUT}" | grep 'disable_ipv6' >/dev/null; then
   echo "Dual-stack egress plan must not toggle kernel IPv6 disablement" >&2
   exit 1
 fi
 
 EGRESS_PLAN_IPV4_ONLY="$("${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan default '127.0.0.1:443')"
-if ! echo "${EGRESS_PLAN_IPV4_ONLY}" | grep -q 'ip6tables -N WORKCELL_EGRESS6'; then
+if ! echo "${EGRESS_PLAN_IPV4_ONLY}" | grep 'ip6tables -N WORKCELL_EGRESS6' >/dev/null; then
   echo "Expected IPv4-only allowlist plans to still install the IPv6 chain" >&2
   exit 1
 fi
-if ! echo "${EGRESS_PLAN_IPV4_ONLY}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -j DROP'; then
+if ! echo "${EGRESS_PLAN_IPV4_ONLY}" | grep 'ip6tables -A WORKCELL_EGRESS6 -j DROP' >/dev/null; then
   echo "Expected IPv4-only allowlist plans to still default-drop IPv6 traffic" >&2
   exit 1
 fi
 
 EGRESS_PLAN_IPV6_LITERAL="$("${ROOT_DIR}/scripts/colima-egress-allowlist.sh" plan default '[::1]:443')"
-if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep -q 'ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT'; then
+if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep 'ip6tables -A WORKCELL_EGRESS6 -p tcp -d ::1 --dport 443 -j ACCEPT' >/dev/null; then
   echo "Expected bracketed IPv6 literal endpoints to produce an IPv6 allowlist rule" >&2
   exit 1
 fi
-if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep -q 'iptables -A WORKCELL_EGRESS -j DROP'; then
+if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep 'iptables -A WORKCELL_EGRESS -j DROP' >/dev/null; then
   echo "Expected bracketed IPv6 literal endpoints to still default-drop IPv4 traffic" >&2
   exit 1
 fi
@@ -5492,7 +5492,7 @@ for forbidden in "${FORBIDDEN_HOST_PATHS[@]}"; do
   # grep -F so regex metacharacters in policy entries (e.g. the `.` in
   # `docker.sock` or `.gnupg`) match literally; otherwise a future entry
   # with `.` could false-positive on any character.
-  if echo "${DRY_RUN_OUTPUT}" | grep -Fq -- "${forbidden}"; then
+  if echo "${DRY_RUN_OUTPUT}" | grep -F -- "${forbidden}" >/dev/null; then
     echo "Unexpected host exposure in dry-run output: ${forbidden}" >&2
     echo "Forbidden by policy/forbidden-host-paths.toml" >&2
     exit 1
@@ -5529,34 +5529,34 @@ if [[ -n "$(find_forbidden_host_mount_source "docker run -v ${REAL_HOME}/src/wor
 fi
 
 for forbidden in "verify-aws-secret" "verify-gh-token" "/tmp/workcell-secret-sock"; do
-  if echo "${SECRET_DRY_RUN_OUTPUT}" | grep -Fq -- "${forbidden}"; then
+  if echo "${SECRET_DRY_RUN_OUTPUT}" | grep -F -- "${forbidden}" >/dev/null; then
     echo "Unexpected host secret forwarding in dry-run output: ${forbidden}" >&2
     exit 1
   fi
 done
 
 for required in "--user" "HOME=/state/agent-home" "CODEX_HOME=/state/agent-home/.codex" "TMPDIR=/state/tmp" "WORKCELL_RUNTIME=1" "--tmpfs /tmp:nosuid" "noexec" "--tmpfs /state:"; do
-  if ! echo "${DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
+  if ! echo "${DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
     echo "Missing runtime control in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
 for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.github/hooks:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
-  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
+  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
     echo "Missing workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
 for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/hooks:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro"; do
-  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
+  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
     echo "Missing nested workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
-if echo "${MASK_DRY_RUN_OUTPUT}" | grep -q -- "/workspace/nested/AGENTS.md:ro"; then
+if echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "/workspace/nested/AGENTS.md:ro" >/dev/null; then
   echo "Nested AGENTS.md should remain visible in the workspace for path-scoped agent instructions" >&2
   exit 1
 fi
@@ -5597,16 +5597,16 @@ git -C "${MCP_VERIFY_WORKSPACE}" add AGENTS.md .mcp.json .github/mcp.json
 # repo MCP surfaces from the workspace; a masked overlay stands in instead.
 MCP_DENY_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
 for surface in .mcp.json .github/mcp.json; do
-  if echo "${MCP_DENY_OUTPUT}" | grep -q -- "${MCP_VERIFY_WORKSPACE}/${surface}:/workspace/${surface}:ro"; then
+  if echo "${MCP_DENY_OUTPUT}" | grep -- "${MCP_VERIFY_WORKSPACE}/${surface}:/workspace/${surface}:ro" >/dev/null; then
     echo "Repo ${surface} must not reach the provider in strict mode without --allow-repo-mcp" >&2
     exit 1
   fi
-  if ! echo "${MCP_DENY_OUTPUT}" | grep -q -- ":/workspace/${surface}:ro"; then
+  if ! echo "${MCP_DENY_OUTPUT}" | grep -- ":/workspace/${surface}:ro" >/dev/null; then
     echo "Expected a masked overlay for denied repo MCP surface ${surface}" >&2
     exit 1
   fi
 done
-grep_repo_mcp() { echo "$1" | grep -Fq -- "$2" || {
+grep_repo_mcp() { echo "$1" | grep -F -- "$2" >/dev/null || {
   echo "Missing expected token '$2'" >&2
   exit 1
 }; }
@@ -5617,7 +5617,7 @@ grep_repo_mcp "${MCP_DENY_OUTPUT}" 'WORKCELL_WORKSPACE_REPO_MCP_STATE=denied'
 # the MCP deny; ordinary control-plane files stay visible, MCP surfaces do not.
 MCP_VCS_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_VERIFY_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --dry-run 2>/dev/null)"
 grep_repo_mcp "${MCP_VCS_OUTPUT}" "${MCP_VERIFY_WORKSPACE}/AGENTS.md:/workspace/AGENTS.md:ro"
-if echo "${MCP_VCS_OUTPUT}" | grep -q -- "${MCP_VERIFY_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro"; then
+if echo "${MCP_VCS_OUTPUT}" | grep -- "${MCP_VERIFY_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro" >/dev/null; then
   echo "Repo .mcp.json must remain denied even under --allow-control-plane-vcs" >&2
   exit 1
 fi
@@ -5660,7 +5660,7 @@ git -C "${MCP_ACK_MODIFIED_WORKSPACE}" add .mcp.json
 printf '{"mcpServers":{"worktree":{"command":"live"}}}\n' >"${MCP_ACK_MODIFIED_WORKSPACE}/.mcp.json"
 MCP_ACK_MODIFIED_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ACK_MODIFIED_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
 grep_repo_mcp "${MCP_ACK_MODIFIED_OUTPUT}" "${MCP_ACK_MODIFIED_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro"
-if echo "${MCP_ACK_MODIFIED_OUTPUT}" | grep -q -- "workcell-shadow/.*/files/.mcp.json:/workspace/.mcp.json:ro"; then
+if echo "${MCP_ACK_MODIFIED_OUTPUT}" | grep -- "workcell-shadow/.*/files/.mcp.json:/workspace/.mcp.json:ro" >/dev/null; then
   echo "Acknowledged repo MCP must mount the live working-tree file, not the git-index shadow snapshot" >&2
   exit 1
 fi
@@ -5687,7 +5687,7 @@ grep -q -- '--allow-repo-mcp is redundant in breakglass mode.' /tmp/workcell-rep
 printf 'this is not valid json {\n' >"${MCP_VERIFY_WORKSPACE}/.mcp.json"
 git -C "${MCP_VERIFY_WORKSPACE}" add .mcp.json
 MCP_MALFORMED_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_VERIFY_WORKSPACE}" --dry-run 2>/dev/null)"
-if echo "${MCP_MALFORMED_OUTPUT}" | grep -q -- "${MCP_VERIFY_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro"; then
+if echo "${MCP_MALFORMED_OUTPUT}" | grep -- "${MCP_VERIFY_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro" >/dev/null; then
   echo "Malformed repo .mcp.json must stay denied (fail-closed), not fall open" >&2
   exit 1
 fi
@@ -5741,11 +5741,11 @@ for symlink_flags in "" "--allow-control-plane-vcs --ack-control-plane-vcs"; do
   # shellcheck disable=SC2086
   MCP_SYMLINK_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_SYMLINK_WORKSPACE}" ${symlink_flags} --dry-run 2>/dev/null)"
   for surface in .mcp.json .github/mcp.json; do
-    if ! echo "${MCP_SYMLINK_OUTPUT}" | grep -q -- ":/workspace/${surface}:ro"; then
+    if ! echo "${MCP_SYMLINK_OUTPUT}" | grep -- ":/workspace/${surface}:ro" >/dev/null; then
       echo "Symlinked repo ${surface} must be neutralized by the deny overlay (flags: ${symlink_flags:-none}), not exposed via the bind mount" >&2
       exit 1
     fi
-    if echo "${MCP_SYMLINK_OUTPUT}" | grep -q -- "evil.*json:/workspace/${surface}:ro"; then
+    if echo "${MCP_SYMLINK_OUTPUT}" | grep -- "evil.*json:/workspace/${surface}:ro" >/dev/null; then
       echo "Symlink target for ${surface} must never be the mount source (flags: ${symlink_flags:-none})" >&2
       exit 1
     fi
@@ -5830,7 +5830,7 @@ git -C "${MCP_ASSURANCE_WORKSPACE}" config user.name "Workcell Verify"
 git -C "${MCP_ASSURANCE_WORKSPACE}" config user.email "workcell-verify@example.com"
 printf '{"mcpServers":{"real":{"command":"node"}}}\n' >"${MCP_ASSURANCE_WORKSPACE}/.mcp.json"
 MCP_ACK_ASSURANCE_STDERR="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>&1 >/dev/null)"
-echo "${MCP_ACK_ASSURANCE_STDERR}" | grep -q 'session_assurance_initial=lower-assurance-repo-mcp' || {
+echo "${MCP_ACK_ASSURANCE_STDERR}" | grep 'session_assurance_initial=lower-assurance-repo-mcp' >/dev/null || {
   echo "Acknowledged repo MCP must downgrade session_assurance_initial to lower-assurance-repo-mcp" >&2
   exit 1
 }
@@ -5838,11 +5838,11 @@ MCP_ACK_ASSURANCE_STDOUT="$(run_workcell_verify --agent claude --mode strict --w
 grep_repo_mcp "${MCP_ACK_ASSURANCE_STDOUT}" 'WORKCELL_SESSION_ASSURANCE_INITIAL=lower-assurance-repo-mcp'
 grep_repo_mcp "${MCP_ACK_ASSURANCE_STDOUT}" 'WORKCELL_WORKSPACE_REPO_MCP_STATE=acknowledged'
 MCP_DENY_ASSURANCE_STDERR="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --dry-run 2>&1 >/dev/null)"
-echo "${MCP_DENY_ASSURANCE_STDERR}" | grep -q 'session_assurance_initial=lower-assurance-repo-mcp' && {
+echo "${MCP_DENY_ASSURANCE_STDERR}" | grep 'session_assurance_initial=lower-assurance-repo-mcp' >/dev/null && {
   echo "Deny-by-default (no ack) must not downgrade session assurance" >&2
   exit 1
 }
-echo "${MCP_DENY_ASSURANCE_STDERR}" | grep -q 'session_assurance_initial=managed-mutable' || {
+echo "${MCP_DENY_ASSURANCE_STDERR}" | grep 'session_assurance_initial=managed-mutable' >/dev/null || {
   echo "Deny-by-default must keep full container assurance" >&2
   exit 1
 }
@@ -5850,11 +5850,11 @@ echo "${MCP_DENY_ASSURANCE_STDERR}" | grep -q 'session_assurance_initial=managed
 # execution_path must also mark the acked repo-MCP escape hatch (so automation
 # keying on execution_path spots it), consistent with control-plane-vcs;
 # deny-by-default stays managed-tier1.
-echo "${MCP_ACK_ASSURANCE_STDERR}" | grep -q 'execution_path=lower-assurance-repo-mcp ' || {
+echo "${MCP_ACK_ASSURANCE_STDERR}" | grep 'execution_path=lower-assurance-repo-mcp ' >/dev/null || {
   echo "Acknowledged repo MCP must set execution_path=lower-assurance-repo-mcp" >&2
   exit 1
 }
-echo "${MCP_DENY_ASSURANCE_STDERR}" | grep -q 'execution_path=managed-tier1 ' || {
+echo "${MCP_DENY_ASSURANCE_STDERR}" | grep 'execution_path=managed-tier1 ' >/dev/null || {
   echo "Deny-by-default must keep execution_path=managed-tier1" >&2
   exit 1
 }
@@ -5864,11 +5864,11 @@ echo "${MCP_DENY_ASSURANCE_STDERR}" | grep -q 'execution_path=managed-tier1 ' ||
 # repo-MCP outbound-reach expansion is still named, not dropped by the earlier
 # control-plane-vcs return.
 MCP_BOTH_ACK_STDERR="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>&1 >/dev/null)"
-echo "${MCP_BOTH_ACK_STDERR}" | grep -q 'session_assurance_initial=lower-assurance-control-plane-vcs+repo-mcp' || {
+echo "${MCP_BOTH_ACK_STDERR}" | grep 'session_assurance_initial=lower-assurance-control-plane-vcs+repo-mcp' >/dev/null || {
   echo "Both acks must combine into lower-assurance-control-plane-vcs+repo-mcp, not drop repo-mcp" >&2
   exit 1
 }
-echo "${MCP_BOTH_ACK_STDERR}" | grep -q 'execution_path=lower-assurance-control-plane-vcs+repo-mcp ' || {
+echo "${MCP_BOTH_ACK_STDERR}" | grep 'execution_path=lower-assurance-control-plane-vcs+repo-mcp ' >/dev/null || {
   echo "Both acks must combine execution_path into lower-assurance-control-plane-vcs+repo-mcp" >&2
   exit 1
 }
@@ -5888,11 +5888,11 @@ assurance_notice_for_label() {
   } | bash 2>&1
 }
 MCP_COMBINED_NOTICE="$(assurance_notice_for_label 'lower-assurance-control-plane-vcs+repo-mcp')"
-echo "${MCP_COMBINED_NOTICE}" | grep -q 'Git VCS operations' || {
+echo "${MCP_COMBINED_NOTICE}" | grep 'Git VCS operations' >/dev/null || {
   echo "Combined-reason notice must include the control-plane VCS warning" >&2
   exit 1
 }
-echo "${MCP_COMBINED_NOTICE}" | grep -q 'repo-defined MCP server configs' || {
+echo "${MCP_COMBINED_NOTICE}" | grep 'repo-defined MCP server configs' >/dev/null || {
   echo "Combined-reason notice must include the repo-MCP warning (was swallowed by the control-plane-vcs early return)" >&2
   exit 1
 }
@@ -5927,11 +5927,11 @@ git -C "${MCP_ISO_SOURCE}" add AGENTS.md .mcp.json .github/mcp.json
 git -C "${MCP_ISO_SOURCE}" commit -q -m "isolated MCP fixture"
 MCP_ISO_ACK_OUTPUT="$(run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SOURCE}" --session-workspace isolated --no-default-injection-policy --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
 # The container /workspace must be bind-mounted from the session-owned clone.
-echo "${MCP_ISO_ACK_OUTPUT}" | grep -Eq -- 'workcell-sessions/[^:]+/repo:/workspace ' || {
+echo "${MCP_ISO_ACK_OUTPUT}" | grep -E -- 'workcell-sessions/[^:]+/repo:/workspace ' >/dev/null || {
   echo "Isolated session must bind-mount the session-owned clone at /workspace" >&2
   exit 1
 }
-if echo "${MCP_ISO_ACK_OUTPUT}" | grep -Fq -- "${MCP_ISO_SOURCE}:/workspace "; then
+if echo "${MCP_ISO_ACK_OUTPUT}" | grep -F -- "${MCP_ISO_SOURCE}:/workspace " >/dev/null; then
   echo "Isolated session must not bind-mount the source checkout at /workspace" >&2
   exit 1
 fi
@@ -5946,11 +5946,11 @@ MCP_ISO_CLONE_PATH="$(echo "${MCP_ISO_ACK_OUTPUT}" | grep -oE '[^ ]*workcell-ses
   exit 1
 }
 for mcp_iso_surface in .mcp.json .github/mcp.json; do
-  if echo "${MCP_ISO_ACK_OUTPUT}" | grep -Fq -- "${MCP_ISO_SOURCE}/${mcp_iso_surface}:/workspace/${mcp_iso_surface}:ro"; then
+  if echo "${MCP_ISO_ACK_OUTPUT}" | grep -F -- "${MCP_ISO_SOURCE}/${mcp_iso_surface}:/workspace/${mcp_iso_surface}:ro" >/dev/null; then
     echo "Acked repo ${mcp_iso_surface} must come from the isolated clone, not the source checkout" >&2
     exit 1
   fi
-  echo "${MCP_ISO_ACK_OUTPUT}" | grep -Fq -- "${MCP_ISO_CLONE_PATH}/${mcp_iso_surface}:/workspace/${mcp_iso_surface}:ro" || {
+  echo "${MCP_ISO_ACK_OUTPUT}" | grep -F -- "${MCP_ISO_CLONE_PATH}/${mcp_iso_surface}:/workspace/${mcp_iso_surface}:ro" >/dev/null || {
     echo "Committed acked repo ${mcp_iso_surface} must be shown mounted from the clone path in an isolated dry-run" >&2
     exit 1
   }
@@ -5982,7 +5982,7 @@ MCP_ISO_SPARSE_CLONE="$(echo "${MCP_ISO_SPARSE_OUTPUT}" | grep -oE '[^ ]*workcel
   echo "Could not determine the isolated clone path for the sparse fixture" >&2
   exit 1
 }
-echo "${MCP_ISO_SPARSE_OUTPUT}" | grep -Fq -- "${MCP_ISO_SPARSE_CLONE}/.mcp.json:/workspace/.mcp.json:ro" || {
+echo "${MCP_ISO_SPARSE_OUTPUT}" | grep -F -- "${MCP_ISO_SPARSE_CLONE}/.mcp.json:/workspace/.mcp.json:ro" >/dev/null || {
   echo "A tracked-but-not-on-disk (sparse/skip-worktree) .mcp.json must be shown mounted from the clone path in an isolated dry-run" >&2
   exit 1
 }
@@ -6010,11 +6010,11 @@ grep -q 'refuses symlinked workspace control files' /tmp/workcell-repo-mcp-iso-s
 # committed content, so the dry-run mirrors the committed clone.)
 # Isolated deny still neutralizes and never leaks the source.
 MCP_ISO_DENY_OUTPUT="$(run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SOURCE}" --session-workspace isolated --no-default-injection-policy --dry-run 2>/dev/null)"
-echo "${MCP_ISO_DENY_OUTPUT}" | grep -q -- ':/workspace/.mcp.json:ro' || {
+echo "${MCP_ISO_DENY_OUTPUT}" | grep -- ':/workspace/.mcp.json:ro' >/dev/null || {
   echo "Isolated deny must still neutralize .mcp.json" >&2
   exit 1
 }
-if echo "${MCP_ISO_DENY_OUTPUT}" | grep -Fq -- "${MCP_ISO_SOURCE}/.mcp.json:/workspace/.mcp.json:ro"; then
+if echo "${MCP_ISO_DENY_OUTPUT}" | grep -F -- "${MCP_ISO_SOURCE}/.mcp.json:/workspace/.mcp.json:ro" >/dev/null; then
   echo "Isolated deny must not leak the source .mcp.json" >&2
   exit 1
 fi
@@ -6493,14 +6493,14 @@ for required in \
   "/workspace/.git/modules/demo/config:ro" \
   "/workspace/.git/modules/demo/hooks:ro" \
   "/workspace/.git/modules/demo/worktrees:ro"; do
-  if ! echo "${SHADOW_SYMLINK_DRY_RUN_OUTPUT}" | grep -q -- "${required}"; then
+  if ! echo "${SHADOW_SYMLINK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
     echo "Expected symlinked git control-plane entry to be masked by a readonly shadow mount: ${required}" >&2
     exit 1
   fi
 done
 
 for forbidden in "github.com:443" "api.github.com:443" "objects.githubusercontent.com:443" "raw.githubusercontent.com:443"; do
-  if echo "${DRY_RUN_OUTPUT}" | grep -q "${forbidden}"; then
+  if echo "${DRY_RUN_OUTPUT}" | grep "${forbidden}" >/dev/null; then
     echo "Unexpected strict-mode egress allowance in dry-run output: ${forbidden}" >&2
     exit 1
   fi
@@ -6673,15 +6673,15 @@ if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   exit 1
 fi
 
-if echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '--entrypoint bash'; then
+if echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -- '--entrypoint bash' >/dev/null; then
   echo "Expected arbitrary command path to stay on the managed container entrypoint" >&2
   exit 1
 fi
-if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- '-e WORKCELL_ALLOW_ARBITRARY_COMMAND=1'; then
+if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -- '-e WORKCELL_ALLOW_ARBITRARY_COMMAND=1' >/dev/null; then
   echo "Expected arbitrary command path to declare explicit lower-assurance runtime handling" >&2
   exit 1
 fi
-if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -q -- 'workcell:local bash -lc true '; then
+if ! echo "${ARBITRARY_DRY_RUN_OUTPUT}" | grep -- 'workcell:local bash -lc true ' >/dev/null; then
   echo "Expected arbitrary command path to preserve the explicit runtime command arguments" >&2
   exit 1
 fi
@@ -8008,7 +8008,7 @@ if ! sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | a
 fi
 
 if sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" |
-  grep -Eq 'profile_lock_is_stale|rm -rf.*lock_dir'; then
+  grep -E 'profile_lock_is_stale|rm -rf.*lock_dir' >/dev/null; then
   echo "Profile-lock acquisition must not reclaim lock directories in shell" >&2
   exit 1
 fi
@@ -8019,7 +8019,7 @@ if ! grep -Fq "release_profile_lock \"\${PROFILE_LOCK_DIR}\" \"\$\$\"" "${ROOT_D
 fi
 
 if ! sed -n '/^release_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" |
-  grep -Fq "go_hostutil helper release-profile-lock \"\${lock_dir}\" \"\${holder_pid}\""; then
+  grep -F "go_hostutil helper release-profile-lock \"\${lock_dir}\" \"\${holder_pid}\"" >/dev/null; then
   echo "Expected profile-lock release to use the guarded helper" >&2
   exit 1
 fi
