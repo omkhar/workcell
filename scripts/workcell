@@ -8390,6 +8390,11 @@ WORKSPACE_CONTROL_PLANE_DIRS=(
   .vscode .idea .cursor .zed
 )
 
+# Workspace control-plane files that the safe path masks, at the top only.
+WORKSPACE_CONTROL_PLANE_FILES=(
+  AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md
+)
+
 git_index_control_plane_dir_roots() {
   local workspace="$1"
   local path="" dir=""
@@ -8767,7 +8772,7 @@ prepare_workspace_control_plane_shadow() {
       register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
     done
 
-    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md; do
+    for rel in "${WORKSPACE_CONTROL_PLANE_FILES[@]}"; do
       if workspace_rel_is_mcp_surface "${rel}"; then
         if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
           # Acknowledged: mount from the session workspace (the isolated clone in
@@ -8811,7 +8816,7 @@ prepare_workspace_control_plane_shadow() {
       add_shadow_dir_mount "${workspace}" "${rel}"
     done < <(git_index_control_plane_dir_roots "${workspace}" | LC_ALL=C sort -zu)
 
-    for rel in AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md; do
+    for rel in "${WORKSPACE_CONTROL_PLANE_FILES[@]}"; do
       if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
         if workspace_rel_is_mcp_surface "${rel}"; then
           if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
