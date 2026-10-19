@@ -12,11 +12,12 @@ import (
 	"testing"
 )
 
-// TestVerifyLockPackageTree runs verify_lock_package_tree against a fixture
-// lockfile and a stub registry. The stub serves the metadata file named by
+// TestVerifyPinnedPackageTree runs verify_pinned_package_tree, and through it
+// verify_lock_package_tree, against a fixture package.json, lockfile and stub
+// registry. The stub serves the metadata file named by
 // the request path, so a request that does not escape a scoped name finds no
 // file and fails.
-func TestVerifyLockPackageTree(t *testing.T) {
+func TestVerifyPinnedPackageTree(t *testing.T) {
 	entry := func(name, integrity string) map[string]any {
 		return map[string]any{
 			"version":   "1.0.0",
@@ -37,6 +38,7 @@ func TestVerifyLockPackageTree(t *testing.T) {
 	}
 	cases := map[string]struct {
 		edit    func(map[string]map[string]any)
+		pin     map[string]any
 		wantErr string
 	}{
 		"a matching tree": {edit: func(map[string]map[string]any) {}},
@@ -51,6 +53,16 @@ func TestVerifyLockPackageTree(t *testing.T) {
 		"a missing dependency entry": {
 			edit:    func(p map[string]map[string]any) { delete(p, "node_modules/plain") },
 			wantErr: "has no top-level entry for plain",
+		},
+		"a missing pin": {
+			edit:    func(map[string]map[string]any) {},
+			pin:     map[string]any{"other": "1.0.0"},
+			wantErr: "package.json must pin @demo/cli",
+		},
+		"a pin that differs from the lockfile": {
+			edit:    func(map[string]map[string]any) {},
+			pin:     map[string]any{"@demo/cli": "1.0.1"},
+			wantErr: "@demo/cli package-lock version mismatch: package.json=1.0.1, package-lock=1.0.0",
 		},
 	}
 	for name, tc := range cases {
@@ -72,6 +84,12 @@ func TestVerifyLockPackageTree(t *testing.T) {
 			tc.edit(lock)
 			lockPath := filepath.Join(dir, "package-lock.json")
 			writeJSONFixture(t, lockPath, map[string]any{"packages": lock})
+			pin := tc.pin
+			if pin == nil {
+				pin = map[string]any{"@demo/cli": "1.0.0"}
+			}
+			packageJSONPath := filepath.Join(dir, "package.json")
+			writeJSONFixture(t, packageJSONPath, map[string]any{"dependencies": pin})
 
 			script := `set -euo pipefail
 source "$1"
@@ -88,19 +106,19 @@ curl() {
   local path="${url#https://registry.npmjs.org/}"
   cp "${registry}/${path%/*}@${path##*/}.json" "${out}"
 }
-verify_lock_package_tree "$3" @demo/cli`
+verify_pinned_package_tree "$3" "$4" @demo/cli`
 			cmd := exec.Command("bash", "-c", script, "bash",
-				filepath.Join(repoRoot(t), "scripts/lib/npm-registry-verify.sh"), registry, lockPath)
+				filepath.Join(repoRoot(t), "scripts/lib/npm-registry-verify.sh"), registry, packageJSONPath, lockPath)
 			cmd.Env = append(os.Environ(), "TMPDIR="+dir)
 			out, err := cmd.CombinedOutput()
 			if tc.wantErr == "" {
 				if err != nil {
-					t.Fatalf("verify_lock_package_tree: %v\n%s", err, out)
+					t.Fatalf("verify_pinned_package_tree: %v\n%s", err, out)
 				}
 				return
 			}
 			if err == nil || !strings.Contains(string(out), tc.wantErr) {
-				t.Fatalf("verify_lock_package_tree = %v, want %q\n%s", err, tc.wantErr, out)
+				t.Fatalf("verify_pinned_package_tree = %v, want %q\n%s", err, tc.wantErr, out)
 			}
 		})
 	}
