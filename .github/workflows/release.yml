@@ -523,6 +523,15 @@ jobs:
       - name: Verify upstream Amp release
         run: ./scripts/verify-upstream-amp-release.sh
 
+      - name: Verify upstream goose release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/verify-upstream-goose-release.sh
+
       - name: Require pinned upstreams to match the latest reviewed track
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1271,6 +1280,7 @@ jobs:
           ./scripts/verify-upstream-gemini-release.sh
           ./scripts/verify-upstream-opencode-release.sh
           ./scripts/verify-upstream-amp-release.sh
+          ./scripts/verify-upstream-goose-release.sh
           ./scripts/update-upstream-pins.sh --check
 
       - name: Verify release bundle matches preflight

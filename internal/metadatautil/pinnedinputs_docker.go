@@ -160,7 +160,14 @@ func (validator *dockerPinnedInputValidator) validateRuntimeProviderInputs() err
 	if err := validator.validateCodexArchitectureMappings(); err != nil {
 		return err
 	}
-	return validator.validateCopilotArchitectureMappings()
+	if err := validator.validateCopilotArchitectureMappings(); err != nil {
+		return err
+	}
+	// The goose pin owner reads one stable version and each musl archive sha256.
+	if _, _, err := gooseDockerfilePin(validator.runtimeDockerfile); err != nil {
+		return fmt.Errorf("%s: %w", validator.cfg.RuntimeDockerfilePath, err)
+	}
+	return nil
 }
 
 type dockerRegexRequirement struct {
@@ -178,6 +185,10 @@ func (validator *dockerPinnedInputValidator) validateProviderInstallCommands() e
 		{`echo "\$\{CODEX_CODE_MODE_HOST_SHA256\}  /tmp/codex-code-mode-host\.tar\.gz" \| sha256sum -c -`, "Codex code-mode host archive checksum verification"},
 		{`(?m)^[\t ]*&& install -o 0 -g 0 -m 0755 "/tmp/codex-\$\{CODEX_ARCH\}" /usr/local/libexec/workcell/real/codex[\t ]+\\[\t ]*$`, "root-owned Codex runtime artifact install"},
 		{`(?m)^[\t ]*&& install -o 0 -g 0 -m 0755 "/tmp/codex-code-mode-host-\$\{CODEX_ARCH\}" /usr/local/libexec/workcell/real/codex-code-mode-host[\t ]+\\[\t ]*$`, "root-owned Codex code-mode host runtime artifact install"},
+		{`curl --ipv4 -fsSL "https://github\.com/aaif-goose/goose/releases/download/v\$\{GOOSE_VERSION\}/goose-\$\{GOOSE_ARCH\}\.tar\.gz"`, "goose release download URL"},
+		{`echo "\$\{GOOSE_SHA256\}  /tmp/goose\.tar\.gz" \| sha256sum -c -`, "goose archive checksum verification"},
+		{`(?m)^[\t ]+arm64\) \\\n[\t ]+GOOSE_ARCH="aarch64-unknown-linux-musl"; \\\n[\t ]+GOOSE_SHA256="\$\{GOOSE_SHA256_ARM64\}"; \\$`, "goose arm64 checksum selection"},
+		{`(?m)^[\t ]+amd64\) \\\n[\t ]+GOOSE_ARCH="x86_64-unknown-linux-musl"; \\\n[\t ]+GOOSE_SHA256="\$\{GOOSE_SHA256_AMD64\}"; \\$`, "goose amd64 checksum selection"},
 	}
 	for _, requirement := range requirements {
 		if _, _, err := requireRegex(validator.runtimeDockerfile, requirement.pattern, requirement.label, validator.cfg.RuntimeDockerfilePath); err != nil {

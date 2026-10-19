@@ -135,3 +135,64 @@ func TestCheckPinnedInputsValidatesUncertifiedProviderLock(t *testing.T) {
 		})
 	}
 }
+
+// The goose pin of the runtime-uncertified build keeps its release URL, its
+// sha256 check, one stable version, one sha256 ARG per architecture, and the
+// case arm that selects the musl archive and the sha256 ARG of each
+// architecture.
+func TestCheckPinnedInputsValidatesGoosePin(t *testing.T) {
+	for _, tc := range []struct {
+		name, old, new, want string
+	}{
+		{
+			name: "download host",
+			old:  "https://github.com/aaif-goose/goose/releases/download/",
+			new:  "https://mirror.example/goose/releases/download/",
+			want: "goose release download URL",
+		},
+		{
+			name: "checksum check",
+			old:  `echo "${GOOSE_SHA256}  /tmp/goose.tar.gz" | sha256sum -c -`,
+			new:  `echo "${GOOSE_SHA256}  /tmp/goose.tar.gz"`,
+			want: "goose archive checksum verification",
+		},
+		{
+			name: "version",
+			old:  "ARG GOOSE_VERSION=",
+			new:  "ARG GOOSE_VERSION=v",
+			want: `GOOSE_VERSION "v1.55.0" is not a stable X.Y.Z version`,
+		},
+		{
+			name: "architecture",
+			old:  `GOOSE_ARCH="x86_64-unknown-linux-musl"`,
+			new:  `GOOSE_ARCH="x86_64-unknown-linux-gnu"`,
+			want: "goose amd64 checksum selection",
+		},
+		{
+			name: "checksum selection",
+			old:  `GOOSE_SHA256="${GOOSE_SHA256_ARM64}"`,
+			new:  `GOOSE_SHA256="${GOOSE_SHA256_AMD64}"`,
+			want: "goose arm64 checksum selection",
+		},
+		{
+			name: "checksum pin",
+			old:  "ARG GOOSE_SHA256_AMD64=",
+			new:  "ENV GOOSE_SHA256_AMD64=",
+			want: "must declare GOOSE_SHA256_AMD64 once",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := writePinnedInputsFixture(t)
+			rewriteFile(t, cfg.RuntimeDockerfilePath, func(content string) string {
+				if !strings.Contains(content, tc.old) {
+					t.Fatalf("fixture Dockerfile has no %q", tc.old)
+				}
+				return strings.Replace(content, tc.old, tc.new, 1)
+			})
+			err := metadatautil.CheckPinnedInputs(cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

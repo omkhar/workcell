@@ -52,6 +52,7 @@ internal/metadatautil	TestCheckPinnedInputsRejectsNonPositiveAppIDPin	2a560549	u
 internal/metadatautil	TestCheckPinnedInputsRejectsToolPinPolicyDrift	31639267,85969adc,bc1833de	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks	541549b9,dd1f04de	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestCheckPinnedInputsRequiresRootOwnedCodexArtifacts	c15d78d5	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsValidatesGoosePin	da012d9d	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPinnedInputsValidatesUncertifiedProviderLock	5d0758ee	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	7ec6e521	unreviewed debt in a test: review the subject, then port or justify
