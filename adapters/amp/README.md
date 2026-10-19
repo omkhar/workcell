@@ -42,8 +42,9 @@ the control-plane manifest.
   terminal access options, `--settings-file`, `--mcp-config`, and
   `--log-file` (`adapters/amp/adapter.toml`).
 - Amp reads repository input: the workspace `.amp/settings.json`, `AGENTS.md`,
-  the `.agents/skills/` directory, and the `.amp/plugins/` directory. Workcell
-  does not turn off these inputs.
+  the `.agents/skills/` directory, and the `.amp/plugins/` directory. On the
+  safe path, the workspace control-plane mask covers `.amp/`, `AGENTS.md` and
+  `.agents/skills/` (`docs/invariants.md`).
 
 ## See also
 

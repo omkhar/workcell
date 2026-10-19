@@ -8384,7 +8384,7 @@ replace_shadow_symlinks_with_placeholder() {
 # order. Each one matches at any depth in the Git index. The find walks match
 # a name without a slash at any depth, and a path with a slash at the top only.
 WORKSPACE_CONTROL_PLANE_DIRS=(
-  .codex .claude .copilot .gemini
+  .codex .claude .copilot .gemini .amp
   .github/instructions .github/copilot .github/hooks .github/agents .github/skills
   .agents/skills
   .vscode .idea .cursor .zed

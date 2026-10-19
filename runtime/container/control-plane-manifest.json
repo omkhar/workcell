@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "0e782eb871698f827c2cd32d3c9ba3cd5034a07a7f7fbf5ee98171ce31e9e75a"
+      "sha256": "2f93ebe85e4250faf94acfcf3a7e537bc073e61067b78c0b446c0d680b53f69e"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -198,7 +198,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/amp/README.md",
       "runtime_path": "/opt/workcell/adapters/amp/README.md",
-      "sha256": "0049ee2849a0cceb7cc37d405638b77dfc8c9bf48ddf25fab3dc41a7c3217e85"
+      "sha256": "fc5a3b23101b3bef63d0e7faacd6226d7aca856fcaa389e1057e2b06b707b4d5"
     },
     {
       "kind": "runtime-control-plane",

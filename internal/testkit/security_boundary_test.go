@@ -667,6 +667,33 @@ done
 	}
 }
 
+// TestGitIndexControlPlaneDirRoots runs git_index_control_plane_dir_roots on a
+// fixture index: each listed control-plane directory is a root at the top and
+// below it, and a look-alike name is not.
+func TestGitIndexControlPlaneDirRoots(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	workspace := t.TempDir()
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n -e '/^WORKSPACE_CONTROL_PLANE_DIRS=($/,/^)$/p' -e '/^workspace_is_git_worktree() {$/,/^}$/p' -e '/^git_index_control_plane_dir_roots() {$/,/^}$/p' %[1]s)"
+run_clean_host_command() { "$@"; }
+cd %[2]s
+git init -q
+for path in .amp/settings.json nested/.amp/plugins/p.js .codex/config.toml .github/hooks/h.json x/.agents/skills/s.md y/.github/hooks/h.json .ampx/a plain.txt; do
+  mkdir -p "$(dirname "${path}")"
+  printf 'x\n' >"${path}"
+done
+git add -A
+git_index_control_plane_dir_roots %[2]s | LC_ALL=C sort -zu | tr '\0' ' '
+`, ShellQuote(scriptPath), ShellQuote(workspace))
+	code, output := runBashProbe(t, probe, nil)
+	want := ".amp .codex .github/hooks nested/.amp x/.agents/skills y/.github/hooks "
+	if code != 0 || output != want {
+		t.Fatalf("git_index_control_plane_dir_roots = %q (exit %d), want %q", output, code, want)
+	}
+}
+
 // TestHomeControlPlaneExportsEgressCACert covers the session CA trust: no
 // manifest or no listed CA leaves NODE_EXTRA_CA_CERTS and CODEX_CA_CERTIFICATE
 // unset, and never sets SSL_CERT_FILE, which the exec guard refuses;

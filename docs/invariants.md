@@ -171,7 +171,7 @@ The mask includes these files:
 
 The mask includes these directories:
 
-- `.codex/`, `.claude/`, `.copilot/`, and `.gemini/`
+- `.codex/`, `.claude/`, `.copilot/`, `.gemini/`, and `.amp/`
 - `.github/instructions/`, `.github/copilot/`, `.github/hooks/`,
   `.github/agents/`, and `.github/skills/`
 - `.agents/skills/`
