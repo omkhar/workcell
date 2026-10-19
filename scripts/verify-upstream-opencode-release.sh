@@ -28,18 +28,6 @@ if [[ "${lock_opencode_version}" != "${opencode_version}" ]]; then
   exit 1
 fi
 
-# The image installs a platform package, so every lockfile entry gets the check.
-package_paths="$(jq -r '.packages | keys[] | select(. != "")' "${PACKAGE_LOCK_PATH}")"
-while IFS= read -r package_path; do
-  package_name="${package_path#node_modules/}"
-  if [[ "${package_name}" == */* ]]; then
-    echo "opencode package-lock entry must be a top-level unscoped package: ${package_path}" >&2
-    exit 1
-  fi
-  verify_registry_package "${package_name}" "${package_path}" "${package_name}" \
-    "$(extract_lock_field "${PACKAGE_LOCK_PATH}" "${package_path}" "version")" \
-    "$(extract_lock_field "${PACKAGE_LOCK_PATH}" "${package_path}" "resolved")" \
-    "$(extract_lock_field "${PACKAGE_LOCK_PATH}" "${package_path}" "integrity")"
-done <<<"${package_paths}"
+verify_lock_package_tree "${PACKAGE_LOCK_PATH}" opencode-ai
 
 echo "Workcell upstream opencode release verification passed."

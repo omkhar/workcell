@@ -59,8 +59,13 @@ const (
 )
 
 var (
-	errReleaseAssetNotFound                 = errors.New("release asset not found")
-	stableVersionPattern                    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	errReleaseAssetNotFound = errors.New("release asset not found")
+	stableVersionPattern    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	// buildStampedVersionPattern is the npm version form of a CLI that
+	// publishes each build as 0.0.<build>-g<commit>, for example @ampcode/cli.
+	// Its dist-tags.latest has the same form, and the build number orders
+	// the releases.
+	buildStampedVersionPattern              = regexp.MustCompile(`^0\.0\.[0-9]+-g[0-9a-f]+$`)
 	geminiDependencyPattern                 = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
 	claudeVersionLinePattern                = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
 	codexVersionLinePattern                 = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
@@ -342,7 +347,7 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	if err != nil {
 		return nil, err
 	}
-	geminiSelection, err := selectNPMStable(sources.GeminiRegistryURL, geminiCurrent, cutoff, client)
+	geminiSelection, err := selectNPMStable(sources.GeminiRegistryURL, geminiCurrent, cutoff, parseStableVersion, client)
 	if err != nil {
 		return nil, err
 	}
@@ -371,8 +376,8 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	return plan, nil
 }
 
-// planUncertifiedNPMBumps selects the stable cool-off target of each
-// dependency that packageJSONPath pins.
+// planUncertifiedNPMBumps selects the cool-off target of each dependency
+// that packageJSONPath pins, in the exact version form of its pin.
 func planUncertifiedNPMBumps(packageJSONPath string, cutoff time.Time, registryURL string, client *http.Client) (map[string]ProviderBumpSelection, error) {
 	var pkg providersPackageJSON
 	if err := readJSONFile(packageJSONPath, &pkg); err != nil {
@@ -383,11 +388,12 @@ func planUncertifiedNPMBumps(packageJSONPath string, cutoff time.Time, registryU
 	}
 	plan := map[string]ProviderBumpSelection{}
 	for name, current := range pkg.Dependencies {
-		if !stableVersionPattern.MatchString(current) {
-			return nil, fmt.Errorf("%s requires a stable %s pin, found %q", packageJSONPath, name, current)
+		parse := uncertifiedVersionParser(current)
+		if parse == nil {
+			return nil, fmt.Errorf("%s requires an exact stable or build-stamped %s pin, found %q", packageJSONPath, name, current)
 		}
 		// A scoped name keeps its @ and escapes its slash, as the registry expects.
-		selection, err := selectNPMStable(registryURL+"/"+strings.Replace(name, "/", "%2f", 1), current, cutoff, client)
+		selection, err := selectNPMStable(registryURL+"/"+strings.Replace(name, "/", "%2f", 1), current, cutoff, parse, client)
 		if err != nil {
 			return nil, err
 		}
@@ -425,8 +431,8 @@ func ApplyUncertifiedProviderBumpPlan(planPath, packageJSONPath string) error {
 	text := string(raw)
 	updated := text
 	for name, selection := range plan.Uncertified {
-		if !stableVersionPattern.MatchString(selection.TargetVersion) {
-			return fmt.Errorf("%s contains a non-stable %s target version %q", planPath, name, selection.TargetVersion)
+		if uncertifiedVersionParser(selection.TargetVersion) == nil {
+			return fmt.Errorf("%s contains a non-exact %s target version %q", planPath, name, selection.TargetVersion)
 		}
 		if pkg.Dependencies[name] == "" {
 			return fmt.Errorf("%s plans %s, which %s does not pin", planPath, name, packageJSONPath)
@@ -594,7 +600,7 @@ func extractGeminiVersion(providersPackageJSONPath string) (string, error) {
 }
 
 func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	candidates, skipped, err := stableCandidatesFromRegistry(sources.CodexRegistryURL, cutoff, maxVersion, client)
+	candidates, skipped, err := stableCandidatesFromRegistry(sources.CodexRegistryURL, cutoff, maxVersion, parseStableVersion, client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
@@ -839,8 +845,8 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 
 // selectNPMStable selects the newest stable release of the npm package at
 // registryURL that is older than cutoff.
-func selectNPMStable(registryURL, currentVersion string, cutoff time.Time, client *http.Client) (ProviderBumpSelection, error) {
-	candidates, _, err := stableCandidatesFromRegistry(registryURL, cutoff, "", client)
+func selectNPMStable(registryURL, currentVersion string, cutoff time.Time, parse versionParser, client *http.Client) (ProviderBumpSelection, error) {
+	candidates, _, err := stableCandidatesFromRegistry(registryURL, cutoff, "", parse, client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
@@ -852,7 +858,7 @@ func selectNPMStable(registryURL, currentVersion string, cutoff time.Time, clien
 		}, nil
 	}
 	newest := candidates[0]
-	if current, ok := parseStableVersion(currentVersion); ok && compareStableVersions(newest, current) < 0 {
+	if current, ok := parse(currentVersion); ok && compareStableVersions(newest, current) < 0 {
 		return keepNewerCurrentPin(currentVersion, newest, nil), nil
 	}
 	return ProviderBumpSelection{
@@ -918,7 +924,7 @@ func claudeSelectionForCandidate(candidate stableVersion, currentVersion string,
 }
 
 func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, approvedVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	candidates, _, err := stableCandidatesFromRegistry(sources.ClaudeRegistryURL, time.Time{}, maxVersion, client)
+	candidates, _, err := stableCandidatesFromRegistry(sources.ClaudeRegistryURL, time.Time{}, maxVersion, parseStableVersion, client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
@@ -986,13 +992,15 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 	}, nil
 }
 
-func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
+// stableCandidatesFromRegistry lists the registry releases that parse names
+// as exact versions, up to dist-tags.latest and published by cutoff.
+func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, parse versionParser, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
 	var metadata npmRegistryMetadata
 	if _, err := fetchDecoded(client, registryURL, providerBumpMaxNPMStreamBytes, func(body io.Reader) error { return decodeNPMRegistryMetadata(body, &metadata) }); err != nil {
 		return nil, nil, err
 	}
 	latestRaw := metadata.DistTags["latest"]
-	latestVersion, ok := parseStableVersion(latestRaw)
+	latestVersion, ok := parse(latestRaw)
 	if !ok {
 		return nil, nil, fmt.Errorf("%s dist-tags.latest must resolve to a stable version, found %q", registryURL, latestRaw)
 	}
@@ -1003,7 +1011,7 @@ func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersi
 	candidates := make([]stableVersion, 0, len(metadata.Time))
 	skipped := make([]ProviderBumpSkippedRelease, 0)
 	for rawVersion, publishedRaw := range metadata.Time {
-		version, ok := parseStableVersion(rawVersion)
+		version, ok := parse(rawVersion)
 		if !ok {
 			continue
 		}
@@ -1180,6 +1188,9 @@ func nextLinkURL(linkHeader string) string {
 	return ""
 }
 
+// versionParser parses one exact version form of a provider pin.
+type versionParser func(raw string) (stableVersion, bool)
+
 func parseStableVersion(raw string) (stableVersion, bool) {
 	if !stableVersionPattern.MatchString(raw) {
 		return stableVersion{}, false
@@ -1190,6 +1201,28 @@ func parseStableVersion(raw string) (stableVersion, bool) {
 	}
 	version.Raw = raw
 	return version, true
+}
+
+// parseBuildStampedVersion parses a 0.0.<build>-g<commit> version. The build
+// number is the patch number, so the stable comparison orders the builds.
+func parseBuildStampedVersion(raw string) (stableVersion, bool) {
+	if !buildStampedVersionPattern.MatchString(raw) {
+		return stableVersion{}, false
+	}
+	version, ok := parseStableVersion(raw[:strings.IndexByte(raw, '-')])
+	version.Raw = raw
+	return version, ok
+}
+
+// uncertifiedVersionParser returns the parser of the version form of an
+// uncertified npm pin, or nil when the pin is not an exact version.
+func uncertifiedVersionParser(pin string) versionParser {
+	for _, parse := range []versionParser{parseStableVersion, parseBuildStampedVersion} {
+		if _, ok := parse(pin); ok {
+			return parse
+		}
+	}
+	return nil
 }
 
 func sortStableVersionsDesc(versions []stableVersion) {
