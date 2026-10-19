@@ -145,6 +145,9 @@ echo "[ci/validate] upstream OpenCode release"
 echo "[ci/validate] upstream Amp release"
 "${ROOT_DIR}/scripts/verify-upstream-amp-release.sh"
 
+echo "[ci/validate] upstream goose release"
+"${ROOT_DIR}/scripts/verify-upstream-goose-release.sh"
+
 if [[ "${PROFILE}" == "release-preflight" ]]; then
   # Pinned-upstream-refresh status: only on the release-preflight
   # profile.  Routine PRs rely on the weekly pin-hygiene.yml cron lane

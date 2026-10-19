@@ -29,6 +29,7 @@ const (
 	defaultProviderBumpCodexRegistryURL     = "https://registry.npmjs.org/@openai%2fcodex"
 	defaultProviderBumpCodexReleaseAPIURL   = "https://api.github.com/repos/openai/codex/releases/tags/rust-v%s"
 	defaultProviderBumpCopilotReleaseAPIURL = "https://api.github.com/repos/github/copilot-cli/releases"
+	defaultProviderBumpGooseReleaseAPIURL   = "https://api.github.com/repos/aaif-goose/goose/releases?per_page=30"
 	defaultProviderBumpGeminiRegistryURL    = "https://registry.npmjs.org/@google%2fgemini-cli"
 	defaultProviderBumpClaudeRegistryURL    = "https://registry.npmjs.org/@anthropic-ai%2fclaude-code"
 	defaultProviderBumpNPMRegistryURL       = "https://registry.npmjs.org"
@@ -201,6 +202,7 @@ func DefaultProviderBumpSources() ProviderBumpSources {
 		ClaudeReleaseRootURL:  defaultProviderBumpClaudeReleaseRoot,
 		CodexCLISourceURLFmt:  defaultCodexCLISourceAPIURLFormat,
 		NPMRegistryURL:        defaultProviderBumpNPMRegistryURL,
+		GooseReleaseAPIURL:    defaultProviderBumpGooseReleaseAPIURL,
 	}
 }
 

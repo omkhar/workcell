@@ -160,7 +160,86 @@ func (validator *dockerPinnedInputValidator) validateRuntimeProviderInputs() err
 	if err := validator.validateCodexArchitectureMappings(); err != nil {
 		return err
 	}
-	return validator.validateCopilotArchitectureMappings()
+	if err := validator.validateCopilotArchitectureMappings(); err != nil {
+		return err
+	}
+	// The goose pin owner reads one stable version and each musl archive sha256.
+	if _, _, err := gooseDockerfilePin(validator.runtimeDockerfile); err != nil {
+		return fmt.Errorf("%s: %w", validator.cfg.RuntimeDockerfilePath, err)
+	}
+	if err := validateGooseInstall(validator.runtimeDockerfile); err != nil {
+		return fmt.Errorf("%s: %w", validator.cfg.RuntimeDockerfilePath, err)
+	}
+	return nil
+}
+
+const (
+	gooseDownloadURL = "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}.tar.gz"
+	gooseArchivePath = "/tmp/goose.tar.gz"
+	gooseSumPath     = "/tmp/goose.sum"
+	// gooseInstallRun is the reviewed goose RUN body with its whitespace
+	// collapsed. A change such as || true or set +e keeps every command that
+	// validateGooseInstallRun reads but lets a failed check pass, so the body
+	// must also equal this text.
+	gooseInstallRun = `set -eu; read -r GOOSE_ARCH < /tmp/goose-arch; curl --ipv4 -fsSL "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}.tar.gz" --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 30 -o /tmp/goose.tar.gz; sha256sum /tmp/goose.tar.gz > /tmp/goose.sum; grep -qxF -e "${GOOSE_SHA256_ARM64} /tmp/goose.tar.gz" -e "${GOOSE_SHA256_AMD64} /tmp/goose.tar.gz" /tmp/goose.sum; tar -xzf /tmp/goose.tar.gz -C /tmp ./goose; install -D -m 0755 /tmp/goose /out/goose; touch -h -d "@${SOURCE_DATE_EPOCH}" /out/goose; rm -f /tmp/goose-arch /tmp/goose.tar.gz /tmp/goose.sum /tmp/goose`
+)
+
+// validateGooseInstall finds the one RUN instruction that names the goose
+// release URL and checks the commands it runs.
+func validateGooseInstall(dockerfile string) error {
+	instructions, err := dockerfileLogicalInstructions(dockerfile)
+	if err != nil {
+		return err
+	}
+	var bodies []string
+	for _, instruction := range instructions {
+		keyword, body, _ := strings.Cut(strings.TrimLeft(instruction, " \t"), " ")
+		if strings.EqualFold(keyword, "RUN") && strings.Contains(body, gooseDownloadURL) {
+			bodies = append(bodies, body)
+		}
+	}
+	if len(bodies) != 1 {
+		return fmt.Errorf("the goose install must be one RUN instruction that names the goose release URL, found %d", len(bodies))
+	}
+	if err := validateGooseInstallRun(bodies[0]); err != nil {
+		return err
+	}
+	if strings.Join(strings.Fields(bodies[0]), " ") != gooseInstallRun {
+		return errors.New("the goose install RUN must equal the reviewed command list (gooseInstallRun)")
+	}
+	return nil
+}
+
+// validateGooseInstallRun checks the commands that the goose RUN body proves
+// it runs (ShellInvocations), in order: set -eu, the one curl of the release
+// archive, its sha256, the match of that sha256 with one of the pins, and the
+// extract. A comment, a heredoc body or quoted text does not count.
+func validateGooseInstallRun(body string) error {
+	runs := func(command string) []Invocation { return ShellInvocations(body, command) }
+	pins := []string{"-qxF"}
+	for _, asset := range gooseReleaseCLI.assets {
+		pins = append(pins, "-e", "${"+gooseChecksumArg(asset.key)+"}  "+gooseArchivePath)
+	}
+	steps := []struct {
+		command string
+		args    []string
+		want    string
+	}{
+		{"set", []string{"-eu"}, "start with set -eu"},
+		{"curl", []string{"--ipv4", "-fsSL", gooseDownloadURL, "--retry", "8", "--retry-all-errors", "--retry-delay", "5", "--connect-timeout", "30", "-o", gooseArchivePath}, "download the goose release URL into " + gooseArchivePath},
+		{"sha256sum", []string{gooseArchivePath, ">", gooseSumPath}, "write the sha256 of " + gooseArchivePath + " to " + gooseSumPath},
+		{"grep", append(pins, gooseSumPath), "match " + gooseSumPath + " with one of the sha256 pins"},
+		{"tar", []string{"-xzf", gooseArchivePath, "-C", "/tmp", "./goose"}, "extract " + gooseArchivePath},
+	}
+	position := 0
+	for _, step := range steps {
+		found := runs(step.command)
+		if len(found) != 1 || !slices.Equal(found[0].Args, step.args) || found[0].Position <= position || position == 0 && found[0].Position != 1 {
+			return errors.New("the goose install RUN must " + step.want + ", once and in order")
+		}
+		position = found[0].Position
+	}
+	return nil
 }
 
 type dockerRegexRequirement struct {

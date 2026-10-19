@@ -166,6 +166,14 @@ print_summary() {
         (if .value.changed then " (update available, published " + .value.published_at + ")" else " (up to date)" end)
     ),
     (
+      ($plan.uncertified_releases // {})
+      | to_entries
+      | sort_by(.key)
+      | .[]
+      | "  " + .key + " (uncertified GitHub release): " + .value.current_version + " -> " + .value.target_version +
+        (if .value.changed then " (update available, published " + .value.published_at + ")" else " (up to date)" end)
+    ),
+    (
       $plan.providers
       | to_entries
       | sort_by(.key)
@@ -187,6 +195,7 @@ verify_provider_releases() {
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-amp-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-goose-release.sh"
 }
 
 if [[ "${mode}" == "summary" ]]; then

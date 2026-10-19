@@ -290,6 +290,36 @@ RUN install-provider-packages.sh /opt/workcell/providers-uncertified \
     /out/amp \
   && touch -h -d "@${SOURCE_DATE_EPOCH}" /out/opencode /out/amp
 
+# goose ships as a GitHub release archive, not an npm package. The first RUN
+# names the musl archive of the target architecture. The second RUN downloads
+# it and accepts it only when its sha256 equals one of the pins, so the
+# architecture name chooses the URL but cannot choose an unpinned archive. The
+# second RUN is one set -eu command list, so the pinned-input check reads the
+# commands it runs. scripts/verify-upstream-goose-release.sh checks these pins
+# against the GitHub release digests.
+ARG GOOSE_VERSION=1.55.0
+ARG GOOSE_SHA256_ARM64=56b1f79254aef3ddfec1532b7703c1cea9599a3299e716e141f3965801f77786
+ARG GOOSE_SHA256_AMD64=fade147bd5ebc020ecea05453b0905397f1ebb01ee3de2f3678570c5c3502ed7
+RUN case "${TARGETARCH}" in \
+    arm64) echo aarch64-unknown-linux-musl ;; \
+    amd64) echo x86_64-unknown-linux-musl ;; \
+    *) echo "Unsupported TARGETARCH for goose: ${TARGETARCH}" >&2; exit 1 ;; \
+  esac > /tmp/goose-arch
+RUN set -eu; \
+  read -r GOOSE_ARCH < /tmp/goose-arch; \
+  curl --ipv4 -fsSL "https://github.com/aaif-goose/goose/releases/download/v${GOOSE_VERSION}/goose-${GOOSE_ARCH}.tar.gz" \
+    --retry 8 \
+    --retry-all-errors \
+    --retry-delay 5 \
+    --connect-timeout 30 \
+    -o /tmp/goose.tar.gz; \
+  sha256sum /tmp/goose.tar.gz > /tmp/goose.sum; \
+  grep -qxF -e "${GOOSE_SHA256_ARM64}  /tmp/goose.tar.gz" -e "${GOOSE_SHA256_AMD64}  /tmp/goose.tar.gz" /tmp/goose.sum; \
+  tar -xzf /tmp/goose.tar.gz -C /tmp ./goose; \
+  install -D -m 0755 /tmp/goose /out/goose; \
+  touch -h -d "@${SOURCE_DATE_EPOCH}" /out/goose; \
+  rm -f /tmp/goose-arch /tmp/goose.tar.gz /tmp/goose.sum /tmp/goose
+
 FROM runtime-base AS runtime-builder
 
 # Anthropic Claude Code native binary version and SHA256 checksums for each
@@ -734,6 +764,7 @@ LABEL org.workcell.runtime-stage="runtime-uncertified"
 
 COPY --from=uncertified-provider-builder --chown=0:0 --chmod=0755 /out/opencode /usr/local/libexec/workcell/real/opencode
 COPY --from=uncertified-provider-builder --chown=0:0 --chmod=0755 /out/amp /usr/local/libexec/workcell/real/amp
+COPY --from=uncertified-provider-builder --chown=0:0 --chmod=0755 /out/goose /usr/local/libexec/workcell/real/goose
 
 USER 0:0
 RUN ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/opencode \
