@@ -491,7 +491,7 @@ internal/testkit	TestWorkcellForwardsColimaStartTimeoutThroughDetachedSessionHan
 internal/testkit	TestWorkcellRejectsHarnessOnlyCredentialResolverEnvBeforeBundlePreparation	33f0adb9,5b8f3c33,c669d372	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestWorkcellRejectsSensitiveWorkspaceBeforeExistenceCheck	283199e3,2db8f643,43e81079	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestWorkcellResolvesLaunchWorkspaceBeforeBundlePreparation	3e20ca5b,4c51f69f,e93ba8b7	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestWorkcellShadowsCopilotRepoHookControlPlane	299bf094,ffd752e5	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkcellShadowsCopilotRepoHookControlPlane	f2691f42,ffd752e5	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	activeShellLines	1c400327,27098a67	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	assertNoUpdaterFixtureTempResidue	96a65e32,a787d573,c8339f60	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	assertValidatorImagePrefixes	1b35eb41	unreviewed debt in a test: review the subject, then port or justify

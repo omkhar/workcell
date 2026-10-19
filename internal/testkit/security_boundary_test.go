@@ -336,18 +336,11 @@ func TestWorkcellShadowsCopilotRepoHookControlPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(content)
-	sharedDirList := `for rel in .github/instructions .github/copilot .github/hooks .github/agents .github/skills .agents/skills; do`
-	for _, expected := range []string{
-		`.github/hooks/*)`,
-		`printf '%s\0' ".github/hooks"`,
-		`*/.github/hooks/*)`,
-		`"${path%%/.github/hooks/*}/.github/hooks"`,
-		sharedDirList,
-	} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("%s must include Copilot repo hook control-plane masking entry %q", scriptPath, expected)
-		}
+	// git_index_control_plane_dir_roots and both find walks read one list.
+	if !strings.Contains(script, "\n  .github/instructions .github/copilot .github/hooks .github/agents .github/skills\n") {
+		t.Fatalf("%s must list .github/hooks in WORKSPACE_CONTROL_PLANE_DIRS", scriptPath)
 	}
+	sharedDirList := "for rel in \"${WORKSPACE_CONTROL_PLANE_DIRS[@]}\"; do\n      [[ \"${rel}\" == */* ]] || continue\n"
 	if strings.Count(script, sharedDirList) != 2 {
 		t.Fatalf("%s must use the Copilot repo hook control-plane list for both readonly VCS and safe-path shadowing", scriptPath)
 	}
