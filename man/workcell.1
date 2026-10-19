@@ -83,6 +83,9 @@ captures the session workspace as a git commit on the recorded launch head. It
 pauses a running detached session container for the capture, writes the commit
 to a host-owned store under
 .I ~/Library/Caches/colima/workcell-snapshots
+on macOS, or
+.I ~/.cache/colima/workcell-snapshots
+on Linux,
 that no container mounts, and appends a
 .B session_snapshot
 audit record with the snapshot id, tree, commit, captured workspace, and git

@@ -103,6 +103,12 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Changed
 
+- On Linux, Workcell stages host inputs, shadows, and token handoffs under
+  `~/.cache/colima`, and keeps session snapshots there. Before, it used
+  `~/Library/Caches/colima` on every host. macOS does not change.
+  `colima_staging_cache_root` in the launcher and `colimautil.CacheRoot` in Go
+  use one rule, and `TestCacheRootMatchesShellHelper` keeps them equal.
+  The uninstaller removes the staging roots under the same root.
 - The egress proxy is now the default for strict Colima sessions. The agent
   container has no resolver, and the launch summary reports
   `egress_enforcement=proxy`. `--egress-proxy=off` keeps the old strict
