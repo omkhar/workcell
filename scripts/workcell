@@ -4959,6 +4959,9 @@ session_snapshot_main() {
       exit 1
     fi
   fi
+  # The capture creates the store under the Colima cache root, which a host
+  # where Colima never ran (a fresh Linux home) does not have yet.
+  prepare_colima_staging_cache_roots || exit $?
   set +e
   captured="$(run_go_hostutil_preserve_exit session-snapshot-capture-cli \
     --git-bin "${HOST_GIT_BIN}" \
