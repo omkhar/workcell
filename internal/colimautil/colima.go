@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/pathutil"
@@ -29,9 +30,23 @@ func ValidateRuntimeMounts(configPath, workspace, profile, mountType string) err
 
 // CacheRoot returns the Colima cache root of the host for the real home home.
 // The launcher stages host inputs, shadows and token handoffs under it, and
-// keeps the session snapshot store there.
+// keeps the session snapshot store there. It is the Go copy of
+// colima_staging_cache_root in scripts/lib/launcher/host-detect.sh, and
+// TestCacheRootMatchesShellHelper keeps the two equal.
 func CacheRoot(home string) string {
-	return filepath.Join(home, "Library", "Caches", "colima")
+	return cacheRoot(runtime.GOOS, home, os.Getenv("XDG_CACHE_HOME"))
+}
+
+// cacheRoot is ~/Library/Caches/colima on macOS. On any other host it is
+// colima under XDG_CACHE_HOME, or under ~/.cache when XDG_CACHE_HOME is empty.
+func cacheRoot(goos, home, xdgCacheHome string) string {
+	if goos == "darwin" {
+		return filepath.Join(home, "Library", "Caches", "colima")
+	}
+	if xdgCacheHome == "" {
+		xdgCacheHome = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(xdgCacheHome, "colima")
 }
 
 func expectedReadOnlyCacheMounts() (map[string]bool, error) {

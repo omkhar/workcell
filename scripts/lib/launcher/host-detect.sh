@@ -49,11 +49,12 @@ workcell_host_cache_root() {
   esac
 }
 
-# The Colima cache root of this host.  The launcher stages host inputs,
-# shadows and token handoffs under it, and keeps the snapshot store there.
-# colimautil.CacheRoot is the Go copy of this rule.
+# The Colima cache root of this host: colima under workcell_host_cache_root.
+# The launcher stages host inputs, shadows and token handoffs under it, and
+# keeps the snapshot store there.  colimautil.CacheRoot is the Go copy of this
+# rule; TestCacheRootMatchesShellHelper keeps the two equal.
 colima_staging_cache_root() {
-  printf '%s\n' "${REAL_HOME}/Library/Caches/colima"
+  printf '%s/colima\n' "$(workcell_host_cache_root)"
 }
 
 # Per-host managed Colima VM type: vz on macOS, qemu on Linux.  Linux has no

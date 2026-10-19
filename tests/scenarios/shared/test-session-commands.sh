@@ -465,8 +465,11 @@ snapshot_record() {
 }
 EOF_JSON
 }
+# The launcher runs under env -i, so its cache root ignores XDG_CACHE_HOME.
 snapshot_store_for() {
-  printf '%s/Library/Caches/colima/workcell-snapshots/%s.git\n' "${REAL_HOME}" "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)"
+  local cache_root="${REAL_HOME}/.cache"
+  [[ "$(uname -s)" != Darwin ]] || cache_root="${REAL_HOME}/Library/Caches"
+  printf '%s/colima/workcell-snapshots/%s.git\n' "${cache_root}" "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)"
 }
 SNAPSHOT_STORE_A="$(snapshot_store_for "${WORKSPACE_A}")"
 SNAPSHOT_INDEX_BEFORE="${TMP_DIR}/snapshot-index.before"

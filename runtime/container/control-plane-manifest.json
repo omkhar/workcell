@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/host-detect.sh",
-      "sha256": "4503d702ed6fd81e743374fbec2c069b80fe67c97721bcdc2c87f6c5f663dd67"
+      "sha256": "6ee16667e9a10d8e8ee7b3e5501e82f8619df0f68ef82b69e2f7cbdbe0096e55"
     },
     {
       "repo_path": "scripts/lib/launcher/host-exec.sh",

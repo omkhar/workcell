@@ -5,6 +5,7 @@ package colimautil
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,10 +14,11 @@ import (
 func TestValidateRuntimeMountsAllowsWorkspaceAndReadOnlyCache(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
-	hostInputs := filepath.Join(home, "Library", "Caches", "colima", "workcell-host-inputs")
-	shadow := filepath.Join(home, "Library", "Caches", "colima", "workcell-shadow")
-	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	hostInputs := filepath.Join(CacheRoot(home), "workcell-host-inputs")
+	shadow := filepath.Join(CacheRoot(home), "workcell-shadow")
+	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, hostInputs, shadow, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -50,8 +52,9 @@ func TestValidateRuntimeMountsAllowsWorkspaceAndReadOnlyCache(t *testing.T) {
 func TestValidateRuntimeMountsRequiresWorkcellCacheMounts(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
-	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -78,9 +81,10 @@ func TestValidateRuntimeMountsRequiresWorkcellCacheMounts(t *testing.T) {
 func TestValidateRuntimeMountsRejectsUnexpectedWritableMount(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
 	other := filepath.Join(tmp, "other")
-	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, other, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -109,10 +113,11 @@ func TestValidateRuntimeMountsRejectsUnexpectedWritableMount(t *testing.T) {
 func TestValidateProfileConfigAcceptsManagedProfile(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
-	hostInputs := filepath.Join(home, "Library", "Caches", "colima", "workcell-host-inputs")
-	shadow := filepath.Join(home, "Library", "Caches", "colima", "workcell-shadow")
-	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	hostInputs := filepath.Join(CacheRoot(home), "workcell-host-inputs")
+	shadow := filepath.Join(CacheRoot(home), "workcell-shadow")
+	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, hostInputs, shadow, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -147,8 +152,9 @@ func TestValidateProfileConfigAcceptsManagedProfile(t *testing.T) {
 func TestValidateProfileConfigRequiresWorkcellCacheMounts(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
-	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -180,10 +186,11 @@ func TestValidateProfileConfigRequiresWorkcellCacheMounts(t *testing.T) {
 func TestValidateProfileConfigRejectsForwardAgent(t *testing.T) {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CACHE_HOME", "")
 	workspace := filepath.Join(tmp, "workspace")
-	hostInputs := filepath.Join(home, "Library", "Caches", "colima", "workcell-host-inputs")
-	shadow := filepath.Join(home, "Library", "Caches", "colima", "workcell-shadow")
-	tokenHandoff := filepath.Join(home, "Library", "Caches", "colima", "workcell-token-handoff")
+	hostInputs := filepath.Join(CacheRoot(home), "workcell-host-inputs")
+	shadow := filepath.Join(CacheRoot(home), "workcell-shadow")
+	tokenHandoff := filepath.Join(CacheRoot(home), "workcell-token-handoff")
 	for _, path := range []string{home, workspace, hostInputs, shadow, tokenHandoff} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -223,8 +230,9 @@ func writeManagedConfig(t *testing.T, vmType, mountType string) (configPath, wor
 	t.Helper()
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
+	t.Setenv("XDG_CACHE_HOME", "")
 	workspace = filepath.Join(tmp, "workspace")
-	cache := filepath.Join(home, "Library", "Caches", "colima")
+	cache := CacheRoot(home)
 	hostInputs := filepath.Join(cache, "workcell-host-inputs")
 	shadow := filepath.Join(cache, "workcell-shadow")
 	tokenHandoff := filepath.Join(cache, "workcell-token-handoff")
@@ -294,6 +302,43 @@ func TestValidateProfileConfigAcceptsOnlySelectedVMAndMountType(t *testing.T) {
 		}
 		if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 			t.Fatalf("%s/%s want %s/%s: error = %v, want %q", tc.vmType, tc.mountType, tc.wantVM, tc.wantMount, err, tc.wantErr)
+		}
+	}
+}
+
+// TestCacheRootMatchesShellHelper runs colima_staging_cache_root from
+// scripts/lib/launcher/host-detect.sh under a fake uname and checks that the
+// shell and Go rules give the same Colima cache root, so the launcher mounts
+// the paths that ValidateRuntimeMounts expects on macOS and on Linux.
+func TestCacheRootMatchesShellHelper(t *testing.T) {
+	helper, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "host-detect.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ uname, goos, xdg, want string }{
+		{"Darwin", "darwin", "", "/h/Library/Caches/colima"},
+		{"Darwin", "darwin", "/xdg", "/h/Library/Caches/colima"},
+		{"Linux", "linux", "", "/h/.cache/colima"},
+		{"Linux", "linux", "/xdg", "/xdg/colima"},
+	} {
+		shim := t.TempDir()
+		if err := os.WriteFile(filepath.Join(shim, "uname"), []byte("#!/bin/sh\necho "+tc.uname+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && colima_staging_cache_root`, "bash", helper)
+		cmd.Env = []string{"PATH=" + shim + ":/usr/bin:/bin", "REAL_HOME=/h"}
+		if tc.xdg != "" {
+			cmd.Env = append(cmd.Env, "XDG_CACHE_HOME="+tc.xdg)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s xdg=%q: shell helper: %v", tc.uname, tc.xdg, err)
+		}
+		if shell := strings.TrimSuffix(string(out), "\n"); shell != tc.want {
+			t.Errorf("%s xdg=%q: colima_staging_cache_root = %q, want %q", tc.uname, tc.xdg, shell, tc.want)
+		}
+		if got := cacheRoot(tc.goos, "/h", tc.xdg); got != tc.want {
+			t.Errorf("%s xdg=%q: cacheRoot = %q, want %q", tc.uname, tc.xdg, got, tc.want)
 		}
 	}
 }
