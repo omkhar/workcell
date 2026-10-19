@@ -151,13 +151,6 @@ var (
 	// tool's unless set -o pipefail ran before it and no set +o pipefail since.
 	shellInnerPipe = regexp.MustCompile(`(?:^|[^|])\|\s*[^\s;&|)}]`)
 	shellPipefail  = regexp.MustCompile(`\bset\s+([-+])[A-Za-z]*o\s+pipefail\b`)
-	// shellQuietGrepPipe is a grep -q as a later pipeline stage. It exits at the
-	// first match, so under pipefail the stage before it can die of SIGPIPE and
-	// fail the pipeline although the text matched.
-	// The grep may run as egrep or fgrep and take its quiet option as -q,
-	// --quiet or --silent. The command text has no wrapper words such as
-	// command or env, so a wrapped grep matches too.
-	shellQuietGrepPipe = regexp.MustCompile(`(?:^|[^|])\|\s*[ef]?grep\s+(?:-\S+\s+)*?(?:-[A-Za-z]*q|--quiet\b|--silent\b)`)
 	// shellProcessSubst is a process substitution, <( or >(, as a redirection or an argument.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^$])[<>]\(`)
 	// shellLoopSubst is the done < <( loop form, the only one a wait "$!" or a completion sentinel covers.
@@ -377,7 +370,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			}
 			hits[ruleOrTrue] += shellSwallowingHandlers(command, later, false)
 			if pipefail {
-				hits[ruleQuietGrepPipe] += len(shellQuietGrepPipe.FindAllStringIndex(command, -1))
+				hits[ruleQuietGrepPipe] += shellQuietGrepStages(command)
 			}
 			offset := 0 // A redirect belongs to the operand of the && || or | list it is written in, so git fetch || printf x 2>/dev/null hides no git status, and each operand's own status test counts, so the && after git fetch does not cover git gc 2>/dev/null. A redirect inside a substitution belongs to the command there, so $(git x 2>/dev/null) hides git's status while foo "$(git x)" 2>/dev/null hides foo's; each is read in its own text.
 			for _, operand := range shellListOperands(command) {
@@ -1054,4 +1047,59 @@ func loadShellFailOpenBaseline(path string) (map[shellFailOpenKey]int, error) {
 		baseline[key] = count
 	}
 	return baseline, nil
+}
+
+// shellQuietGrepStages counts the later pipeline stages of command (after |
+// or |&) that run grep, egrep or fgrep in quiet mode. Quiet grep exits at the
+// first match, so under pipefail the stage before it can die of SIGPIPE and
+// fail the pipeline although the text matched. The command text has no
+// wrapper words such as command or env.
+func shellQuietGrepStages(command string) int {
+	count := 0
+	for at := 0; at < len(command); at++ {
+		if command[at] != '|' {
+			continue
+		}
+		if at+1 < len(command) && command[at+1] == '|' {
+			at++ // || is a list operator, not a pipe
+			continue
+		}
+		stage := strings.TrimPrefix(command[at+1:], "&")
+		if end := strings.IndexAny(stage, "|;&)"); end >= 0 {
+			stage = stage[:end]
+		}
+		if shellGrepIsQuiet(strings.Fields(stage)) {
+			count++
+		}
+	}
+	return count
+}
+
+// shellGrepIsQuiet reports whether words, one pipeline stage, run grep with
+// -q, --quiet or --silent before the -- that ends the options. In a short
+// option cluster, an option that takes an operand (-e, -f, -m, -A, -B, -C, -d,
+// -D) takes the rest of the cluster, so -eq searches for q.
+func shellGrepIsQuiet(words []string) bool {
+	if len(words) == 0 || !slices.Contains([]string{"grep", "egrep", "fgrep"}, words[0]) {
+		return false
+	}
+	for _, word := range words[1:] {
+		switch {
+		case word == "--":
+			return false
+		case word == "--quiet" || word == "--silent":
+			return true
+		case strings.HasPrefix(word, "--") || !strings.HasPrefix(word, "-"):
+			continue
+		}
+		for _, option := range word[1:] {
+			if option == 'q' {
+				return true
+			}
+			if strings.ContainsRune("efmABCdD", option) {
+				break
+			}
+		}
+	}
+	return false
 }
