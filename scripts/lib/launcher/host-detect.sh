@@ -49,6 +49,13 @@ workcell_host_cache_root() {
   esac
 }
 
+# The Colima cache root of this host.  The launcher stages host inputs,
+# shadows and token handoffs under it, and keeps the snapshot store there.
+# colimautil.CacheRoot is the Go copy of this rule.
+colima_staging_cache_root() {
+  printf '%s\n' "${REAL_HOME}/Library/Caches/colima"
+}
+
 # Per-host managed Colima VM type: vz on macOS, qemu on Linux.  Linux has no
 # vz, and Lima's QEMU driver is the reviewed Linux path.
 colima_vm_type() {

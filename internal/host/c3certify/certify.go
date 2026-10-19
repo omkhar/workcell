@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/omkhar/workcell/internal/colimautil"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/rootio"
@@ -242,7 +243,7 @@ func newCertifier(options Options, deps dependencies) (_ *certifier, resultErr e
 	// workload origin; cleanup removes it.
 	launchRoot := filepath.Join(scratchRoot, "repo")
 	originHash := sha256.Sum256([]byte(launchRoot))
-	snapshotStore := filepath.Join(home, "Library", "Caches", "colima", "workcell-snapshots", hex.EncodeToString(originHash[:])+".git")
+	snapshotStore := filepath.Join(colimautil.CacheRoot(home), "workcell-snapshots", hex.EncodeToString(originHash[:])+".git")
 	if err := requireOwnedPathsAbsent(home, snapshotStore); err != nil {
 		return nil, err
 	}

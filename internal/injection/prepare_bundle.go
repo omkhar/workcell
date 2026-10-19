@@ -15,6 +15,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/colimautil"
 	"github.com/omkhar/workcell/internal/egressproxy"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
@@ -150,7 +151,7 @@ func DefaultInjectionPolicyPath(realHome string) string {
 // bash helper used as the host-inputs cache root.  The caller is expected
 // to pass a real home path that has already been canonicalized.
 func DefaultInjectionBundleParent(realHome string) string {
-	return filepath.Join(realHome, "Library", "Caches", "colima", "workcell-host-inputs")
+	return filepath.Join(colimautil.CacheRoot(realHome), "workcell-host-inputs")
 }
 
 // PrepareBundle implements the legacy prepare_injection_bundle helper.
