@@ -218,6 +218,8 @@ The `provider` candidate contains only these changes:
 - The OpenCode and Amp CLI pins in `runtime/container/providers-uncertified/package.json` and `package-lock.json`.
   The scope guard does not allow these files, so a candidate that changes them does not auto-merge.
   Amp publishes a build about every four hours, so most refresh runs move its pin.
+- The goose CLI pin in `runtime/container/Dockerfile`: the `ARG GOOSE_VERSION` line and the `GOOSE_SHA256` assignments.
+  The scope guard does not allow these lines, so a candidate that changes them does not auto-merge.
 
 The `toolchain` candidate contains the base images, the Debian snapshot, the Go and Rust toolchains, and the CI and release tools.
 Both candidates can change `runtime/container/Dockerfile`, but they do not change the same lines.

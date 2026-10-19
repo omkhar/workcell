@@ -680,7 +680,7 @@ eval "$(sed -n -e '/^WORKSPACE_CONTROL_PLANE_DIRS=($/,/^)$/p' -e '/^workspace_is
 run_clean_host_command() { "$@"; }
 cd %[2]s
 git init -q
-for path in .amp/settings.json nested/.amp/plugins/p.js .codex/config.toml .github/hooks/h.json x/.agents/skills/s.md y/.github/hooks/h.json .ampx/a plain.txt; do
+for path in .amp/settings.json nested/.amp/plugins/p.js .goose/config.yaml x/.agents/plugins/p/hooks.json .codex/config.toml .github/hooks/h.json x/.agents/skills/s.md y/.github/hooks/h.json .ampx/a plain.txt; do
   mkdir -p "$(dirname "${path}")"
   printf 'x\n' >"${path}"
 done
@@ -688,9 +688,86 @@ git add -A
 git_index_control_plane_dir_roots %[2]s | LC_ALL=C sort -zu | tr '\0' ' '
 `, ShellQuote(scriptPath), ShellQuote(workspace))
 	code, output := runBashProbe(t, probe, nil)
-	want := ".amp .codex .github/hooks nested/.amp x/.agents/skills y/.github/hooks "
+	want := ".amp .codex .github/hooks .goose nested/.amp x/.agents/plugins x/.agents/skills y/.github/hooks "
 	if code != 0 || output != want {
 		t.Fatalf("git_index_control_plane_dir_roots = %q (exit %d), want %q", output, code, want)
+	}
+}
+
+// TestWorkspaceControlPlaneFiles reads the file list that both safe-path
+// loops mask: each agent instruction file and each MCP config.
+func TestWorkspaceControlPlaneFiles(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n '/^WORKSPACE_CONTROL_PLANE_FILES=($/,/^)$/p' %[1]s)"
+printf '%%s ' "${WORKSPACE_CONTROL_PLANE_FILES[@]}"
+`, ShellQuote(scriptPath))
+	code, output := runBashProbe(t, probe, nil)
+	want := "AGENTS.md CLAUDE.md GEMINI.md .mcp.json .github/mcp.json .github/copilot-instructions.md "
+	if code != 0 || output != want {
+		t.Fatalf("WORKSPACE_CONTROL_PLANE_FILES = %q (exit %d), want %q", output, code, want)
+	}
+}
+
+// TestWorkspaceControlPlaneNestedFilePaths runs the any-depth file walk on a
+// fixture: a .goosehints file tracked below the top, untracked below it, and
+// tracked but deleted from the working tree at the top and below it each
+// count; a copy under .git and a look-alike name do not. A walk that cannot
+// read the workspace fails.
+func TestWorkspaceControlPlaneNestedFilePaths(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	workspace := t.TempDir()
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n -e '/^WORKSPACE_CONTROL_PLANE_NESTED_FILES=(/p' -e '/^workspace_is_git_worktree() {$/,/^}$/p' -e '/^workspace_control_plane_nested_file_paths() {$/,/^}$/p' %[1]s)"
+run_clean_host_command() { "$@"; }
+cd %[2]s
+git init -q
+for path in .goosehints a/b/.goosehints e/.goosehints d/.goosehints.bak; do
+  mkdir -p "$(dirname "${path}")"
+  printf 'x\n' >"${path}"
+done
+git add -A
+rm .goosehints e/.goosehints
+mkdir -p c .git/x
+printf 'x\n' >c/.goosehints
+printf 'x\n' >.git/x/.goosehints
+if workspace_control_plane_nested_file_paths %[2]s/missing >/dev/null 2>&1; then
+  echo "a failed walk returned 0"
+fi
+workspace_control_plane_nested_file_paths %[2]s | LC_ALL=C sort -zu | tr '\0' ' '
+`, ShellQuote(scriptPath), ShellQuote(workspace))
+	code, output := runBashProbe(t, probe, nil)
+	want := ".goosehints a/b/.goosehints c/.goosehints e/.goosehints "
+	if code != 0 || output != want {
+		t.Fatalf("workspace_control_plane_nested_file_paths = %q (exit %d), want %q", output, code, want)
+	}
+}
+
+// TestRegisterWorkspaceControlPlaneDirMountRefusesSymlinkedParent mounts a
+// slash-qualified control directory with --allow-control-plane-vcs: a real
+// .agents/plugins is mounted, and one reached through a symlinked .agents is
+// refused before any mount.
+func TestRegisterWorkspaceControlPlaneDirMountRefusesSymlinkedParent(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	root := t.TempDir()
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n -e '/^refuse_symlinked_workspace_parent_component() {$/,/^}$/p' -e '/^register_workspace_control_plane_dir_mount() {$/,/^}$/p' %[1]s)"
+register_shadow_mount() { echo "mount $2"; }
+mkdir -p %[2]s/real/.agents/plugins %[2]s/outside/plugins %[2]s/linked
+ln -s %[2]s/outside %[2]s/linked/.agents
+register_workspace_control_plane_dir_mount %[2]s/real .agents/plugins
+( register_workspace_control_plane_dir_mount %[2]s/linked .agents/plugins ) && echo "linked parent mounted" || echo "linked rc=$?"
+`, ShellQuote(scriptPath), ShellQuote(root))
+	code, output := runBashProbe(t, probe, nil)
+	if code != 0 || !strings.Contains(output, "mount /workspace/.agents/plugins\n") || !strings.Contains(output, "linked rc=2") ||
+		!strings.Contains(output, "parent component is a symlink") {
+		t.Fatalf("register_workspace_control_plane_dir_mount: exit %d, output:\n%s", code, output)
 	}
 }
 

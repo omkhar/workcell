@@ -1688,6 +1688,14 @@ seed_amp_home() {
   workcell_prepare_session_directory "${HOME}/.config/amp" "Amp config directory"
 }
 
+# Workcell stages no goose credential. goose configure in the session stores
+# the provider key in the session home: provider-wrapper.sh turns off the
+# keyring, so goose writes ~/.config/goose/secrets.yaml.
+seed_goose_home() {
+  workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/goose/"
+  workcell_prepare_session_directory "${HOME}/.config/goose" "goose config directory"
+}
+
 workcell_seed_shared_credentials() {
   workcell_prepare_session_directory "${HOME}/.config/gh" "GitHub CLI config directory"
   workcell_copy_manifest_credential_file github_config "${HOME}/.config/gh/config.yml" || true
@@ -1713,6 +1721,9 @@ seed_agent_home() {
       ;;
     amp)
       seed_amp_home
+      ;;
+    goose)
+      seed_goose_home
       ;;
     *)
       workcell_die "Unsupported agent: $1"
