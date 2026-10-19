@@ -17,8 +17,8 @@ Remove Workcell-owned local install links and managed host state:
   - Workcell-owned build cache roots
   - ~/.colima/workcell-* and wcl-* profiles (the current derived name), matching _lima dirs, matching _lima/_disks dirs, matching _store metadata, and Workcell locks
   - workcell-host-inputs, workcell-shadow, and workcell-token-handoff under the
-    Colima cache root: ~/Library/Caches/colima on macOS and
-    ${XDG_CACHE_HOME:-~/.cache}/colima on Linux
+    Colima cache root: ~/Library/Caches/colima on macOS and ~/.cache/colima on
+    Linux (the launcher does not read XDG_CACHE_HOME)
   - /tmp/workcell-docker.*, /tmp/workcell-provider-e2e.*, and /tmp/workcell-*.log/failed scratch
     (a workcell-docker.* sandbox stays while the process that owns it runs)
 
