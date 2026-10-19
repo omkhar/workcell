@@ -104,6 +104,9 @@ type ProviderBumpPlan struct {
 	// Uncertified holds the npm pins of the uncertified provider packages,
 	// keyed by package name. Only the runtime-uncertified image installs them.
 	Uncertified map[string]ProviderBumpSelection `json:"uncertified,omitempty"`
+	// UncertifiedReleases holds the GitHub release pins of the uncertified
+	// provider CLIs in the Dockerfile, keyed by adapter id.
+	UncertifiedReleases map[string]ProviderBumpSelection `json:"uncertified_releases,omitempty"`
 }
 
 type ProviderBumpSelection struct {
@@ -144,6 +147,10 @@ type ProviderBumpSources struct {
 	// path skips it.
 	UncertifiedPackageJSONPath string
 	NPMRegistryURL             string
+	// GooseReleaseAPIURL enables the plan of the goose release pin in the
+	// Dockerfile, read from one page of the GitHub release list. An empty URL
+	// skips it.
+	GooseReleaseAPIURL string
 }
 
 type npmRegistryMetadata struct {
@@ -360,6 +367,14 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 			providerid.Gemini:  geminiSelection,
 		},
 	}
+	if sources.GooseReleaseAPIURL != "" {
+		selection, err := selectGooseStable(dockerfilePath, cutoff, sources.GooseReleaseAPIURL, client)
+		if err != nil {
+			return nil, err
+		}
+		plan.UncertifiedReleases = map[string]ProviderBumpSelection{gooseReleaseCLI.id: selection}
+		plan.HasChanges = plan.HasChanges || selection.Changed
+	}
 	if sources.UncertifiedPackageJSONPath != "" {
 		plan.Uncertified, err = planUncertifiedNPMBumps(sources.UncertifiedPackageJSONPath, cutoff, sources.NPMRegistryURL, client)
 		if err != nil {
@@ -440,6 +455,162 @@ func ApplyUncertifiedProviderBumpPlan(planPath, packageJSONPath string) error {
 		return nil
 	}
 	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(path), []byte(updated), 0o644, ".uncertified-bump-")
+}
+
+// GooseReleaseTagAPIURLFormat is the GitHub API URL of one goose release,
+// formatted with its X.Y.Z version.
+const GooseReleaseTagAPIURLFormat = "https://api.github.com/repos/aaif-goose/goose/releases/tags/v%s"
+
+// gooseReleaseCLI is the goose CLI of the runtime-uncertified image: the
+// static musl archive of each architecture.
+var gooseReleaseCLI = githubReleaseCLI{
+	id:    "goose",
+	label: "goose",
+	title: "goose CLI",
+	assets: []releaseAsset{
+		{"arm64", "goose-aarch64-unknown-linux-musl.tar.gz"},
+		{"amd64", "goose-x86_64-unknown-linux-musl.tar.gz"},
+	},
+}
+
+var gooseVersionLinePattern = regexp.MustCompile(`(?m)^ARG GOOSE_VERSION=(.*)$`)
+
+// gooseChecksumLinePattern matches the Dockerfile case arm of asset: its
+// GOOSE_ARCH, the archive name without the goose- prefix and the .tar.gz
+// suffix, and its GOOSE_SHA256 value in group 2.
+func gooseChecksumLinePattern(asset releaseAsset) *regexp.Regexp {
+	arch := strings.TrimSuffix(strings.TrimPrefix(asset.name, "goose-"), ".tar.gz")
+	return regexp.MustCompile(`(?ms)(` + asset.key + `\)\s+\\\s*GOOSE_ARCH="` + regexp.QuoteMeta(arch) + `";\s+\\\s*GOOSE_SHA256=")([0-9a-f]{64})(";)`)
+}
+
+// gooseDockerfilePin returns the one stable GOOSE_VERSION of dockerfile and
+// the one GOOSE_SHA256 of each goose asset, keyed by architecture.
+func gooseDockerfilePin(dockerfile string) (string, map[string]string, error) {
+	versions := gooseVersionLinePattern.FindAllStringSubmatch(dockerfile, -1)
+	if len(versions) != 1 || !stableVersionPattern.MatchString(versions[0][1]) {
+		return "", nil, errors.New("the Dockerfile must pin one stable X.Y.Z ARG GOOSE_VERSION")
+	}
+	checksums := map[string]string{}
+	for _, asset := range gooseReleaseCLI.assets {
+		matches := gooseChecksumLinePattern(asset).FindAllStringSubmatch(dockerfile, -1)
+		if len(matches) != 1 {
+			return "", nil, fmt.Errorf("the Dockerfile must pin one %s GOOSE_SHA256 for %s", asset.key, asset.name)
+		}
+		checksums[asset.key] = matches[0][2]
+	}
+	return versions[0][1], checksums, nil
+}
+
+func readGooseDockerfilePin(dockerfilePath string) (string, map[string]string, error) {
+	dockerfile, err := rootio.ReadFileNoFollow(dockerfilePath, "Dockerfile", providerBumpMaxJSONBytes)
+	if err != nil {
+		return "", nil, err
+	}
+	return gooseDockerfilePin(string(dockerfile))
+}
+
+// selectGooseStable reads one page of the goose release list at releasesURL.
+// goose ships about one release a week, so the newest page holds the releases
+// that the cool-off can select, and the plan spends one GitHub API request.
+func selectGooseStable(dockerfilePath string, cutoff time.Time, releasesURL string, client *http.Client) (ProviderBumpSelection, error) {
+	current, _, err := readGooseDockerfilePin(dockerfilePath)
+	if err != nil {
+		return ProviderBumpSelection{}, err
+	}
+	var releases []githubReleaseMetadata
+	if _, err := fetchJSONResponse(client, releasesURL, &releases); err != nil {
+		return ProviderBumpSelection{}, err
+	}
+	return selectGitHubReleaseStable(gooseReleaseCLI, releases, current, cutoff, "")
+}
+
+// ApplyUncertifiedReleaseBumpPlan writes each changed plan.UncertifiedReleases
+// target version and its checksums to dockerfilePath.
+func ApplyUncertifiedReleaseBumpPlan(planPath, dockerfilePath string) error {
+	content, err := rootio.ReadFileNoFollow(planPath, "provider bump plan", providerBumpMaxJSONBytes)
+	if err != nil {
+		return err
+	}
+	var plan ProviderBumpPlan
+	if err := json.Unmarshal(content, &plan); err != nil {
+		return err
+	}
+	for id := range plan.UncertifiedReleases {
+		if id != gooseReleaseCLI.id {
+			return fmt.Errorf("%s plans the %s release, which no Dockerfile pin owns", planPath, id)
+		}
+	}
+	selection := plan.UncertifiedReleases[gooseReleaseCLI.id]
+	if !selection.Changed {
+		return nil
+	}
+	// One no-follow parent descriptor serves the read and the atomic write, so
+	// the file that is validated is the file that is replaced.
+	parent, path, err := rootio.OpenParentDirectoryNoFollow(dockerfilePath)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	raw, err := rootio.ReadFileAtNoFollow(parent, filepath.Base(path), "Dockerfile", providerBumpMaxJSONBytes)
+	if err != nil {
+		return err
+	}
+	updated, err := applyGoosePin(string(raw), selection)
+	if err != nil {
+		return fmt.Errorf("%s: %w", planPath, err)
+	}
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(path), []byte(updated), 0o644, ".goose-bump-")
+}
+
+func applyGoosePin(dockerfile string, selection ProviderBumpSelection) (string, error) {
+	if !stableVersionPattern.MatchString(selection.TargetVersion) {
+		return "", fmt.Errorf("the goose target version %q is not a stable X.Y.Z version", selection.TargetVersion)
+	}
+	if _, _, err := gooseDockerfilePin(dockerfile); err != nil {
+		return "", err
+	}
+	updated := gooseVersionLinePattern.ReplaceAllLiteralString(dockerfile, "ARG GOOSE_VERSION="+selection.TargetVersion)
+	for _, asset := range gooseReleaseCLI.assets {
+		checksum := selection.Checksums[asset.key]
+		if !isHexDigest(checksum) {
+			return "", fmt.Errorf("the goose target version %s needs a valid %s sha256 checksum", selection.TargetVersion, asset.key)
+		}
+		updated = gooseChecksumLinePattern(asset).ReplaceAllString(updated, "${1}"+checksum+"${3}")
+	}
+	return updated, nil
+}
+
+// VerifyGooseReleasePin fails unless the goose pin of dockerfilePath names a
+// stable GitHub release whose archive digests equal the pinned checksums.
+// releaseURLFormat is GooseReleaseTagAPIURLFormat outside tests.
+func VerifyGooseReleasePin(dockerfilePath, releaseURLFormat string, client *http.Client) error {
+	version, pinned, err := readGooseDockerfilePin(dockerfilePath)
+	if err != nil {
+		return err
+	}
+	if client == nil {
+		client = &http.Client{Timeout: providerBumpHTTPTimeout}
+	}
+	var release githubReleaseMetadata
+	if _, err := fetchJSONResponse(client, fmt.Sprintf(releaseURLFormat, version), &release); err != nil {
+		return err
+	}
+	if release.TagName != "v"+version {
+		return fmt.Errorf("the goose release metadata names %q, want v%s", release.TagName, version)
+	}
+	if release.Prerelease {
+		return fmt.Errorf("goose v%s is a prerelease", version)
+	}
+	released, reasons, _ := releaseAssetChecksums(release, gooseReleaseCLI.assets)
+	if len(reasons) != 0 {
+		return fmt.Errorf("goose v%s release: %s", version, strings.Join(reasons, "; "))
+	}
+	for _, asset := range gooseReleaseCLI.assets {
+		if pinned[asset.key] != released[asset.key] {
+			return fmt.Errorf("the pinned %s goose sha256 %s differs from the v%s release digest %s", asset.key, pinned[asset.key], version, released[asset.key])
+		}
+	}
+	return nil
 }
 
 func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackageJSONPath string) error {

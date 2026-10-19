@@ -103,6 +103,7 @@ func subcommands() []subcommand {
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
 		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE UNCERTIFIED_PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", 5, 6, cmdProviderBumpPlan},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON UNCERTIFIED_PROVIDERS_PACKAGE_JSON", 5, 5, cmdApplyProviderBumpPlan},
+		{"verify-goose-release", "DOCKERFILE", 1, 1, cmdVerifyGooseRelease},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"flag-inventory", "plan|check|restamp ROOT | compare|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
@@ -561,7 +562,14 @@ func cmdApplyProviderBumpPlan(args []string) error {
 	if err := metadatautil.ApplyProviderBumpPlan(args[0], args[1], args[2], args[3]); err != nil {
 		return err
 	}
-	return metadatautil.ApplyUncertifiedProviderBumpPlan(args[0], args[4])
+	if err := metadatautil.ApplyUncertifiedProviderBumpPlan(args[0], args[4]); err != nil {
+		return err
+	}
+	return metadatautil.ApplyUncertifiedReleaseBumpPlan(args[0], args[2])
+}
+
+func cmdVerifyGooseRelease(args []string) error {
+	return metadatautil.VerifyGooseReleasePin(args[0], metadatautil.GooseReleaseTagAPIURLFormat, nil)
 }
 
 func cmdPrepareCodexSubcommandFixture(args []string) error {

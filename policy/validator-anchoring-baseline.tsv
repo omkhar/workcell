@@ -57,6 +57,7 @@ internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	
 internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	7ec6e521	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes	5170f81d	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateWorkflowLaneManifestExpandsMatrixAndPathFilters	4370e2b0	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestPlanGooseRelease	e8e3a2d5,59cbcdfd	the search checks the skip reasons of a stub plan, not file content
 internal/metadatautil	TestPlanWorkflowLanesRespectsPathsLabelsAndGitHubOnlyModes	49487938,49487938	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestPrepareCodexSubcommandFixtureAdvancesUnchangedNamespace	4d36d4b0,979afa46	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestSelectCodexStableHonorsMaxVersionAndReportsSkippedRelease	c18cb7e1	unreviewed debt in a test: review the subject, then port or justify
@@ -86,6 +87,7 @@ internal/metadatautil	ValidateReleaseWorkflowGitHubAttestationFlow	48cf7c8e,c5fc
 internal/metadatautil	ValidateRequirements	6960f23b	the prefix checks a requirement ID field
 internal/metadatautil	ValidateUpstreamRefreshWorkflow	ab15fa41,f83a4e4c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	afterDeclaration	8e5f5463	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	applyGoosePin	44449382,ace53d19,57b6f724	the patterns rewrite the one goose pin that gooseDockerfilePin first checks once
 internal/metadatautil	applyPlanText	429ed54b,9666434d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	assignmentPrefix	28c9a340	the match reads the parsed argv words of one command
 internal/metadatautil	assignmentRun	64f729a5	unreviewed debt: review the subject, then port or justify
@@ -138,6 +140,8 @@ internal/metadatautil	ghSubcommand	3b0c6e9f,4d48cba3,cb7683d1	unreviewed debt: r
 internal/metadatautil	githubAPIToken	0fa8eac8	the search rejects a line break in a token file
 internal/metadatautil	githubReleaseAssetAPIURL	05654428,8efb2ac8,c5dae623	the patterns check API JSON field values, not repo content
 internal/metadatautil	goLanguageVersionFromToolchain	14ed36af	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	gooseChecksumLinePattern	c4935060,90476674	the pattern reads one case arm of the reviewed Dockerfile goose pin
+internal/metadatautil	gooseDockerfilePin	8710ef2c,dae86b2b,d4f40b93	the patterns read the one goose version and each case arm, and fail on zero or two matches
 internal/metadatautil	hardenedFSImportNames	b021fc13	the search finds the last slash of an import path, not file content
 internal/metadatautil	helperGraph.reaches	5aba8db9,fc9cebdc	the digit test tells a first-parameter forwarder word from an all-parameters one among parsed command words
 internal/metadatautil	heredocDelimiter	029b3cac	unreviewed debt: review the subject, then port or justify
