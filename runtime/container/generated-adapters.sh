@@ -7,7 +7,7 @@
 # workcell_supported_agent succeeds when $1 is a supported adapter id.
 workcell_supported_agent() {
   case "$1" in
-    amp | claude | codex | copilot | gemini | opencode) ;;
+    amp | claude | codex | copilot | gemini | goose | opencode) ;;
     *)
       return 1
       ;;
@@ -20,7 +20,7 @@ workcell_adapter_tier() {
     claude | codex | copilot | gemini)
       echo certified
       ;;
-    amp | opencode)
+    amp | goose | opencode)
       echo uncertified
       ;;
     *)
@@ -41,6 +41,15 @@ workcell_manifest_flags() {
       ;;
     amp:other_commands)
       printf '%s\n' 'account' 'add-chatgpt-sub' 'app' 'apps' 'attach-executor-diagnostics' 'clone' 'completions' 'config' 'diagnostics' 'domains' 'files' 'git-credential-helper' 'git-setup' 'headless-bootstrap' 'install' 'internal' 'keyboard-tester' 'l' 'last' 'mcp' 'net' 'oauth-clients' 'orb' 'perma-orbs' 'permission' 'permissions' 'plugin' 'plugins' 'portal' 'projects' 'report' 'report-bug' 'review' 'runner' 'secrets' 'sign-commit' 'skill' 'skills' 'st' 'status' 'svc' 'sync' 't' 'thread' 'threads' 'tool' 'tools' 'top' 'up' 'update' 'usage'
+      ;;
+    goose:allow)
+      printf '%s\n' '--check' '--debug' '--edit' '--fork' '-h' '--help' '--history' '-i' '--instructions' '--interactive' '--max-tool-repetitions' '--max-turns' '--model' '-n' '--name' '--no-profile' '--no-session' '--output-format' '--path' '--provider' '-q' '--quiet' '-r' '--resume' '-s' '--session-id' '--stats' '--system' '-t' '--text' '-V' '-v' '--verbose' '--version'
+      ;;
+    goose:deny)
+      printf '%s\n' '--container' '--explain' '--params' '--recipe' '--render-recipe' '--sub-recipe' '--with-builtin' '--with-extension' '--with-streamable-http-extension'
+      ;;
+    goose:other_commands)
+      printf '%s\n' 'acp' 'completion' 'doctor' 'gateway' 'gw' 'mcp' 'mcp-probe' 'plugin' 'recipe' 'review' 'sched' 'schedule' 'serve' 'skills' 'term' 'validate-extensions'
       ;;
     opencode:allow)
       printf '%s\n' '-c' '--command' '--continue' '--agent' '--dir' '-f' '--file' '--fork' '--format' '-h' '--help' '-i' '--interactive' '--log-level' '-m' '--mini' '--model' '--no-replay' '--print-logs' '--prompt' '--pure' '--replay-limit' '-s' '--session' '--thinking' '--title' '-v' '--variant' '--version'

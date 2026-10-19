@@ -611,6 +611,7 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/system-settings.json", RuntimePath: "/opt/workcell/adapters/gemini/system-settings.json"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/opencode/README.md", RuntimePath: "/opt/workcell/adapters/opencode/README.md"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/amp/README.md", RuntimePath: "/opt/workcell/adapters/amp/README.md"},
+		{Kind: "adapter-baseline", RepoPath: "adapters/goose/README.md", RuntimePath: "/opt/workcell/adapters/goose/README.md"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-helper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-helper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-wrapper.sh"},

@@ -120,6 +120,17 @@ var providers = []providerDefinition{
 		},
 	},
 	{
+		id:                       "goose",
+		sharedCredentialsEnabled: false,
+		tables: providerTables{
+			credentialKeys:           []string{},
+			credentialContainerPaths: map[string]string{},
+			reservedTargets: []string{
+				"/state/agent-home/.config/goose",
+			},
+		},
+	},
+	{
 		id:                       "opencode",
 		sharedCredentialsEnabled: false,
 		tables: providerTables{

@@ -375,6 +375,8 @@ func TestRebasePolicyFragmentAndValidationHelpers(t *testing.T) {
 		"/state/agent-home/.config/opencode/opencode.json",
 		"/state/agent-home/.config/amp",
 		"/state/agent-home/.config/amp/settings.json",
+		"/state/agent-home/.config/goose",
+		"/state/agent-home/.config/goose/secrets.yaml",
 		"/state/agent-home/.mcp.json",
 		"/state/injected/../agent-home/notes.txt",
 		"/state/agent-home/../injected/notes.txt",
