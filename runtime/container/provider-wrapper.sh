@@ -536,6 +536,27 @@ case "${AGENT_NAME}" in
       "$@" \
       "${MANAGED_AUTONOMY_ARGS[@]}"
     ;;
+  goose)
+    reject_manifest_args goose "$@"
+    for env_name in "${!GOOSE_@}"; do
+      unset "${env_name}"
+    done
+    # goose reads its provider, mode, extra config files and recipe sources
+    # from GOOSE_* variables, so only the managed ones reach it: no telemetry,
+    # no keyring (the container has none; goose keeps the provider key in the
+    # session home), and the autonomy mode. goose runs each tool without a
+    # prompt when GOOSE_MODE is auto, its default, so prompt autonomy sets
+    # approve.
+    goose_mode="approve"
+    if [[ "${WORKCELL_AGENT_AUTONOMY}" == "yolo" ]]; then
+      goose_mode="auto"
+    fi
+    GOOSE_TELEMETRY_OFF=1 \
+      GOOSE_DISABLE_KEYRING=1 \
+      GOOSE_MODE="${goose_mode}" \
+      exec /usr/local/libexec/workcell/real/goose \
+      "$@"
+    ;;
   amp)
     reject_manifest_args amp "$@"
     for env_name in "${!AMP_@}"; do

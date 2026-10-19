@@ -770,7 +770,9 @@ USER 0:0
 RUN ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/opencode \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/opencode \
   && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/amp \
-  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/amp
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/amp \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/goose \
+  && ln -sf /usr/local/libexec/workcell/core/launcher /usr/local/bin/goose
 USER 65532:65532
 
 # Each build names its target. A build without --target reaches this stage and

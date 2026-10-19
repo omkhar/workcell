@@ -47,6 +47,7 @@ enum ProtectedRuntime {
     Copilot,
     Opencode,
     Amp,
+    Goose,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +102,10 @@ const PROTECTED_RUNTIME_PATHS: &[(ProtectedRuntime, &str)] = &[
     (
         ProtectedRuntime::Amp,
         "/usr/local/libexec/workcell/real/amp",
+    ),
+    (
+        ProtectedRuntime::Goose,
+        "/usr/local/libexec/workcell/real/goose",
     ),
 ];
 
@@ -1616,6 +1621,7 @@ fn approved_wrapper_allows_runtime(wrapper: ApprovedWrapper, kind: ProtectedRunt
                 | ProtectedRuntime::Copilot
                 | ProtectedRuntime::Opencode
                 | ProtectedRuntime::Amp
+                | ProtectedRuntime::Goose
                 | ProtectedRuntime::Node
         ),
         ApprovedWrapper::Git => kind == ProtectedRuntime::Git,
@@ -4146,6 +4152,18 @@ mod tests {
         assert!(PROTECTED_RUNTIME_PATHS.contains(&(
             ProtectedRuntime::Amp,
             "/usr/local/libexec/workcell/real/amp"
+        )));
+        assert!(!protected_runtime_exec_blocked(
+            ProtectedRuntime::Goose,
+            ApprovedWrapper::Provider
+        ));
+        assert!(protected_runtime_exec_blocked(
+            ProtectedRuntime::Goose,
+            ApprovedWrapper::Development
+        ));
+        assert!(PROTECTED_RUNTIME_PATHS.contains(&(
+            ProtectedRuntime::Goose,
+            "/usr/local/libexec/workcell/real/goose"
         )));
         assert!(protected_runtime_exec_blocked(
             ProtectedRuntime::Copilot,
