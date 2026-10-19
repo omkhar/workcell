@@ -2315,7 +2315,7 @@ WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harnes
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
   printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_staging_cache_root
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'
@@ -2332,7 +2332,7 @@ WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-ti
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
   printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_staging_cache_root
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'
@@ -4269,7 +4269,7 @@ SYMLINK_STAGING_HARNESS="$(mktemp)"
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
   printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_staging_cache_root
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'

@@ -3796,10 +3796,6 @@ reject_symlinked_host_path_components() {
   done
 }
 
-colima_staging_cache_root() {
-  printf '%s\n' "${REAL_HOME}/Library/Caches/colima"
-}
-
 # Invariant snapshot-store-host-owned: the snapshot store sits beside, never
 # under, the mounted staging roots, and reject_broad_or_sensitive_workspace
 # refuses any workspace that overlaps it.
