@@ -292,7 +292,8 @@ Use these sources for detailed claims:
 - AWS and GCP remote targets have preview rows on macOS arm64.
 - The Colima, AWS, and GCP Linux amd64 rows are `validation-host-only`.
 - Operator launch remains blocked for all these rows.
-- Apple `container` is preview-only and has no operator target value.
+- Apple `container` is preview-only: `--target apple-container` gives a
+  dry-run plan and a `--doctor` boundary, and its live launch is blocked.
 - Workcell has no managed-workstation backend.
 - The session plane has no queue, pause, resume, or checkpoint model.
   `workcell session fork` starts new children from a signed snapshot of a

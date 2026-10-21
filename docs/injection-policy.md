@@ -405,6 +405,7 @@ Other targets do not receive this allowlist. Their launch summary reports
 | `aws-ec2-ssm` preview | `none` | None |
 | `gcp-vm` preview | `none` | None |
 | `docker-engine` preview | `none` | None |
+| `apple-container` preview | `none` | None |
 
 The remote targets are launch-blocked. Their preview plans rely on provider
 firewall controls if live launch support ships later.
