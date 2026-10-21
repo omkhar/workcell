@@ -74,6 +74,8 @@ Use these scenario identifiers for release claims:
 - `shared/linux-colima-qemu-dry-run` tests the Linux QEMU and KVM gate.
 - `shared/apple-container-dry-run` tests the Apple container preview plan and
   its macOS 27 host guard.
+- `shared/docker-engine-dry-run` tests the Docker Engine compat preview plan
+  and its Linux host rows.
 - `shared/aws-remote-vm-dry-run` tests AWS preview plans.
 - `shared/gcp-remote-vm-dry-run` tests GCP preview plans.
 - `shared/agent-launch-smoke` tests the local runtime launch.

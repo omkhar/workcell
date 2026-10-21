@@ -287,7 +287,8 @@ Use these sources for detailed claims:
 
 - Operator launch is supported only for the allowed macOS arm64 matrix rows.
 - Linux amd64 is a validation host, not an operator host.
-- Linux arm64 and Windows targets are unsupported.
+- Linux arm64 and Windows targets are unsupported, except the preview-only
+  `docker-engine` rows on Linux amd64 and arm64.
 - AWS and GCP remote targets have preview rows on macOS arm64.
 - The Colima, AWS, and GCP Linux amd64 rows are `validation-host-only`.
 - Operator launch remains blocked for all these rows.

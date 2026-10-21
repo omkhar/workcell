@@ -9,6 +9,15 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Added
 
+- `--target docker-engine` selects the preview-only
+  `local_compat/docker-engine/compat` target: rootful Docker Engine on the
+  Linux host kernel, a lower-assurance path. On Linux amd64 and arm64 hosts,
+  `--dry-run` prints a reviewed plan and `--doctor` prints
+  `doctor_docker_engine_socket` and `doctor_docker_engine_daemon`. The plan
+  reports `egress_enforcement=none`. On macOS and Windows hosts, the dry-run
+  exits with status 2. A live launch and `--prepare` exit with status 2, and
+  the Linux matrix rows stay `preview-only` and `blocked`
+  (`tests/scenarios/shared/test-docker-engine-dry-run.sh`).
 - `--target apple-container` selects the preview-only
   `local_vm/apple-container/per-session-vm` target. On Apple Silicon macOS 27
   or later, `--dry-run` prints a reviewed plan and `--doctor` prints

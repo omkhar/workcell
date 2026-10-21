@@ -67,13 +67,16 @@ table below shows every shipped macOS arm64 row and every Linux amd64 row.
 | `macos` | `arm64` | `remote_vm` | `aws-ec2-ssm` | `compat` | `preview-only` | `blocked` | `certification-only` | `none` |
 | `macos` | `arm64` | `remote_vm` | `gcp-vm` | `compat` | `preview-only` | `blocked` | `certification-only` | `none` |
 | `macos` | `arm64` | `local_vm` | `apple-container` | `per-session-vm` | `preview-only` | `blocked` | `certification-only` | `none` |
+| `macos` | `arm64` | `local_compat` | `docker-engine` | `compat` | `unsupported` | `blocked` | `none` | `none` |
 | `linux` | `amd64` | `local_vm` | `colima` | `strict` | `validation-host-only` | `blocked` | `repo-required` | `trusted-linux-amd64-validator` |
 | `linux` | `amd64` | `local_compat` | `docker-desktop` | `compat` | `unsupported` | `blocked` | `none` | `none` |
+| `linux` | `amd64` | `local_compat` | `docker-engine` | `compat` | `preview-only` | `blocked` | `certification-only` | `none` |
 | `linux` | `amd64` | `remote_vm` | `aws-ec2-ssm` | `compat` | `validation-host-only` | `blocked` | `repo-required` | `trusted-linux-amd64-validator` |
 | `linux` | `amd64` | `remote_vm` | `gcp-vm` | `compat` | `validation-host-only` | `blocked` | `repo-required` | `trusted-linux-amd64-validator` |
 
-Linux arm64 and Windows rows are `unsupported`, `blocked`, and have no evidence
-claim. The `apple-container` target also requires macOS 27
+The Linux arm64 `docker-engine` row is the same as the Linux amd64 row. The
+other Linux arm64 rows and all Windows rows are `unsupported`, `blocked`, and
+have no evidence claim. The `apple-container` target also requires macOS 27
 (`internal/applecontainer/guard.go`), but its matrix row is still preview-only
 and blocked. See the canonical matrix for the exact reason in each row.
 

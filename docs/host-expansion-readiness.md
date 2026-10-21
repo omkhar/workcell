@@ -74,6 +74,11 @@ The Linux amd64 Docker Desktop row stays `unsupported`, `blocked`, and
 `evidence=none`. A different runtime requires a new target-provider
 implementation and an exact matrix row.
 
+The `docker-engine` target provider is such a runtime: rootful Docker Engine on
+the Linux host kernel. Its Linux amd64 and arm64 rows are `preview-only` and
+`blocked`. It prints a dry-run plan and a `--doctor` boundary only. Its
+promotion follows the gate below.
+
 The Phase 12 gate also applies to a future Windows promotion. All Windows rows
 stay `unsupported`, `blocked`, and `evidence=none`.
 

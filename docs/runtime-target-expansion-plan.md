@@ -30,11 +30,12 @@ target can be supported, preview-only, or unsupported.
 | `remote_vm/gcp-vm/compat` on macOS arm64 | `preview-only` | blocked | broker-plan evidence and a certification lane |
 | `local_vm/apple-container/per-session-vm` on macOS 27 arm64 | `preview-only` | blocked | evaluation evidence and evidence from the certification probe |
 | Linux amd64 Colima, AWS, and GCP rows | `validation-host-only` | blocked | `trusted-linux-amd64-validator` only |
+| `local_compat/docker-engine/compat` on Linux amd64 and arm64 | `preview-only` | blocked | dry-run scenario evidence |
 | Linux amd64 Docker Desktop row | `unsupported` | blocked | none |
-| Linux arm64 and Windows target rows | `unsupported` | blocked | none |
+| Other Linux arm64 rows, Windows rows, and the macOS `docker-engine` row | `unsupported` | blocked | none |
 
 The Workcell CLI accepts `colima`, `docker-desktop`, `aws-ec2-ssm`, `gcp-vm`,
-and `apple-container` as target values. It does not accept a managed
+`apple-container`, and `docker-engine` as target values. It does not accept a managed
 workstation or Azure as an operator target.
 
 Workcell defines a managed-workstation contract. Workcell has no
@@ -46,6 +47,12 @@ launch path blocks both values. They do not provide supported remote execution.
 The `apple-container` value exposes a reviewed dry-run plan on Apple Silicon
 macOS 27 or later. A live launch exits with status 2
 (`tests/scenarios/shared/test-apple-container-dry-run.sh`).
+
+The `docker-engine` value exposes a reviewed dry-run plan and a `--doctor`
+boundary on Linux amd64 and arm64 hosts. The target uses rootful Docker Engine
+on the host kernel, so its assurance class is `compat`. No egress control is
+connected yet, so the plan reports `egress_enforcement=none`. A live launch
+exits with status 2 (`tests/scenarios/shared/test-docker-engine-dry-run.sh`).
 
 ## Delivered Program Results
 
