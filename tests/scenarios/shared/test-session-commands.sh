@@ -465,8 +465,12 @@ snapshot_record() {
 }
 EOF_JSON
 }
+# The host cache parent of the launcher. It runs under env -i, so its cache
+# root ignores XDG_CACHE_HOME.
+HOST_CACHE_PARENT="${REAL_HOME}/.cache"
+[[ "$(uname -s)" != Darwin ]] || HOST_CACHE_PARENT="${REAL_HOME}/Library/Caches"
 snapshot_store_for() {
-  printf '%s/Library/Caches/colima/workcell-snapshots/%s.git\n' "${REAL_HOME}" "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)"
+  printf '%s/colima/workcell-snapshots/%s.git\n' "${HOST_CACHE_PARENT}" "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)"
 }
 SNAPSHOT_STORE_A="$(snapshot_store_for "${WORKSPACE_A}")"
 SNAPSHOT_INDEX_BEFORE="${TMP_DIR}/snapshot-index.before"
@@ -522,7 +526,7 @@ fi
 # workspace that contains the store. The snapshot command refuses it before it
 # touches docker or the store.
 SESSION_SNAPSHOT_OVERLAP="20260408T150700Z-66888888-$$"
-snapshot_record "${SESSION_SNAPSHOT_OVERLAP}" "${REAL_HOME}/Library/Caches" "${GIT_BASE}"
+snapshot_record "${SESSION_SNAPSHOT_OVERLAP}" "${HOST_CACHE_PARENT}" "${GIT_BASE}"
 if "${ROOT_DIR}/scripts/workcell" session snapshot --id "${SESSION_SNAPSHOT_OVERLAP}" >/dev/null 2>"${TMP_DIR}/snapshot-overlap.err"; then
   echo "session snapshot accepted a workspace that contains the store" >&2
   exit 1

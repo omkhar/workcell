@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/colimautil"
 	"github.com/omkhar/workcell/internal/egressproxy"
 	"github.com/omkhar/workcell/internal/pathutil"
 )
@@ -312,7 +313,7 @@ func TestDefaultInjectionPolicyPath(t *testing.T) {
 
 func TestDefaultInjectionBundleParent(t *testing.T) {
 	got := DefaultInjectionBundleParent("/home/u")
-	want := "/home/u/Library/Caches/colima/workcell-host-inputs"
+	want := filepath.Join(colimautil.CacheRoot("/home/u"), "workcell-host-inputs")
 	if got != want {
 		t.Fatalf("DefaultInjectionBundleParent = %q, want %q", got, want)
 	}

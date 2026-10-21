@@ -79,6 +79,7 @@ bash -lc '
   set -euo pipefail
   source "$1"
   trap - EXIT
+  unset XDG_CACHE_HOME
 
   fixture_root="$2"
   real_home="${fixture_root}/handoff-home"
@@ -111,7 +112,7 @@ EOF_DOCKER
   DIRECT_SOURCE_MOUNTS=(-v "${token_source}:/opt/workcell/host-inputs/credentials/copilot-github-token.txt:ro")
 
   prepare_copilot_token_handoff_mount copilot -p smoke
-  expected_handoff_parent="$(resolve_host_path "${real_home}/Library/Caches/colima/workcell-token-handoff")"
+  expected_handoff_parent="$(resolve_host_path "$(colima_staging_cache_root)/workcell-token-handoff")"
   if [[ -e "${token_source}" ]]; then
     echo "Copilot handoff did not remove the staged direct-mount token copy" >&2
     exit 1
