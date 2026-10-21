@@ -40,6 +40,7 @@ type WorkspaceManifest struct {
 	MaterializedWorkspace string           `json:"materialized_workspace"`
 	ExcludedPaths         []string         `json:"excluded_paths"`
 	Entries               []WorkspaceEntry `json:"entries"`
+	ArchiveSHA256         string           `json:"archive_sha256,omitempty"`
 }
 
 type BootstrapManifest struct {
