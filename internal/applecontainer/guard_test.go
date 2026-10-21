@@ -48,3 +48,24 @@ func TestRequireMacOS27(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckHostMapsLauncherHostFacts(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		hostOS, hostArch, version string
+		wantErr                   bool
+	}{
+		{"macos", "arm64", "27.0.1", false},
+		{"macos", "arm64", "26.5.1", true},
+		{"macos", "amd64", "27.0.1", true},
+		{"macos", "arm64", "", true},
+		{"linux", "arm64", "27.0", true},
+	}
+	for _, tc := range cases {
+		err := CheckHost(tc.hostOS, tc.hostArch, tc.version)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("CheckHost(%q, %q, %q) = %v, wantErr %v", tc.hostOS, tc.hostArch, tc.version, err, tc.wantErr)
+		}
+	}
+}
