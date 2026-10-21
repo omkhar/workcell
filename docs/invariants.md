@@ -36,15 +36,19 @@ session-local runtime state.
 
 Workcell uses these host staging roots:
 
-- `~/Library/Caches/colima/workcell-host-inputs`
-- `~/Library/Caches/colima/workcell-shadow`
+- `<cache>/colima/workcell-host-inputs`
+- `<cache>/colima/workcell-shadow`
+
+On macOS, `<cache>` is `~/Library/Caches`. On Linux, `<cache>` is
+`~/.cache`. The launcher runs with a clean environment, so it does not read
+`XDG_CACHE_HOME`.
 
 The managed Colima VM mounts these roots as read-only. These mounts do not give
 the runtime durable write access outside the selected workspace. GitHub
 publication remains a separate host action.
 
 Invariant `snapshot-store-host-owned`: `workcell session snapshot` writes to
-`~/Library/Caches/colima/workcell-snapshots`. No container mounts this store.
+`<cache>/colima/workcell-snapshots`. No container mounts this store.
 Workcell refuses a workspace that contains the store or is inside it.
 `scripts/verify-invariants.sh` checks this with dry runs.
 

@@ -150,6 +150,15 @@ Darwin, it returns `${REAL_HOME}/Library/Caches`. On any other host, it returns
 `XDG_CACHE_HOME`, or `${REAL_HOME}/.cache` when `XDG_CACHE_HOME` is unset or
 empty. The caller adds the `workcell` path parts.
 
+### `colima_staging_cache_root()`
+
+This function returns `colima` under `workcell_host_cache_root()`. It needs
+`REAL_HOME`. The launcher stages host inputs, shadows, and token handoffs under
+this root. The session snapshot store is also under this root.
+`colimautil.CacheRoot` in Go uses the same rule.
+`TestCacheRootMatchesShellHelper` runs this function with a Darwin and a Linux
+`uname`, and the Go rule must give the same path.
+
 ### `colima_vm_type()`
 
 This function returns the managed Colima VM type. On Linux, it returns `qemu`.
