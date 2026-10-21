@@ -28,12 +28,10 @@ const (
 	brokerStopGrace = 5 * time.Second
 )
 
-var (
-	errBootstrapNotImplemented = errors.New("remote_vm bootstrap over the broker is not implemented yet (roadmap L4-2)")
-	errSessionNotImplemented   = errors.New("remote_vm session control over the broker is not implemented yet (roadmap L4-3)")
-)
+var errSessionNotImplemented = errors.New("remote_vm session control over the broker is not implemented yet (roadmap L4-3)")
 
-// BrokeredTarget materializes the workspace on a live guest. It copies the
+// BrokeredTarget materializes the workspace on a live guest and prepares the
+// guest through the same broker (see BootstrapTarget). It copies the
 // workspace into the host state root as FakeTarget does, then streams a
 // deterministic tar of that reviewed copy through the provider broker to the
 // guest receiver port. The broker CLI connects its stdin and stdout to that
@@ -125,7 +123,7 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 		return "", "", err
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
-	guestWorkspace, err := runPinned(ctx, "broker", b.Command(targetID), func(conn io.ReadWriteCloser) (string, error) {
+	guestWorkspace, err := runPinned(ctx, "broker", b.Command(targetID), false, func(conn io.ReadWriteCloser) (string, error) {
 		return sendWorkspaceArchive(conn, staged.Manifest.MaterializationID, archive, size, digest)
 	})
 	return guestWorkspace, digest, err
@@ -134,8 +132,10 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 // runPinned runs argv without a shell and gives its stdio to transfer. Close
 // on that stdio closes the child's stdin. A child that fails reports its exit
 // status and the stderr tail under name. A timeout sends SIGTERM, and SIGKILL
-// follows after brokerStopGrace.
-func runPinned(ctx context.Context, name string, argv []string, transfer func(io.ReadWriteCloser) (string, error)) (string, error) {
+// follows after brokerStopGrace. After a good transfer, a broker (untilExit
+// false) is stopped, because its tunnel has no further use; a command
+// (untilExit true) must exit 0 on its own.
+func runPinned(ctx context.Context, name string, argv []string, untilExit bool, transfer func(io.ReadWriteCloser) (string, error)) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, brokerTransferTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -164,19 +164,21 @@ func runPinned(ctx context.Context, name string, argv []string, transfer func(io
 		io.WriteCloser
 	}{stdout, stdin})
 	stdin.Close()
-	if transferErr == nil {
-		// The guest acked the archive; the tunnel has no further use.
-		cancel()
-	} else {
-		// Give a failed broker a moment to exit with its own status.
+	switch {
+	case transferErr != nil:
+		// Give a failed child a moment to exit with its own status.
 		time.AfterFunc(brokerStopGrace, cancel)
+	case !untilExit:
+		cancel()
 	}
 	waitErr := cmd.Wait()
 	switch {
-	case transferErr == nil:
+	case transferErr == nil && (!untilExit || waitErr == nil):
 		return result, nil
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return "", fmt.Errorf("%s transfer timed out: %w", name, errors.Join(transferErr, waitErr))
+	case transferErr == nil:
+		return "", fmt.Errorf("%s failed (%w); %s stderr: %q", name, waitErr, name, stderr.b)
 	case waitErr != nil:
 		return "", fmt.Errorf("%s transfer failed (%w): %w; %s stderr: %q", name, waitErr, transferErr, name, stderr.b)
 	default:
@@ -198,8 +200,37 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (b BrokeredTarget) BootstrapTarget(context.Context, BootstrapRequest) (BootstrapResult, error) {
-	return BootstrapResult{}, errBootstrapNotImplemented
+// BootstrapTarget prepares the guest through the broker: the guest receiver
+// applies GuestFloorScript (the DOCKER-USER floor), pulls ImageRef by digest
+// and checks that the pulled image carries that digest. The host writes
+// bootstrap.json with the floor digest only after a matching ack.
+func (b BrokeredTarget) BootstrapTarget(ctx context.Context, req BootstrapRequest) (BootstrapResult, error) {
+	if strings.HasPrefix(req.TargetID, "-") {
+		return BootstrapResult{}, fmt.Errorf("target id must not start with '-': %q", req.TargetID)
+	}
+	if err := checkGuestImageRef(req.ImageRef); err != nil {
+		return BootstrapResult{}, err
+	}
+	if len(req.GuestFloorScript) == 0 || len(req.GuestFloorScript) > maxFloorScriptBytes {
+		return BootstrapResult{}, fmt.Errorf("guest floor script must be 1 to %d bytes", maxFloorScriptBytes)
+	}
+	result, err := bootstrapInStateRoot(b.Contract, req)
+	if err != nil {
+		return BootstrapResult{}, err
+	}
+	sum := sha256.Sum256(req.GuestFloorScript)
+	floorDigest := hex.EncodeToString(sum[:])
+	if _, err := runPinned(ctx, "broker", b.Command(req.TargetID), false, func(conn io.ReadWriteCloser) (string, error) {
+		return "", sendBootstrap(conn, req.ImageRef, req.GuestFloorScript, floorDigest)
+	}); err != nil {
+		// No record may claim a guest that did not finish its bootstrap.
+		return BootstrapResult{}, errors.Join(err, os.Remove(result.ManifestPath))
+	}
+	result.Manifest.EgressFloorSHA256 = floorDigest
+	if err := writeJSON(result.ManifestPath, result.Manifest); err != nil {
+		return BootstrapResult{}, err
+	}
+	return result, nil
 }
 
 func (b BrokeredTarget) StartSession(context.Context, StartSessionRequest) (SessionResult, error) {

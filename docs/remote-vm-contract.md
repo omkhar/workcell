@@ -94,9 +94,54 @@ The error includes the last 1 KiB of the broker standard error and a nonzero
 broker exit status. `gcloud` can exit 0 after a failed IAP connection, so the
 standard error can be the only cause.
 
-The other `ConformanceTarget` methods return an error. Remote bootstrap and
-session control are later roadmap items. Workcell does not install the guest
-receiver, and it does not provision cloud resources.
+## Brokered Bootstrap
+
+`BrokeredTarget.BootstrapTarget` prepares the guest through the same broker
+and receiver port. No launcher path calls it.
+
+The bootstrap has these steps:
+
+1. The caller renders the guest floor with the `guest-script` command of
+   `colima-egress-allowlist.sh`, the one owner of the egress rules. This
+   command prints the exact shell input that the Colima VM runs for the same
+   endpoints, so the guest gets the same `DOCKER-USER` rules. The Go code does
+   not build rules.
+2. The target accepts only an image reference that is pinned by digest, as
+   `internal/imageref` defines it. The release asset `workcell-image.digest`
+   holds this reference for a release image.
+3. The target writes `bootstrap.json` in the host state root. Then it sends one
+   header line with the image reference, the floor SHA-256, and the floor size.
+   Then it sends the floor script.
+4. The guest receiver verifies the size and the SHA-256 before it runs a
+   command. It runs each tool without a shell, with the same timeout, SIGTERM,
+   and SIGKILL rules as the broker:
+   - `bash -s --` reads the floor script. The floor applies first, so it is in
+     force before Workcell pulls or starts an image.
+   - `docker pull --quiet <image>` pulls the image by digest.
+   - `docker image inspect` must show that digest in `RepoDigests`.
+5. The receiver acknowledges the image reference and the floor SHA-256. The
+   host accepts only an acknowledgment with the same values. Then it records
+   `egress_floor_sha256` in `bootstrap.json`.
+
+An error at any step stops the bootstrap. An error after the host writes
+`bootstrap.json` removes it. The error includes the step, the tool exit status, and the last 1 KiB of the tool
+standard error.
+
+These items are operator preconditions. Workcell does not verify them yet:
+
+- The VM has no external IP address.
+- The VPC has no NAT, except the proxy path. It has no inbound rule, except the
+  IAP or SSM path to the receiver port.
+- The guest receiver runs as a user that can run Docker and `sudo` without a
+  password.
+- The guest has `getent` from glibc. The floor script resolves hostname
+  endpoints with `getent`. Without it, a hostname endpoint stops the floor
+  with an error. Container-Optimized OS does not have `getent`.
+
+Workcell does not install the guest receiver, and it does not provision cloud
+resources. `StartSession` and `FinishSession` return an error. Session start,
+the hardened container, the egress proxy, and the session audit events are
+later roadmap items.
 
 ## Session and Audit Requirements
 

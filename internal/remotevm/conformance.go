@@ -24,6 +24,7 @@ type ConformanceCase struct {
 	Agent             string
 	Mode              string
 	ImageRef          string
+	GuestFloorScript  []byte
 	StartedAt         string
 	FinishedAt        string
 	ExitStatus        string
@@ -72,10 +73,11 @@ func RunConformance(ctx context.Context, target ConformanceTarget, contract Cont
 		return ConformanceResult{}, err
 	}
 	bootstrap, err := target.BootstrapTarget(ctx, BootstrapRequest{
-		StateRoot:   c.StateRoot,
-		TargetID:    c.TargetID,
-		BootstrapID: c.BootstrapID,
-		ImageRef:    c.ImageRef,
+		StateRoot:        c.StateRoot,
+		TargetID:         c.TargetID,
+		BootstrapID:      c.BootstrapID,
+		ImageRef:         c.ImageRef,
+		GuestFloorScript: c.GuestFloorScript,
 	})
 	if err != nil {
 		return ConformanceResult{}, err

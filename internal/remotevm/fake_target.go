@@ -54,6 +54,7 @@ type BootstrapManifest struct {
 	AccessModel          string `json:"access_model"`
 	BootstrapID          string `json:"bootstrap_id"`
 	ImageRef             string `json:"image_ref"`
+	EgressFloorSHA256    string `json:"egress_floor_sha256,omitempty"`
 }
 
 type MaterializeRequest struct {
@@ -76,6 +77,10 @@ type BootstrapRequest struct {
 	TargetID    string
 	BootstrapID string
 	ImageRef    string
+	// GuestFloorScript is the output of
+	// `scripts/colima-egress-allowlist.sh guest-script "<host:port ...>"`. A
+	// brokered target runs it on the guest; the fake target has no guest.
+	GuestFloorScript []byte
 }
 
 type BootstrapResult struct {

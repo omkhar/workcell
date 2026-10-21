@@ -24,10 +24,11 @@ import (
 // TestFakeBrokerProcess is the fake broker CLI. A brokered test runs the test
 // binary with "-- <mode> <guest root>"; a normal run has no arguments and
 // skips. The receive mode serves the real receiver on stdio, as the IAP or
-// SSM stdio tunnel would.
+// SSM stdio tunnel would. The guest mode serves the real guest dispatch with
+// the fake tools "-- guest <guest root> <docker mode> <bash mode> <log>".
 func TestFakeBrokerProcess(t *testing.T) {
 	args := flag.Args()
-	if len(args) != 2 {
+	if len(args) < 2 {
 		t.Skip("fake broker helper process")
 	}
 	stdio := struct {
@@ -37,6 +38,10 @@ func TestFakeBrokerProcess(t *testing.T) {
 	switch args[0] {
 	case "receive":
 		if err := receiveWorkspace(stdio, args[1], defaultWorkspaceLimits); err != nil {
+			os.Exit(3)
+		}
+	case "guest":
+		if err := serveGuest(context.Background(), stdio, args[1], defaultWorkspaceLimits, fakeGuestTools(args[2], args[3], args[4])); err != nil {
 			os.Exit(3)
 		}
 	case "exit7":
@@ -102,14 +107,20 @@ func TestBrokeredTargetMaterializesTheWorkspaceOnTheGuest(t *testing.T) {
 	}
 }
 
-func TestRunConformanceWithBrokeredTargetStopsAtBootstrap(t *testing.T) {
+func TestRunConformanceWithBrokeredTargetStopsAtTheSession(t *testing.T) {
 	t.Parallel()
 
 	var started bool
 	caseSpec := DefaultConformanceCase(t.TempDir(), filepath.Join("testdata", "source-workspace"))
-	_, err := RunConformance(context.Background(), fakeBrokerTarget(t, "receive", t.TempDir(), &started), DefaultGCPVMContract(), caseSpec)
-	if !errors.Is(err, errBootstrapNotImplemented) {
-		t.Fatalf("RunConformance() error = %v, want the bootstrap gap after a valid materialization", err)
+	caseSpec.ImageRef = pinnedTestImage
+	caseSpec.GuestFloorScript = []byte("true\n")
+	target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string {
+		started = true
+		return []string{os.Args[0], "-test.run=^TestFakeBrokerProcess$", "--", "guest", t.TempDir(), "ok", "ok", filepath.Join(t.TempDir(), "log")}
+	}}
+	_, err := RunConformance(context.Background(), target, DefaultGCPVMContract(), caseSpec)
+	if !errors.Is(err, errSessionNotImplemented) || !started {
+		t.Fatalf("RunConformance() error = %v, want the session gap after a valid materialization and bootstrap", err)
 	}
 }
 
@@ -208,13 +219,10 @@ func TestBrokeredTargetConstructorsPinTheBrokerArgv(t *testing.T) {
 	}
 }
 
-func TestBrokeredTargetLeavesBootstrapAndSessionsToLaterItems(t *testing.T) {
+func TestBrokeredTargetLeavesSessionsToALaterItem(t *testing.T) {
 	t.Parallel()
 
 	var target BrokeredTarget
-	if _, err := target.BootstrapTarget(context.Background(), BootstrapRequest{}); !errors.Is(err, errBootstrapNotImplemented) {
-		t.Fatalf("BootstrapTarget() error = %v", err)
-	}
 	if _, err := target.StartSession(context.Background(), StartSessionRequest{}); !errors.Is(err, errSessionNotImplemented) {
 		t.Fatalf("StartSession() error = %v", err)
 	}
