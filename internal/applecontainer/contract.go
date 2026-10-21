@@ -2,7 +2,7 @@
 // Copyright 2026 Omkhar Arasaratnam
 
 // Package applecontainer holds the roadmap C1 evaluation spike for the Apple
-// `container` runtime (macOS 26+). It is deliberately self-contained: it does
+// `container` runtime (macOS 27+). It is deliberately self-contained: it does
 // NOT reuse internal/remotevm's remote-VM Contract, whose Validate() hardcodes
 // brokered, remote-materialization semantics that are wrong for a local
 // per-session VM. Apple `container` boots one lightweight Virtualization.framework

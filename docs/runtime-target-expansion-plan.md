@@ -28,7 +28,7 @@ target can be supported, preview-only, or unsupported.
 | `local_compat/docker-desktop/compat` on macOS arm64 | `supported` | allowed | live certification |
 | `remote_vm/aws-ec2-ssm/compat` on macOS arm64 | `preview-only` | blocked | broker-plan evidence and a certification lane |
 | `remote_vm/gcp-vm/compat` on macOS arm64 | `preview-only` | blocked | broker-plan evidence and a certification lane |
-| `local_vm/apple-container/per-session-vm` on macOS 26 arm64 | `preview-only` | blocked | evaluation evidence and evidence from the certification probe |
+| `local_vm/apple-container/per-session-vm` on macOS 27 arm64 | `preview-only` | blocked | evaluation evidence and evidence from the certification probe |
 | Linux amd64 Colima, AWS, and GCP rows | `validation-host-only` | blocked | `trusted-linux-amd64-validator` only |
 | Linux amd64 Docker Desktop row | `unsupported` | blocked | none |
 | Linux arm64 and Windows target rows | `unsupported` | blocked | none |
@@ -57,7 +57,7 @@ Workcell delivered these program results:
 - a provider-neutral managed-workstation contract
 - an enterprise evidence baseline
 - a host-expansion readiness gate
-- an Apple `container` evaluation with a fail-closed macOS 26 guard
+- an Apple `container` evaluation with a fail-closed macOS 27 guard
 
 The detailed delivery record is in
 [`runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
