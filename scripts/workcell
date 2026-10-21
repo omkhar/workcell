@@ -1647,12 +1647,15 @@ effective_session_workspace_mode() {
   default_session_workspace_mode
 }
 
+# The Git-directory entry that holds the isolated clone of each session.
+SESSION_WORKSPACES_GIT_ENTRY="workcell-sessions"
+
 session_workspace_parent_dir() {
   local source_workspace="$1"
   local git_dir=""
 
   git_dir="$(workspace_absolute_git_dir "${source_workspace}")"
-  printf '%s/workcell-sessions\n' "${git_dir}"
+  printf '%s/%s\n' "${git_dir}" "${SESSION_WORKSPACES_GIT_ENTRY}"
 }
 
 isolated_session_workspace_path() {
@@ -8737,6 +8740,17 @@ prepare_workspace_control_plane_shadow() {
     if [[ -e "${workspace}/${git_rel}/worktrees" ]]; then
       add_shadow_dir_mount "${workspace}" "${git_rel}/worktrees"
     fi
+    # The isolated clones of other sessions are operator state: an agent that
+    # writes one can put host files into its snapshot. Mask the directory even
+    # when it is absent, because Workcell can make a clone there after this
+    # launch. A symlink there would move the clones to its target.
+    rel="${git_rel}/${SESSION_WORKSPACES_GIT_ENTRY}"
+    if [[ -L "${workspace}/${rel}" ]] || { [[ -e "${workspace}/${rel}" ]] && [[ ! -d "${workspace}/${rel}" ]]; }; then
+      echo "Refusing git workspace: the session clone directory is not a directory: ${workspace}/${rel}" >&2
+      exit 2
+    fi
+    mkdir -p "${workspace}/${rel}"
+    add_shadow_dir_mount "${workspace}" "${rel}"
     if [[ -d "${workspace}/${git_rel}/modules" ]]; then
       # A lone NUL after a successful walk is the completion sentinel. Bash
       # drops the status of a process substitution, so a failed walk must not

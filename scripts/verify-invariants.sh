@@ -5560,14 +5560,14 @@ for required in "--user" "HOME=/state/agent-home" "CODEX_HOME=/state/agent-home/
   fi
 done
 
-for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.github/hooks:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
+for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.git/workcell-sessions:ro" "/workspace/.github/hooks:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
   if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
     echo "Missing workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
-for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/hooks:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro"; do
+for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/hooks:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro" "/workspace/.alt/.git/workcell-sessions:ro"; do
   if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
     echo "Missing nested workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
@@ -7007,6 +7007,17 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   exit 1
 fi
 grep -q 'symlinked module path that redirects Git config and hooks: .git/worktrees' /tmp/workcell-commondir-wtlink.out
+
+# A session clone directory link would move the clones of later sessions.
+COMMONDIR_SESSIONS_REPO="${COMMONDIR_ROOT}/sessions-link-repo"
+git init -q -b master "${COMMONDIR_SESSIONS_REPO}"
+git -C "${COMMONDIR_SESSIONS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+ln -s ../exposed "${COMMONDIR_SESSIONS_REPO}/.git/workcell-sessions"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_SESSIONS_REPO}" --dry-run >/tmp/workcell-sessions-link.out 2>&1; then
+  echo "Expected repo with a symlinked .git/workcell-sessions to be rejected" >&2
+  exit 1
+fi
+grep -q 'the session clone directory is not a directory: .*/.git/workcell-sessions' /tmp/workcell-sessions-link.out
 
 # A Git admin directory under a worktrees name outside the masked paths must be rejected.
 COMMONDIR_WT_REPO="${COMMONDIR_ROOT}/worktrees-admin-repo"
