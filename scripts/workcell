@@ -2197,10 +2197,30 @@ support_matrix_launch_allowed() {
   [[ "${SUPPORT_MATRIX_LAUNCH}" == "allowed" ]]
 }
 
-preview_remote_vm_dry_run_allowed() {
-  target_backend_is_remote_vm_preview "${TARGET_BACKEND}" &&
-    [[ "${DRY_RUN}" -eq 1 ]] &&
-    [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]
+# A preview target prints its reviewed dry-run plan only on a preview-only
+# matrix row, after any host guard of its own.  It never launches.
+preview_target_dry_run_allowed() {
+  [[ "${DRY_RUN}" -eq 1 ]] || return 1
+  case "${TARGET_BACKEND}" in
+    aws-ec2-ssm | gcp-vm) ;;
+    apple-container)
+      apple_container_host_ready || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]
+}
+
+# emit_preview_doctor_next prints the --doctor next step of a preview target
+# on its preview-only row: install the missing host tools, or the action.
+emit_preview_doctor_next() {
+  if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
+    printf 'doctor_recommended_next=install-host-tools\n'
+  else
+    printf 'doctor_recommended_next=%s\n' "$1"
+  fi
 }
 
 # emit_preview_launch_state prints the launch state that every preview-target
@@ -2263,21 +2283,18 @@ apple_container_host_ready() {
     "$(detected_macos_product_version)"
 }
 
-# An apple-container dry-run prints the reviewed plan only on a preview-only
-# matrix row and a host that passes the guard.  It never launches.
-apple_container_dry_run_allowed() {
-  [[ "${TARGET_BACKEND}" == "apple-container" ]] &&
-    [[ "${DRY_RUN}" -eq 1 ]] &&
-    apple_container_host_ready &&
-    [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]
-}
-
-emit_apple_container_dry_run() {
+# emit_local_preview_dry_run <access_line> <rollout_doc> prints the reviewed
+# plan of a local preview target.
+emit_local_preview_dry_run() {
   emit_preview_launch_state
-  printf 'local_access_model=direct per_session_vm=1 live_smoke=certification-only\n' >&2
-  printf 'execution_path=apple-container-preview-plan audit_log=%s rollout_doc=docs/apple-container-evaluation.md\n' \
-    "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
-  printf 'apple-container-preview-plan target=apple-container target_id=%s launch_gate=certification-only workspace=%s\n' \
+  printf '%s\n' "$1" >&2
+  printf 'execution_path=%s-preview-plan audit_log=%s rollout_doc=%s\n' \
+    "$(current_target_provider)" \
+    "$(profile_audit_log_path "${COLIMA_PROFILE}")" \
+    "$2" >&2
+  printf '%s-preview-plan target=%s target_id=%s launch_gate=certification-only workspace=%s\n' \
+    "$(current_target_provider)" \
+    "$(current_target_provider)" \
     "$(current_target_id)" \
     "${WORKSPACE}"
 }
@@ -2296,7 +2313,7 @@ check_colima_kvm() {
 }
 
 fail_for_unsupported_launch_target() {
-  if support_matrix_launch_allowed || preview_remote_vm_dry_run_allowed || apple_container_dry_run_allowed; then
+  if support_matrix_launch_allowed || preview_target_dry_run_allowed; then
     return 0
   fi
 
@@ -9687,21 +9704,13 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
     apple_container_host_ready && apple_container_host_state="ready"
     printf 'doctor_apple_container_host=%s\n' "${apple_container_host_state}"
     if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && [[ "${apple_container_host_state}" == "ready" ]]; then
-      if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
-        printf 'doctor_recommended_next=install-host-tools\n'
-      else
-        printf 'doctor_recommended_next=review-apple-container-preview\n'
-      fi
+      emit_preview_doctor_next review-apple-container-preview
       exit 0
     fi
   fi
   if ! support_matrix_launch_allowed; then
     if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
-      if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
-        printf 'doctor_recommended_next=install-host-tools\n'
-      else
-        printf 'doctor_recommended_next=%s\n' "$(preview_remote_vm_rollout_action "${TARGET_BACKEND}")"
-      fi
+      emit_preview_doctor_next "$(preview_remote_vm_rollout_action "${TARGET_BACKEND}")"
       exit 0
     fi
     printf 'doctor_recommended_next=use-supported-host\n'
@@ -9816,7 +9825,7 @@ if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
   exit 0
 fi
 if [[ "${TARGET_BACKEND}" == "apple-container" ]]; then
-  emit_apple_container_dry_run
+  emit_local_preview_dry_run 'local_access_model=direct per_session_vm=1 live_smoke=certification-only' docs/apple-container-evaluation.md
   exit 0
 fi
 if [[ "${DRY_RUN}" -eq 0 ]]; then
