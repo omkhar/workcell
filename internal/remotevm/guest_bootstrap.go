@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -65,16 +64,22 @@ func sendBootstrap(conn io.ReadWriter, ref string, script []byte, floorDigest st
 	return nil
 }
 
-// serveGuest answers one brokered request on conn: a bootstrap, or else a
-// workspace archive.
+// serveGuest answers one brokered request on conn: a bootstrap, a session
+// start or stop, or else a workspace archive.
 func serveGuest(ctx context.Context, conn io.ReadWriter, root string, limits workspaceLimits, tools guestTools) error {
 	reader := bufio.NewReaderSize(conn, 4096)
 	stream := struct {
 		io.Reader
 		io.Writer
 	}{reader, conn}
-	if magic, _ := reader.Peek(len(bootstrapMagic) + 1); string(magic) == bootstrapMagic+" " {
-		return receiveBootstrap(ctx, stream, tools)
+	for magic, receive := range map[string]func(context.Context, io.ReadWriter, guestTools) error{
+		bootstrapMagic:    receiveBootstrap,
+		sessionStartMagic: receiveSessionStart,
+		sessionStopMagic:  receiveSessionStop,
+	} {
+		if peek, _ := reader.Peek(len(magic) + 1); string(peek) == magic+" " {
+			return receive(ctx, stream, tools)
+		}
 	}
 	return receiveWorkspace(stream, root, limits)
 }
@@ -82,12 +87,7 @@ func serveGuest(ctx context.Context, conn io.ReadWriter, root string, limits wor
 // receiveBootstrap runs one framed bootstrap and acks the result.
 func receiveBootstrap(ctx context.Context, conn io.ReadWriter, tools guestTools) error {
 	ref, floorDigest, err := bootstrapGuest(ctx, bufio.NewReaderSize(conn, 4096), tools)
-	if err != nil {
-		_, ackErr := fmt.Fprintf(conn, "error %q\n", err.Error())
-		return errors.Join(err, ackErr)
-	}
-	_, err = fmt.Fprintf(conn, "ok %s %s\n", ref, floorDigest)
-	return err
+	return ackGuest(conn, err, ref+" "+floorDigest)
 }
 
 // bootstrapGuest verifies the frame before it runs anything. It applies the

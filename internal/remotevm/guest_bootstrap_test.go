@@ -54,6 +54,11 @@ func TestFakeGuestToolProcess(t *testing.T) {
 	case mode == "hang":
 		signal.Ignore(syscall.SIGTERM)
 		time.Sleep(time.Minute)
+	case toolArgs[0] == "run" || toolArgs[0] == "container":
+		if err := fakeDocker(log+".containers", mode, toolArgs); err != nil {
+			os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
 	case toolArgs[0] == "pull" && mode == "pullfail":
 		os.Stderr.WriteString("Error response from daemon: manifest unknown\n")
 		os.Exit(9)
