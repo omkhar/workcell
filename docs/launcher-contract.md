@@ -120,7 +120,7 @@ refresh.
 [`host-detect.sh`](../scripts/lib/launcher/host-detect.sh) returns normalized,
 lowercase host fields during detection without a test override. The module uses
 `uname`, `ps`, `tr`, `PPID`, environment values, `/etc/os-release`,
-`/dev/kvm`, and its own functions.
+`/dev/kvm`, `sw_vers`, and its own functions.
 
 ### `support_matrix_host_override_allowed()`
 
@@ -179,11 +179,20 @@ the device exists but the open fails. When the VM type is `qemu` and the state
 is not `ready`, the launch stops with status `2`. Workcell does not use QEMU
 TCG emulation. `--doctor` shows the state in `doctor_kvm`.
 
+### `detected_macos_product_version()`
+
+This function returns the `sw_vers -productVersion` value on macOS and an empty
+value on any other host. The launcher passes it with the host OS and
+architecture to the `apple-container` host guard
+(`internal/applecontainer/guard.go`). `--doctor` shows the guard result in
+`doctor_apple_container_host`.
+
 ### Harness-only overrides
 
 An allowed test override passes through without a case change.
 `WORKCELL_TEST_KVM_DEVICE` replaces the `/dev/kvm` path for an allowed harness.
-The launcher removes this value when the sanitized-entrypoint marker is absent.
+`WORKCELL_TEST_MACOS_PRODUCT_VERSION` replaces the macOS product version.
+The launcher removes these values when the sanitized-entrypoint marker is absent.
 
 ## Trusted host-command execution (`host-exec.sh`)
 
