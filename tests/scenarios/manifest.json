@@ -170,6 +170,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/docker-engine-dry-run",
+      "description": "Docker Engine compat preview target selection prints a reviewed dry-run plan and the rootful socket doctor boundary only on Linux amd64 and arm64 hosts, refuses other hosts, and keeps live launch and prepare blocked",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex"],
+      "persona": "developer",
+      "test_file": "shared/test-docker-engine-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/aws-remote-vm-dry-run",
       "description": "AWS remote VM preview target selection keeps the brokered target metadata, support boundary, and certification-only live gate explicit while allowing deterministic dry-run planning",
       "lane": "secretless",

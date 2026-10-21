@@ -561,6 +561,19 @@ it prints the host guard result in doctor_apple_container_host. A live launch
 exits with status 2 until certification promotes the target. On any other
 host, the dry-run names the guard reason and exits with status 2.
 .TP
+.B --target docker-engine
+Select the preview-only local_compat/docker-engine/compat target: rootful
+Docker Engine on the Linux host kernel, a lower-assurance path. It needs a
+Linux amd64 or arm64 host. With
+.BR --dry-run ,
+it prints the reviewed plan; with
+.BR --doctor ,
+it prints doctor_docker_engine_socket and whether the Docker daemon answers
+there in doctor_docker_engine_daemon. A live launch and
+.B --prepare
+exit with status 2 until certification promotes the target. On any other
+host, the dry-run exits with status 2.
+.TP
 .B --target-id ID
 Set an explicit remote target identifier for preview backends such as
 .BR aws-ec2-ssm

@@ -322,6 +322,19 @@ docs = [
   "docs/apple-container-evaluation.md",
 ]
 
+[functional.FR-017]
+title = "Preview Docker Engine compat target"
+summary = "Workcell exposes the preview-only docker-engine local_compat target, rootful Docker Engine on the Linux host kernel, as a reviewed dry-run plan and doctor boundary on Linux amd64 and arm64 hosts, refuses other hosts, and keeps live launch blocked until certification."
+workflows = ["launch_target_docker_engine"]
+evidence = [
+  "tests/scenarios/shared/test-docker-engine-dry-run.sh",
+  "internal/host/supportmatrix/supportmatrix_test.go",
+]
+docs = [
+  "man/workcell.1",
+  "docs/runtime-target-expansion-plan.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."

@@ -244,6 +244,7 @@ Options:
   --target colima|docker-desktop|aws-ec2-ssm|gcp-vm
                                 Runtime target to launch (default: colima)
                                 --target apple-container is a macOS 27 preview: --dry-run and --doctor only
+                                --target docker-engine is a Linux compat preview: --dry-run and --doctor only
   --target-id ID                Explicit remote target identifier for preview backends
   --cache-profile off|standard  Opt-in persistent non-secret cache plane (default: off)
   --codex-rules-mutability readonly|session
@@ -561,10 +562,10 @@ validate_target_id_name() {
 
 validate_target_backend_name() {
   case "$1" in
-    colima | docker-desktop | aws-ec2-ssm | gcp-vm | apple-container) ;;
+    colima | docker-desktop | aws-ec2-ssm | gcp-vm | apple-container | docker-engine) ;;
     *)
       echo "Unsupported target backend: $1" >&2
-      echo "Use --target colima, --target docker-desktop, --target aws-ec2-ssm, --target gcp-vm, or --target apple-container." >&2
+      echo "Use --target colima, --target docker-desktop, --target aws-ec2-ssm, --target gcp-vm, --target apple-container, or --target docker-engine." >&2
       exit 2
       ;;
   esac
@@ -2010,7 +2011,7 @@ current_target_kind() {
     colima | apple-container)
       printf 'local_vm\n'
       ;;
-    docker-desktop)
+    docker-desktop | docker-engine)
       printf 'local_compat\n'
       ;;
     aws-ec2-ssm | gcp-vm)
@@ -2084,7 +2085,7 @@ current_target_id() {
     docker-desktop)
       docker_desktop_context_name
       ;;
-    aws-ec2-ssm | gcp-vm | apple-container)
+    aws-ec2-ssm | gcp-vm | apple-container | docker-engine)
       printf '%s\n' "${COLIMA_PROFILE}"
       ;;
   esac
@@ -2095,7 +2096,7 @@ current_target_assurance_class() {
     colima)
       printf 'strict\n'
       ;;
-    docker-desktop)
+    docker-desktop | docker-engine)
       printf 'compat\n'
       ;;
     aws-ec2-ssm | gcp-vm)
@@ -2202,7 +2203,7 @@ support_matrix_launch_allowed() {
 preview_target_dry_run_allowed() {
   [[ "${DRY_RUN}" -eq 1 ]] || return 1
   case "${TARGET_BACKEND}" in
-    aws-ec2-ssm | gcp-vm) ;;
+    aws-ec2-ssm | gcp-vm | docker-engine) ;;
     apple-container)
       apple_container_host_ready || return 1
       ;;
@@ -2299,6 +2300,21 @@ emit_local_preview_dry_run() {
     "${WORKSPACE}"
 }
 
+# The docker-engine target uses the rootful Docker Engine on the Linux host.
+DOCKER_ENGINE_SOCKET="unix:///var/run/docker.sock"
+
+# docker_engine_daemon_state prints reachable when the trusted docker CLI
+# answers on DOCKER_ENGINE_SOCKET, else unreachable.  It is a --doctor probe:
+# the docker-engine target launches nothing yet.
+docker_engine_daemon_state() {
+  if prepare_optional_target_docker_client &&
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" --host "${DOCKER_ENGINE_SOCKET}" info >/dev/null 2>&1; then
+    printf 'reachable\n'
+  else
+    printf 'unreachable\n'
+  fi
+}
+
 # Returns 1 and names the cause when the selected Colima VM type is qemu and
 # /dev/kvm is not usable.  There is no QEMU TCG fallback.
 check_colima_kvm() {
@@ -2333,6 +2349,9 @@ fail_for_unsupported_launch_target() {
   elif [[ "$(current_target_provider)" == "apple-container" ]]; then
     echo "The Apple container target is a preview-only per-session VM path for Apple Silicon macOS 27 or later. Live launch stays blocked until certification." >&2
     echo "Use --dry-run on such a host to inspect the reviewed plan, and see docs/apple-container-evaluation.md for the certification path." >&2
+  elif [[ "$(current_target_provider)" == "docker-engine" ]]; then
+    echo "The Docker Engine target is a preview-only lower-assurance compat path: rootful Docker on the Linux host kernel. Live launch stays blocked until certification." >&2
+    echo "Use --dry-run on a Linux amd64 or arm64 host to inspect the reviewed plan, and see docs/runtime-target-expansion-plan.md for the certification path." >&2
   else
     echo "The Docker Desktop target remains a lower-assurance compat path and is only supported where the published host matrix allows it." >&2
   fi
@@ -9394,8 +9413,8 @@ if target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${PREPARE}" -e
   echo "--prepare and --prepare-only do not apply to remote VM preview targets." >&2
   exit 2
 fi
-if [[ "${TARGET_BACKEND}" == "apple-container" ]] && [[ "${PREPARE}" -eq 1 ]]; then
-  echo "--prepare and --prepare-only do not apply to the apple-container preview target." >&2
+if [[ "${TARGET_BACKEND}" == "apple-container" || "${TARGET_BACKEND}" == "docker-engine" ]] && [[ "${PREPARE}" -eq 1 ]]; then
+  echo "--prepare and --prepare-only do not apply to the ${TARGET_BACKEND} preview target." >&2
   exit 2
 fi
 if [[ "${SESSION_DETACHED}" -eq 0 ]] && [[ -n "${SESSION_WORKSPACE_MODE}" ]]; then
@@ -9708,6 +9727,12 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
       exit 0
     fi
   fi
+  if [[ "${TARGET_BACKEND}" == "docker-engine" ]] && [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]; then
+    printf 'doctor_docker_engine_socket=%s\n' "${DOCKER_ENGINE_SOCKET}"
+    printf 'doctor_docker_engine_daemon=%s\n' "$(docker_engine_daemon_state)"
+    emit_preview_doctor_next review-docker-engine-preview
+    exit 0
+  fi
   if ! support_matrix_launch_allowed; then
     if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
       emit_preview_doctor_next "$(preview_remote_vm_rollout_action "${TARGET_BACKEND}")"
@@ -9826,6 +9851,10 @@ if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
 fi
 if [[ "${TARGET_BACKEND}" == "apple-container" ]]; then
   emit_local_preview_dry_run 'local_access_model=direct per_session_vm=1 live_smoke=certification-only' docs/apple-container-evaluation.md
+  exit 0
+fi
+if [[ "${TARGET_BACKEND}" == "docker-engine" ]]; then
+  emit_local_preview_dry_run "local_access_model=direct docker_engine_socket=${DOCKER_ENGINE_SOCKET} rootful=1 live_smoke=certification-only" docs/runtime-target-expansion-plan.md
   exit 0
 fi
 if [[ "${DRY_RUN}" -eq 0 ]]; then

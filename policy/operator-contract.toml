@@ -544,3 +544,13 @@ docs = ["man/workcell.1", "docs/apple-container-evaluation.md"]
 evidence = ["tests/scenarios/shared/test-apple-container-dry-run.sh", "internal/applecontainer/guard_test.go"]
 requirements = ["functional.FR-016"]
 target_state = "retain"
+
+[workflows.launch_target_docker_engine]
+title = "Preview Docker Engine compat target plan"
+support = "supported"
+canonical = "--target docker-engine"
+discoverability = ["top-level-help", "manpage"]
+docs = ["man/workcell.1", "docs/runtime-target-expansion-plan.md"]
+evidence = ["tests/scenarios/shared/test-docker-engine-dry-run.sh", "internal/host/supportmatrix/supportmatrix_test.go"]
+requirements = ["functional.FR-017"]
+target_state = "retain"
