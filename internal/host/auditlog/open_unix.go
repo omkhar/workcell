@@ -15,15 +15,21 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// OpenAppend opens an audit log for append, and creates it owner-only if it
+// does not exist, with the same no-follow walk and file checks as a read.
+func OpenAppend(path string) (*os.File, error) {
+	return openRegularSingleLink(path, unix.O_WRONLY|unix.O_APPEND|unix.O_CREAT)
+}
+
 // openRegularSingleLink opens an audit log without following its leaf path.
 // The nonblocking flag prevents a swapped FIFO from stalling the host command.
-func openRegularSingleLink(path string) (*os.File, error) {
+func openRegularSingleLink(path string, flags int) (*os.File, error) {
 	parentFD, leaf, err := openAuditLogParent(path)
 	if err != nil {
 		return nil, err
 	}
 	defer unix.Close(parentFD)
-	fd, err := unix.Openat(parentFD, leaf, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	fd, err := unix.Openat(parentFD, leaf, flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0o600)
 	if err != nil {
 		if errors.Is(err, unix.ELOOP) {
 			return nil, fmt.Errorf("auditlog: %s must not be a symlink: %w", path, err)

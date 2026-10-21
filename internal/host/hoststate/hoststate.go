@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,7 +17,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
+	"github.com/omkhar/workcell/internal/bashquote"
+	"github.com/omkhar/workcell/internal/host/auditlog"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
@@ -27,6 +31,84 @@ func AuditRecordDigest(prevDigest, timestamp string, args []string) string {
 	values := append([]string{prevDigest, timestamp}, args...)
 	sum := sha256.Sum256([]byte(strings.Join(values, "\x00")))
 	return hex.EncodeToString(sum[:])
+}
+
+// auditLockAttempts and auditLockBackoff give the same bounded wait for the
+// audit-log lock as acquire_audit_log_lock in scripts/workcell (about 30 s).
+const (
+	auditLockAttempts = 1500
+	auditLockBackoff  = 20 * time.Millisecond
+)
+
+// AppendAuditRecord appends one record to the chained audit log at path, in
+// the line format of append_audit_record_to_path in scripts/workcell, under
+// the same <path>.lock: the timestamp, the key=value args, prev_digest when
+// the log has a record_digest, and record_digest from AuditRecordDigest. Each
+// token is quoted with bashquote.Quote, so auditseal decodes and verifies the
+// result as it does the bash records. A token that the decoder cannot give
+// back unchanged (a NUL byte or invalid UTF-8) or an arg that is not key=value
+// fails closed before the lock.
+func AppendAuditRecord(path, timestamp string, args []string) error {
+	for _, token := range append([]string{"timestamp=" + timestamp}, args...) {
+		key, _, ok := strings.Cut(token, "=")
+		if !ok || key == "" || strings.ContainsRune(token, 0) || !utf8.ValidString(token) {
+			return fmt.Errorf("audit record token %q must be key=value, valid UTF-8 and free of NUL", token)
+		}
+	}
+	lockDir := path + ".lock"
+	pid := os.Getpid()
+	for attempt := 0; ; attempt++ {
+		acquired, err := launcher.AcquireProfileLock(lockDir, pid)
+		if err != nil {
+			return err
+		}
+		if acquired {
+			break
+		}
+		if attempt+1 >= auditLockAttempts {
+			return fmt.Errorf("could not acquire the audit-log lock for %s", path)
+		}
+		time.Sleep(auditLockBackoff)
+	}
+	appendErr := appendChainedAuditRecord(path, timestamp, args)
+	for attempt := 0; ; attempt++ {
+		err := launcher.ReleaseProfileLock(lockDir, pid)
+		if !errors.Is(err, launcher.ErrProfileLockTransitionBusy) || attempt+1 >= auditLockAttempts {
+			return errors.Join(appendErr, err)
+		}
+		time.Sleep(auditLockBackoff)
+	}
+}
+
+func appendChainedAuditRecord(path, timestamp string, args []string) error {
+	// The previous digest is the last record_digest value in the log, as the
+	// sed in append_audit_record_to_path reads it.
+	prevDigest := ""
+	err := auditlog.ForEachLine(path, func(line string, _ int) error {
+		line = strings.TrimSuffix(line, "\n")
+		if index := strings.LastIndex(line, "record_digest="); index >= 0 {
+			prevDigest, _, _ = strings.Cut(line[index+len("record_digest="):], " ")
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	var line strings.Builder
+	line.WriteString("timestamp=" + bashquote.Quote(timestamp) + " ")
+	for _, arg := range args {
+		line.WriteString(bashquote.Quote(arg) + " ")
+	}
+	if prevDigest != "" {
+		line.WriteString("prev_digest=" + prevDigest + " ")
+	}
+	line.WriteString("record_digest=" + AuditRecordDigest(prevDigest, timestamp, args) + " \n")
+	file, err := auditlog.OpenAppend(path)
+	if err != nil {
+		return err
+	}
+	_, err = file.WriteString(line.String())
+	return errors.Join(err, file.Close())
 }
 
 func DirectMountCacheKey(hostSource, mountPath string) string {

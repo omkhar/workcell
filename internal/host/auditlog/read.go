@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"golang.org/x/sys/unix"
 )
 
 // MaxLineBytes is the maximum physical audit-log line size, including its
@@ -24,7 +26,7 @@ const MaxLogBytes = 64 << 20
 // ForEachLine streams a file to fn without reading the whole file into memory.
 // It returns an error when the file exceeds either documented audit-log limit.
 func ForEachLine(path string, fn func(line string, lineNumber int) error) error {
-	file, err := openRegularSingleLink(path)
+	file, err := openRegularSingleLink(path, unix.O_RDONLY)
 	if err != nil {
 		return err
 	}
