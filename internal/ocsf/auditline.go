@@ -21,8 +21,8 @@ import (
 //     bytes is escaped (spaces → `\ `, newlines → the ANSI-C `$'...'` form). The
 //     launch record's `endpoints=` field is a SPACE-DELIMITED allowlist
 //     (ALLOW_ENDPOINTS), so a naive strings.Fields split would truncate it at the
-//     first space. The authoritative encoder is bashQuote in
-//     internal/publishpr/host_exec.go; splitQuotedTokens is its exact inverse and
+//     first space. The authoritative encoder is bashquote.Quote in
+//     internal/bashquote; splitQuotedTokens is its exact inverse and
 //     is validated against real `bash printf %q` in the tests.
 //   - encodingPercentPath — internal/applecontainer writes plain Sprintf lines
 //     (single-space delimited) and percent-encodes only its path fields via
@@ -286,7 +286,7 @@ func decodeAuditLine(line string, enc auditEncoding) ([]auditField, error) {
 // breaking on UNESCAPED whitespace. Backslash escapes the next rune literally
 // (so `\ ` is a non-splitting space); `$'...'` is decoded as an ANSI-C block;
 // the bare two-single-quote empty-string form yields an empty token. It is the inverse of
-// bashQuote.
+// bashquote.Quote.
 func splitQuotedTokens(line string) ([]string, error) {
 	var (
 		tokens  []string

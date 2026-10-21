@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/bashquote"
 	"github.com/omkhar/workcell/internal/cliexit"
 )
 
@@ -220,7 +221,7 @@ func TestShapeMarginMainBindsOriginPushRepository(t *testing.T) {
 	git("remote", "add", "origin", "https://github.com/fetch/repo.git")
 	git("remote", "set-url", "--push", "origin", "https://github.com/example/repo.git")
 	stub := `#!/bin/sh
-printf '%s GH_REPO=%s\n' "$*" "${GH_REPO-unset}" >>` + bashQuote(logPath) + `
+printf '%s GH_REPO=%s\n' "$*" "${GH_REPO-unset}" >>` + bashquote.Quote(logPath) + `
 case "$1 $2" in
 "repo view") echo '{"nameWithOwner":"example/repo"}' ;;
 "pr list") echo '[{"baseRefName":"main","headRefName":"feature/x","headRepository":{"nameWithOwner":"example/repo"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]' ;;

@@ -21,7 +21,7 @@
 //     CanonicalizeHostToolPath, ResolveHostTool, and
 //     ResolveExistingExecutableOrDie own the trusted-PATH allowlist.
 //
-//   - Dry-run emission: EmitCommand + bashQuote produce the
+//   - Dry-run emission: EmitCommand + bashquote.Quote produce the
 //     `printf %q` shape that
 //     tests/scenarios/shared/test-publish-pr-dry-run.sh asserts on.
 //

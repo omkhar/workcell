@@ -80,26 +80,6 @@ func TestIsTrustedHostToolPathRequiresExactOrSlashPrefix(t *testing.T) {
 	}
 }
 
-func TestBashQuoteShellSafe(t *testing.T) {
-	t.Parallel()
-	cases := map[string]string{
-		"":                      "''",
-		"abc":                   "abc",
-		"a-b_c.d":               "a-b_c.d",
-		"/usr/bin/git":          "/usr/bin/git",
-		"with space":            `with\ space`,
-		"feature/x":             "feature/x",
-		"+refs/heads/x":         "+refs/heads/x",
-		"Existing branch title": `Existing\ branch\ title`,
-	}
-	for in, want := range cases {
-		got := bashQuote(in)
-		if got != want {
-			t.Errorf("bashQuote(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestEmitCommandMatchesBashPrintfQ(t *testing.T) {
 	t.Parallel()
 	// tests/scenarios/shared/test-publish-pr-dry-run.sh greps for the
