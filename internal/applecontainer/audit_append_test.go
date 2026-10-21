@@ -230,3 +230,31 @@ func TestAppendAuditLineRefusesToCrossSizeCap(t *testing.T) {
 		t.Fatalf("refused append changed the log size to %d", st.Size())
 	}
 }
+
+// TestAppendAuditLineRefusesOversizedRecord: one record longer than
+// auditlog.MaxLineBytes must be refused, because the A5 reader rejects that
+// line. Drop the per-line check → the append succeeds → FAIL.
+func TestAppendAuditLineRefusesOversizedRecord(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	logPath := filepath.Join(root, "workcell.audit.log")
+	line := "ts=1 session_id=sid event=bootstrap_ready image=" + strings.Repeat("a", auditlog.MaxLineBytes)
+	err := appendAuditLine(root, logPath, line)
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum line size") {
+		t.Fatalf("oversized record: got %v, want a line-size refusal", err)
+	}
+}
+
+// TestAppendAuditLineRefusesOversizedLogBeforeRead: a log already over
+// auditlog.MaxLogBytes is refused before it is read into memory.
+func TestAppendAuditLineRefusesOversizedLogBeforeRead(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	logPath := filepath.Join(root, "workcell.audit.log")
+	mustNil(t, os.WriteFile(logPath, nil, 0o600))
+	mustNil(t, os.Truncate(logPath, auditlog.MaxLogBytes+1))
+	err := appendAuditLine(root, logPath, "ts=1 session_id=sid event=x k=v")
+	if err == nil || !strings.Contains(err.Error(), "audit log") || !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("oversized log: got %v, want a size refusal", err)
+	}
+}

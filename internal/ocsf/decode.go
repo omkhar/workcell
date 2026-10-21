@@ -64,6 +64,10 @@ func DecodeAuditLineStrict(line, targetProvider string) ([]AuditField, error) {
 		seen[key] = struct{}{}
 		if enc == encodingPercentPath {
 			value = applecontainer.DecodeAuditFieldValue(key, value)
+			// A decoded %00 would merge fields in the NUL-joined digest input too.
+			if strings.IndexByte(value, 0) >= 0 {
+				return nil, fmt.Errorf("audit record has a decoded NUL byte in field %q", key)
+			}
 		}
 		fields = append(fields, AuditField{Key: key, Value: value})
 	}

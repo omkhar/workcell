@@ -335,6 +335,10 @@ func appendAuditLine(trustedRoot, path, line string) error {
 			prefix = "\n"
 		}
 	}
+	// Refuse before allocating: an oversized log would be read whole below.
+	if end.Size > auditlog.MaxLogBytes {
+		return fmt.Errorf("audit log %q exceeds maximum size of %d bytes", path, auditlog.MaxLogBytes)
+	}
 	// Read the previous record digest under the same lock that appends, so no
 	// concurrent appender can fork the chain between the read and the write.
 	existing := make([]byte, end.Size)
@@ -348,6 +352,10 @@ func appendAuditLine(trustedRoot, path, line string) error {
 	for _, l := range strings.Split(line, "\n") {
 		var c string
 		c, prev = chainAuditLine(prev, l)
+		// The reader refuses a physical line (with its newline) over the cap.
+		if len(c)+1 > auditlog.MaxLineBytes {
+			return fmt.Errorf("audit record for %q exceeds maximum line size of %d bytes", path, auditlog.MaxLineBytes)
+		}
 		chained = append(chained, c)
 	}
 	payload := prefix + strings.Join(chained, "\n") + "\n"
