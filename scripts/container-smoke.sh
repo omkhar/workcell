@@ -1484,8 +1484,9 @@ INNER
 SCRIPT
 
 COPILOT_PID1_STUB="${SMOKE_WORKSPACE}/tmp/copilot-pid1-stub"
+COPILOT_PID1_STUB_STAGE="${COPILOT_PID1_STUB}.stage"
 COPILOT_PID1_TOKEN_HANDOFF_DIR="$(copilot_token_handoff_dir_for_bundle "${INJECTION_BUNDLE_ROOT}/copilot")"
-cat >"${COPILOT_PID1_STUB}" <<'COPILOT_STUB'
+cat >"${COPILOT_PID1_STUB_STAGE}" <<'COPILOT_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${COPILOT_GITHUB_TOKEN:-}" == "copilot-smoke-token" ]] || {
@@ -1546,7 +1547,10 @@ for expected_copilot_arg in \
 done
 printf 'copilot-pid1-stub-ok\n'
 COPILOT_STUB
-chmod 0555 "${COPILOT_PID1_STUB}"
+chmod 0555 "${COPILOT_PID1_STUB_STAGE}"
+# Publish the executable mode and file contents together for the VM mount: a
+# chmod in place can reach the container after the exec under load (#929).
+mv "${COPILOT_PID1_STUB_STAGE}" "${COPILOT_PID1_STUB}"
 populate_workspace_import_mounts
 populate_runtime_security_args ephemeral
 docker_cmd run --rm \
