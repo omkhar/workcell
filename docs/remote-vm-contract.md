@@ -139,9 +139,65 @@ These items are operator preconditions. Workcell does not verify them yet:
   with an error. Container-Optimized OS does not have `getent`.
 
 Workcell does not install the guest receiver, and it does not provision cloud
-resources. `StartSession` and `FinishSession` return an error. Session start,
-the hardened container, the egress proxy, and the session audit events are
-later roadmap items.
+resources.
+
+## Brokered Session Control
+
+`BrokeredTarget.StartSession` and `BrokeredTarget.FinishSession` control the
+session container through the same broker and receiver port. No launcher path
+calls them.
+
+The caller gives `StartSession` the docker run argv for the guest. The
+launcher must render this argv, because `scripts/workcell` is the one owner of
+the hardened run flags. That renderer does not exist yet. Without an argv,
+`StartSession` returns an error that names the gap, and the Go code does not
+copy the run flags.
+
+Session start has these steps:
+
+1. `internal/remotevm/brokered_target.go` refuses the request before the
+   broker starts if one of these conditions is true:
+   - The bootstrap result records no `egress_floor_sha256`.
+   - The argv does not start with `run -d`.
+   - The argv does not run the image that the bootstrap pulled by digest.
+   - The argv has no valid `--name` before the image.
+   - The session already has a record.
+2. The host sends one header line with the session ID, the image reference,
+   the argv size, and the argv SHA-256. Then it sends the argv words, each
+   with a NUL terminator.
+3. The guest receiver in `internal/remotevm/guest_session.go` verifies the
+   size and the SHA-256 and checks the argv again. Then it runs `docker` with
+   the argv and no shell. If `docker run` fails, the receiver removes a
+   container that the run created.
+4. The receiver acknowledges the session ID and the container name. If the
+   host gets no matching acknowledgment, it asks the guest to remove the
+   container, because a lost acknowledgment can hide a running container.
+5. The host writes the session record with `status=running` and the container
+   name. Then it appends the `workspace_materialized`, `bootstrap_ready`, and
+   `session_started` records to the target audit log. If one of these writes
+   fails, `internal/remotevm/brokered_target.go` removes the container and the
+   record.
+
+Session finish has these steps:
+
+1. A session whose record has `status=exited` returns that record. The host
+   does not start the broker.
+2. The guest receiver runs `docker container stop --time 10`, then
+   `docker container rm --force`. The finish succeeds only when
+   `docker container ls --all` does not list the container. A container that
+   is already gone gives the result `absent`, so a repeated teardown succeeds.
+3. After the acknowledgment, the host writes the final record and appends the
+   `session_finished` record. A failure before this step leaves the record
+   with `status=running`, and the caller can try again.
+
+The host appends each audit record with `hoststate.AppendAuditRecord`. It
+writes the line format and the `record_digest` chain of the launcher audit
+writer, under the same lock. Thus `internal/host/auditseal` can sign and
+verify the remote session chain. The exit status comes from the caller. The
+guest does not report it yet.
+
+The egress proxy sidecar is not started on the guest. The launcher uses the
+sidecar only for Colima in strict mode.
 
 ## Session and Audit Requirements
 

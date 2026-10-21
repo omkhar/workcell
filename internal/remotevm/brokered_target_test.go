@@ -44,6 +44,15 @@ func TestFakeBrokerProcess(t *testing.T) {
 		if err := serveGuest(context.Background(), stdio, args[1], defaultWorkspaceLimits, fakeGuestTools(args[2], args[3], args[4])); err != nil {
 			os.Exit(3)
 		}
+	case "guestnoack":
+		// The guest acts on the request, and the tunnel loses its ack.
+		lost := struct {
+			io.Reader
+			io.Writer
+		}{os.Stdin, io.Discard}
+		if err := serveGuest(context.Background(), lost, args[1], defaultWorkspaceLimits, fakeGuestTools(args[2], args[3], args[4])); err != nil {
+			os.Exit(3)
+		}
 	case "exit7":
 		os.Stderr.WriteString(strings.Repeat("noise ", 400) + "ERROR: Failed to lookup instance\n")
 		os.Exit(7)
@@ -104,23 +113,6 @@ func TestBrokeredTargetMaterializesTheWorkspaceOnTheGuest(t *testing.T) {
 	}
 	if !slices.Equal(guestEntries, result.Manifest.Entries) {
 		t.Fatalf("guest entries differ from the manifest:\n%v\n%v", guestEntries, result.Manifest.Entries)
-	}
-}
-
-func TestRunConformanceWithBrokeredTargetStopsAtTheSession(t *testing.T) {
-	t.Parallel()
-
-	var started bool
-	caseSpec := DefaultConformanceCase(t.TempDir(), filepath.Join("testdata", "source-workspace"))
-	caseSpec.ImageRef = pinnedTestImage
-	caseSpec.GuestFloorScript = []byte("true\n")
-	target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string {
-		started = true
-		return []string{os.Args[0], "-test.run=^TestFakeBrokerProcess$", "--", "guest", t.TempDir(), "ok", "ok", filepath.Join(t.TempDir(), "log")}
-	}}
-	_, err := RunConformance(context.Background(), target, DefaultGCPVMContract(), caseSpec)
-	if !errors.Is(err, errSessionNotImplemented) || !started {
-		t.Fatalf("RunConformance() error = %v, want the session gap after a valid materialization and bootstrap", err)
 	}
 }
 
@@ -216,18 +208,6 @@ func TestBrokeredTargetConstructorsPinTheBrokerArgv(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s: constructor accepted invalid input", name)
 		}
-	}
-}
-
-func TestBrokeredTargetLeavesSessionsToALaterItem(t *testing.T) {
-	t.Parallel()
-
-	var target BrokeredTarget
-	if _, err := target.StartSession(context.Background(), StartSessionRequest{}); !errors.Is(err, errSessionNotImplemented) {
-		t.Fatalf("StartSession() error = %v", err)
-	}
-	if _, err := target.FinishSession(context.Background(), FinishSessionRequest{}); !errors.Is(err, errSessionNotImplemented) {
-		t.Fatalf("FinishSession() error = %v", err)
 	}
 }
 

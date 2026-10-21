@@ -25,6 +25,7 @@ type ConformanceCase struct {
 	Mode              string
 	ImageRef          string
 	GuestFloorScript  []byte
+	RunArgv           []string
 	StartedAt         string
 	FinishedAt        string
 	ExitStatus        string
@@ -92,6 +93,7 @@ func RunConformance(ctx context.Context, target ConformanceTarget, contract Cont
 		StartedAt:       c.StartedAt,
 		Materialization: materialization,
 		Bootstrap:       bootstrap,
+		RunArgv:         c.RunArgv,
 	})
 	if err != nil {
 		return ConformanceResult{}, err

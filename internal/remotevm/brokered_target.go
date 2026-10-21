@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/omkhar/workcell/internal/host/hoststate"
+	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
 const (
@@ -28,10 +32,11 @@ const (
 	brokerStopGrace = 5 * time.Second
 )
 
-var errSessionNotImplemented = errors.New("remote_vm session control over the broker is not implemented yet (roadmap L4-3)")
+var errRunArgvPending = errors.New("remote_vm session start needs the docker run argv that the launcher renders; the launcher renderer is pending (roadmap L4-3 follow-up)")
 
-// BrokeredTarget materializes the workspace on a live guest and prepares the
-// guest through the same broker (see BootstrapTarget). It copies the
+// BrokeredTarget materializes the workspace on a live guest, prepares the
+// guest, and starts and removes the session container through the same
+// broker (see BootstrapTarget, StartSession and FinishSession). It copies the
 // workspace into the host state root as FakeTarget does, then streams a
 // deterministic tar of that reviewed copy through the provider broker to the
 // guest receiver port. The broker CLI connects its stdin and stdout to that
@@ -80,10 +85,18 @@ func validateBrokerArgs(cliPath string, receiverPort int, values ...string) erro
 	return nil
 }
 
+// checkBrokerTargetID refuses a target id that the broker CLI would read as
+// an option, because it becomes a positional broker argument.
+func checkBrokerTargetID(targetID string) error {
+	if strings.HasPrefix(targetID, "-") {
+		return fmt.Errorf("target id must not start with '-': %q", targetID)
+	}
+	return nil
+}
+
 func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (MaterializeResult, error) {
-	// The target id becomes a positional broker argument.
-	if strings.HasPrefix(req.TargetID, "-") {
-		return MaterializeResult{}, fmt.Errorf("target id must not start with '-': %q", req.TargetID)
+	if err := checkBrokerTargetID(req.TargetID); err != nil {
+		return MaterializeResult{}, err
 	}
 	result, err := materializeInStateRoot(b.Contract, req)
 	if err != nil {
@@ -205,8 +218,8 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 // and checks that the pulled image carries that digest. The host writes
 // bootstrap.json with the floor digest only after a matching ack.
 func (b BrokeredTarget) BootstrapTarget(ctx context.Context, req BootstrapRequest) (BootstrapResult, error) {
-	if strings.HasPrefix(req.TargetID, "-") {
-		return BootstrapResult{}, fmt.Errorf("target id must not start with '-': %q", req.TargetID)
+	if err := checkBrokerTargetID(req.TargetID); err != nil {
+		return BootstrapResult{}, err
 	}
 	if err := checkGuestImageRef(req.ImageRef); err != nil {
 		return BootstrapResult{}, err
@@ -233,10 +246,93 @@ func (b BrokeredTarget) BootstrapTarget(ctx context.Context, req BootstrapReques
 	return result, nil
 }
 
-func (b BrokeredTarget) StartSession(context.Context, StartSessionRequest) (SessionResult, error) {
-	return SessionResult{}, errSessionNotImplemented
+// StartSession runs the launcher-rendered detached docker run argv on the
+// guest through the broker. Only after the guest acks the container does the
+// host write the running session record and the chained start audit records.
+// If the start or that write fails, the target removes the container again.
+func (b BrokeredTarget) StartSession(ctx context.Context, req StartSessionRequest) (SessionResult, error) {
+	if len(req.RunArgv) == 0 {
+		return SessionResult{}, errRunArgvPending
+	}
+	sessionID, err := checkStartSession(req)
+	if err != nil {
+		return SessionResult{}, err
+	}
+	if err := checkWireToken("session id", sessionID); err != nil {
+		return SessionResult{}, err
+	}
+	targetID, imageRef := req.Bootstrap.Manifest.TargetID, req.Bootstrap.Manifest.ImageRef
+	if err := checkBrokerTargetID(targetID); err != nil {
+		return SessionResult{}, err
+	}
+	if req.Bootstrap.Manifest.EgressFloorSHA256 == "" {
+		return SessionResult{}, fmt.Errorf("bootstrap.json records no guest egress floor; bootstrap the target through the broker first")
+	}
+	if err := checkGuestImageRef(imageRef); err != nil {
+		return SessionResult{}, err
+	}
+	name, err := checkRunArgv(req.RunArgv, imageRef)
+	if err != nil {
+		return SessionResult{}, err
+	}
+	if _, err := os.Lstat(sessionRecordPath(req.Bootstrap, sessionID)); !errors.Is(err, fs.ErrNotExist) {
+		return SessionResult{}, errors.Join(fmt.Errorf("session %s already has a record", sessionID), err)
+	}
+	if _, err := runPinned(ctx, "broker", b.Command(targetID), false, func(conn io.ReadWriteCloser) (string, error) {
+		return "", sendSessionStart(conn, sessionID, imageRef, name, req.RunArgv)
+	}); err != nil {
+		// A lost ack can hide a container that the guest started.
+		_, stopErr := b.stopGuestContainer(ctx, targetID, sessionID, name)
+		return SessionResult{}, errors.Join(err, stopErr)
+	}
+	result, err := startSessionInStateRoot(b.Contract, req, name, hoststate.AppendAuditRecord)
+	if err != nil {
+		// No container may run without its record and audit, and no record
+		// may claim a container that the target removed.
+		_, stopErr := b.stopGuestContainer(ctx, targetID, sessionID, name)
+		removeErr := os.Remove(sessionRecordPath(req.Bootstrap, sessionID))
+		if errors.Is(removeErr, fs.ErrNotExist) {
+			removeErr = nil
+		}
+		return SessionResult{}, errors.Join(err, stopErr, removeErr)
+	}
+	return result, nil
 }
 
-func (b BrokeredTarget) FinishSession(context.Context, FinishSessionRequest) (SessionResult, error) {
-	return SessionResult{}, errSessionNotImplemented
+// FinishSession removes the session container on the guest through the
+// broker. Only after the guest acks that docker no longer lists it does the
+// host write the final record and the chained session_finished record. A
+// session whose record is already final returns that record and calls no
+// broker, and a container that an earlier attempt removed acks as absent, so
+// a repeated teardown succeeds. Any other failure leaves the record running.
+func (b BrokeredTarget) FinishSession(ctx context.Context, req FinishSessionRequest) (SessionResult, error) {
+	if err := checkFinishSession(req); err != nil {
+		return SessionResult{}, err
+	}
+	record, err := sessions.ReadSessionRecord(req.Started.RecordPath)
+	if err != nil {
+		return SessionResult{}, err
+	}
+	if record.Status == b.Contract.Session.FinalStatus {
+		return SessionResult{Record: record, RecordPath: req.Started.RecordPath, AuditLogPath: req.Started.AuditLogPath}, nil
+	}
+	if err := checkBrokerTargetID(record.TargetID); err != nil {
+		return SessionResult{}, err
+	}
+	if _, err := b.stopGuestContainer(ctx, record.TargetID, record.SessionID, record.ContainerName); err != nil {
+		return SessionResult{}, err
+	}
+	return finishSessionInStateRoot(b.Contract, req, hoststate.AppendAuditRecord)
+}
+
+func (b BrokeredTarget) stopGuestContainer(ctx context.Context, targetID, sessionID, name string) (string, error) {
+	if err := checkWireToken("session id", sessionID); err != nil {
+		return "", err
+	}
+	if err := checkWireToken("container name", name); err != nil {
+		return "", err
+	}
+	return runPinned(ctx, "broker", b.Command(targetID), false, func(conn io.ReadWriteCloser) (string, error) {
+		return sendSessionStop(conn, sessionID, name)
+	})
 }
