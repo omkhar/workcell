@@ -5,14 +5,18 @@ package sessionctl
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -91,6 +95,9 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 	if objErr != nil || gitErr != nil || !objectsInfo.IsDir() || gitDirInfo.Mode()&os.ModeSymlink != 0 {
 		return "", "", fmt.Errorf("session snapshot requires a self-contained git workspace: %s", opts.Workspace)
 	}
+	if err := rejectSpecialAlternates(gitDir); err != nil {
+		return "", "", err
+	}
 
 	err = withScratchGitDir("workcell-snapshot.", func(scratch string) error {
 		tree, commit, err = captureIntoScratch(opts, gitDir, scratch)
@@ -147,6 +154,26 @@ func withScratchGitDir(prefix string, fn func(scratch string) error) error {
 	}
 	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
 	return fn(scratch)
+}
+
+// rejectSpecialAlternates fails when objects/info/alternates in the workspace
+// git dir is present but is not a regular file. The agent can write that file,
+// and git opens it with a blocking read, so a FIFO there hangs every git run
+// that uses the workspace objects as an alternate.
+func rejectSpecialAlternates(gitDir string) error {
+	objects, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(gitDir, "objects", "anchor"))
+	if err != nil {
+		return fmt.Errorf("open the workspace objects: %w", err)
+	}
+	defer func() { _ = objects.Close() }()
+	info, err := rootio.LstatAtNoFollow(objects, "info/alternates")
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil || info.Mode&unix.S_IFMT != unix.S_IFREG {
+		return fmt.Errorf("the workspace objects/info/alternates is not a regular file: %s", gitDir)
+	}
+	return nil
 }
 
 // writeSnapshotAlternates makes the workspace object store a read-only
@@ -242,8 +269,15 @@ func requireSameDirectory(dir *os.File, path, label string) error {
 	return nil
 }
 
+// snapshotGitTimeout bounds one snapshot git run. The agent can still make git
+// block, for example with a FIFO as a loose object, a pack index, or a chained
+// alternate, so the bound turns that hang into an error.
+var snapshotGitTimeout = 10 * time.Minute
+
 // runSnapshotGit runs git with a scrubbed environment and no hooks, system or
-// global config, fsmonitor, or external diff.
+// global config, fsmonitor, or external diff. A timeout or an interrupt sends
+// SIGTERM to the git process group, because a fetch runs upload-pack as a
+// child, and the Go runtime kills git if it is still running 5s later.
 func runSnapshotGit(gitBin, dir string, args ...string) (string, error) {
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -255,8 +289,15 @@ func runSnapshotGit(gitBin, dir string, args ...string) (string, error) {
 		"-c", "diff.external=",
 		"-c", "color.ui=false",
 	}, args...)
-	cmd := exec.Command(gitBin, full...)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, snapshotGitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, gitBin, full...)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return unix.Kill(-cmd.Process.Pid, unix.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = []string{
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:" + filepath.Dir(gitBin),
 		"HOME=" + home,
@@ -270,6 +311,10 @@ func runSnapshotGit(gitBin, dir string, args ...string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil && cmd.Process != nil {
+			_ = unix.Kill(-cmd.Process.Pid, unix.SIGKILL)
+			return "", fmt.Errorf("git was stopped (%w): %s", context.Cause(ctx), strings.Join(args, " "))
+		}
 		return "", fmt.Errorf("git: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
