@@ -41,6 +41,7 @@ Usage:
   colima-egress-allowlist.sh plan <profile> "<host:port ...>"
   colima-egress-allowlist.sh apply <profile> "<host:port ...>"
   colima-egress-allowlist.sh clear <profile>
+  colima-egress-allowlist.sh guest-script "<host:port ...>"
 EOF
 }
 
@@ -261,7 +262,8 @@ PROFILE="${2:-}"
   exit 1
 }
 
-[[ -n "${PROFILE}" ]] || {
+# guest-script takes no profile: a remote broker, not limactl, carries its output.
+[[ -n "${PROFILE}" || "${COMMAND}" == "guest-script" ]] || {
   usage
   exit 1
 }
@@ -514,11 +516,15 @@ EOF
 }
 
 # deliver_apply_plan sends the guest apply plan through a transport. limactl
-# runs it in the Colima VM.
+# runs it in the Colima VM. stdout prints the exact input of that VM shell, so
+# a remote_vm broker (IAP or SSM) can run the same plan on its guest.
 deliver_apply_plan() {
   case "$1" in
     limactl)
       run_in_vm "$(render_allowlist_apply_plan)"
+      ;;
+    stdout)
+      guest_script_stdin "$(render_allowlist_apply_plan)"
       ;;
     *)
       echo "Unknown guest transport: $1" >&2
@@ -551,6 +557,15 @@ case "${COMMAND}" in
     ENDPOINTS="${3}"
     validate_endpoints "${ENDPOINTS}"
     deliver_apply_plan limactl
+    ;;
+  guest-script)
+    [[ $# -ge 2 ]] || {
+      echo "Missing endpoint list argument for guest-script" >&2
+      exit 1
+    }
+    ENDPOINTS="${2}"
+    validate_endpoints "${ENDPOINTS}"
+    deliver_apply_plan stdout
     ;;
   *)
     usage

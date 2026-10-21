@@ -3206,6 +3206,15 @@ if ! grep -Fq 'IPV6_RULES+="-A WORKCELL_EGRESS6 -p tcp -d ${host:1:${#host}-2} -
   echo "Expected captured dual-stack apply script to preserve IPv6 literal allowlist handling" >&2
   exit 1
 fi
+# A remote_vm broker runs the guest-script output, so it must be the exact
+# input of the Colima VM shell for the same endpoints.
+printf 'set -euo pipefail\n' >"${RUN_IN_VM_CAPTURE_DIR}/apply-default.stdin"
+cat "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script" >>"${RUN_IN_VM_CAPTURE_DIR}/apply-default.stdin"
+if ! "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" guest-script '127.0.0.1:443 [::1]:443' >"${RUN_IN_VM_CAPTURE_DIR}/guest-script.out" 2>/dev/null ||
+  ! cmp -s "${RUN_IN_VM_CAPTURE_DIR}/apply-default.stdin" "${RUN_IN_VM_CAPTURE_DIR}/guest-script.out"; then
+  echo "Expected guest-script to print the same apply plan the Colima VM shell runs" >&2
+  exit 1
+fi
 if ! grep -q "COLIMA_HOME=${REAL_HOME}/.colima" "${RUN_IN_VM_CAPTURE_DIR}/apply-default.env"; then
   echo "Expected captured dual-stack apply env to derive COLIMA_HOME from the real home directory" >&2
   exit 1
