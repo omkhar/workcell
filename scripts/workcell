@@ -2190,7 +2190,9 @@ preview_remote_vm_dry_run_allowed() {
     [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]
 }
 
-emit_preview_remote_vm_dry_run() {
+# emit_preview_launch_state prints the launch state that every preview-target
+# dry-run plan shares, before its target-specific lines.
+emit_preview_launch_state() {
   printf 'profile=%s mode=%s agent=%s ui=%s workspace=%s\n' \
     "${COLIMA_PROFILE}" "${MODE}" "${AGENT}" "${UI}" "${WORKSPACE}" >&2
   printf 'target_kind=%s target_provider=%s target_id=%s target_assurance_class=%s runtime_api=%s workspace_transport=%s\n' \
@@ -2222,6 +2224,10 @@ emit_preview_remote_vm_dry_run() {
   printf 'workspace_repo_mcp=%s\n' "$(workspace_repo_mcp_state)" >&2
   printf 'network_policy=%s endpoints=%s\n' "${NETWORK_POLICY}" "${ALLOW_ENDPOINTS}" >&2
   printf 'egress_enforcement=%s\n' "$(egress_enforcement_label)" >&2
+}
+
+emit_preview_remote_vm_dry_run() {
+  emit_preview_launch_state
   printf 'remote_access_model=brokered remote_broker=%s inbound_public_ssh=blocked live_smoke=certification-only\n' \
     "$(preview_remote_vm_broker "${TARGET_BACKEND}")" >&2
   printf 'remote_workspace_materialization=explicit reviewed_host_copy=1\n' >&2
