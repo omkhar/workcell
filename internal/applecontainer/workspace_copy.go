@@ -17,18 +17,19 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/workspacelimit"
 	"golang.org/x/sys/unix"
 )
 
 const (
-	workspaceMaxFileBytes     int64 = 256 << 20
-	workspaceMaxBytes         int64 = 2 << 30
-	workspaceMaxEntries             = 100_000
-	workspaceMaxPathBytes           = 4096
-	workspaceMaxLinkBytes           = 4096
-	workspaceMaxDepth               = 256
-	workspaceMaxSymlinkHops         = 40
-	workspaceManifestMaxBytes       = 64 << 20
+	workspaceMaxFileBytes     = workspacelimit.MaxFileBytes
+	workspaceMaxBytes         = workspacelimit.MaxBytes
+	workspaceMaxEntries       = workspacelimit.MaxEntries
+	workspaceMaxPathBytes     = 4096
+	workspaceMaxLinkBytes     = 4096
+	workspaceMaxDepth         = 256
+	workspaceMaxSymlinkHops   = 40
+	workspaceManifestMaxBytes = 64 << 20
 )
 
 var errWorkspaceCopyUnsupported = errors.New("workspace descriptor copy is unsupported on this platform")
