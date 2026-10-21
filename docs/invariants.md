@@ -304,7 +304,8 @@ keychain knob to an allowed harness.
 `phantom-no-real-secret`: a brokered key never reaches the agent container.
 The agent environment, its processes, the injection bundle and the provider
 home hold only the `wcph-` placeholder. The sidecar swaps it for the key on the
-wire, and only for the brokered host and header.
+wire, and only for the brokered host and header. It refuses TRACE and CONNECT
+on a brokered host with 405 before the swap, so an echo cannot return the key.
 
 `internal/injection/prepare_bundle_test.go` enforces that the bundle stages
 only the placeholder (`TestPrepareBundleBrokersAPIKeys`).

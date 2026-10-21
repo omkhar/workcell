@@ -393,3 +393,37 @@ func TestNewPlaceholderIsFreshAndParses(t *testing.T) {
 		}
 	}
 }
+
+// TestTerminateRefusesTraceAndConnect: TRACE could echo the swapped key and
+// CONNECT tunnels past the rewrite, so both get 405 before the swap; a GET
+// still reaches the upstream. Drop the method check → the broker is asked and
+// the request goes upstream → FAIL.
+func TestTerminateRefusesTraceAndConnect(t *testing.T) {
+	t.Parallel()
+	broker := &fakeBroker{value: "real-secret"}
+	addr, ca, _, p, log := terminateFixture(t, broker)
+	c := clientVia(addr, caPool(t, ca))
+	for _, method := range []string{http.MethodTrace, http.MethodConnect} {
+		req, err := http.NewRequest(method, "https://example.com/v1", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-Api-Key", testPlaceholder)
+		if code, body := do(t, c, req); code != http.StatusMethodNotAllowed || !strings.Contains(body, "method not allowed") {
+			t.Errorf("%s: got (%d, %q), want 405 from the proxy", method, code, body)
+		}
+	}
+	d := denies(t, p, log)
+	want := denyLine{Host: "example.com", Port: 443, Reason: "method_refused", Count: 2}
+	if len(d) != 2 || d[1] != want {
+		t.Fatalf("deny lines = %+v, want 2 ending in %+v", d, want)
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://example.com/v1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Api-Key", testPlaceholder)
+	if code, _ := do(t, c, req); code == http.StatusMethodNotAllowed {
+		t.Fatalf("GET got 405, want it forwarded")
+	}
+}
