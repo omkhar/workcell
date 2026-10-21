@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omkhar/workcell/internal/host/auditlog"
 	"golang.org/x/sys/unix"
 )
 
@@ -206,5 +207,26 @@ func TestAppendAuditLineDoesNotHangOnContendedLock(t *testing.T) {
 	mustNil(t, unix.Close(holder))
 	if e := appendAuditLine(root, logPath, "ts=2 session_id=sid event=z k=v"); e != nil {
 		t.Fatalf("append after lock release failed: %v", e)
+	}
+}
+
+// TestAppendAuditLineRefusesToCrossSizeCap: a log just under auditlog.MaxLogBytes
+// must refuse a record that would push it over, because the A5 signer and
+// verifier reject an oversized log. Check only the existing size → the append
+// succeeds → FAIL.
+func TestAppendAuditLineRefusesToCrossSizeCap(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	logPath := filepath.Join(root, "workcell.audit.log")
+	mustNil(t, os.WriteFile(logPath, nil, 0o600))
+	mustNil(t, os.Truncate(logPath, auditlog.MaxLogBytes-8))
+	err := appendAuditLine(root, logPath, "ts=1 session_id=sid event=x k=v")
+	if err == nil || !strings.Contains(err.Error(), "would exceed maximum size") {
+		t.Fatalf("append near the cap: got %v, want a size refusal", err)
+	}
+	st, statErr := os.Stat(logPath)
+	mustNil(t, statErr)
+	if st.Size() != auditlog.MaxLogBytes-8 {
+		t.Fatalf("refused append changed the log size to %d", st.Size())
 	}
 }

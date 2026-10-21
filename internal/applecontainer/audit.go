@@ -195,9 +195,17 @@ func openParentDir(trustedRoot, parent string, create bool) (int, error) {
 	for _, comp := range strings.Split(rel, string(filepath.Separator)) {
 		next, err := unix.Openat(dirfd, comp, openFlags, 0)
 		if err == unix.ENOENT && create {
-			if mkErr := unix.Mkdirat(dirfd, comp, 0o755); mkErr != nil && mkErr != unix.EEXIST {
+			mkErr := unix.Mkdirat(dirfd, comp, 0o755)
+			if mkErr != nil && mkErr != unix.EEXIST {
 				unix.Close(dirfd)
 				return -1, fmt.Errorf("create dir %q: %w", comp, mkErr)
+			}
+			// Persist the new directory entry, so a synced record below it survives power loss.
+			if mkErr == nil {
+				if syncErr := unix.Fsync(dirfd); syncErr != nil {
+					unix.Close(dirfd)
+					return -1, fmt.Errorf("sync dir after creating %q: %w", comp, syncErr)
+				}
 			}
 			next, err = unix.Openat(dirfd, comp, openFlags, 0)
 		}
@@ -327,9 +335,6 @@ func appendAuditLine(trustedRoot, path, line string) error {
 			prefix = "\n"
 		}
 	}
-	if end.Size > auditlog.MaxLogBytes {
-		return fmt.Errorf("audit log %q exceeds maximum size of %d bytes", path, auditlog.MaxLogBytes)
-	}
 	// Read the previous record digest under the same lock that appends, so no
 	// concurrent appender can fork the chain between the read and the write.
 	existing := make([]byte, end.Size)
@@ -345,8 +350,21 @@ func appendAuditLine(trustedRoot, path, line string) error {
 		c, prev = chainAuditLine(prev, l)
 		chained = append(chained, c)
 	}
-	if _, err := io.WriteString(handle, prefix+strings.Join(chained, "\n")+"\n"); err != nil {
+	payload := prefix + strings.Join(chained, "\n") + "\n"
+	// Count the pending record too: the A5 signer refuses a log over the cap.
+	if end.Size+int64(len(payload)) > auditlog.MaxLogBytes {
+		return fmt.Errorf("audit log %q would exceed maximum size of %d bytes", path, auditlog.MaxLogBytes)
+	}
+	if _, err := io.WriteString(handle, payload); err != nil {
 		return err // the deferred Close releases the advisory lock
+	}
+	// Make the chained record durable before a caller can seal it: a seal that
+	// outlives its record on power loss would fail verify.
+	if err := handle.Sync(); err != nil {
+		return fmt.Errorf("sync audit log %q: %w", path, err)
+	}
+	if err := unix.Fsync(parentFD); err != nil {
+		return fmt.Errorf("sync audit log dir %q: %w", filepath.Dir(path), err)
 	}
 	_ = unix.Flock(leaf, unix.LOCK_UN) // release promptly; deferred Close is a backstop
 	return nil
