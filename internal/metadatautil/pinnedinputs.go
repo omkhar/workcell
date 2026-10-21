@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/imageref"
 )
 
 var (
@@ -132,7 +134,7 @@ func requireArg(text, name, path string) (string, error) {
 }
 
 func requirePinnedBaseImage(image, label, path string) error {
-	if !regexp.MustCompile(`^[^@]+@sha256:[0-9a-f]{64}$`).MatchString(image) {
+	if !imageref.Pinned(image) {
 		return fmt.Errorf("%s in %s must be pinned by immutable digest, found %q", label, path, image)
 	}
 	return nil

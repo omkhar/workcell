@@ -225,7 +225,6 @@ internal/metadatautil	requireEvasions	0ed6284d	unreviewed debt in a test: review
 internal/metadatautil	requireGoDirective	231f780e,a91335ef,d72b74d4	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireNoRegistryBootstrapMCP	52bf575b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireOrderedText	ba2afe75	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	requirePinnedBaseImage	171e479c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireRegex	26bdecfe,48e55ec8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireTOMLString	13dcfc02,30abd784,31804416	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireTextCount	e9ad5856	unreviewed debt: review the subject, then port or justify
