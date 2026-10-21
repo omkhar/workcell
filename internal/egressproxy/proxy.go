@@ -96,6 +96,7 @@ type Proxy struct {
 	mu      sync.Mutex
 	denyLog io.Writer
 	denies  map[denyKey]uint64
+	seq     uint64 // deny lines written so far
 }
 
 type denyKey struct {
@@ -306,7 +307,7 @@ func splice(client, upstream net.Conn) {
 }
 
 // deny writes one bounded JSONL line with the running count for this
-// (host, port, reason). New keys past maxDenyKeys share one overflow key, so
+// (host, port, reason) and the log-wide line number. New keys past maxDenyKeys share one overflow key, so
 // the log holds at most maxDenyKeys+1 keys whatever ports the allowlist holds.
 func (p *Proxy) deny(host string, port uint16, reason string) {
 	if len(host) > maxLogHost {
@@ -319,6 +320,7 @@ func (p *Proxy) deny(host string, port uint16, reason string) {
 		key = denyKey{overflowHost, 0, overflowCause}
 	}
 	p.denies[key]++
-	line, _ := json.Marshal(denyLine{key.host, key.port, key.reason, p.denies[key]})
+	p.seq++
+	line, _ := json.Marshal(denyLine{key.host, key.port, key.reason, p.denies[key], p.seq})
 	_, _ = p.denyLog.Write(append(line, '\n'))
 }

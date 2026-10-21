@@ -15,12 +15,14 @@ import (
 )
 
 // denyLine is one deny log line: the running count of denials for one
-// (host, port, reason). The proxy writes it and DenyAuditRecords reads it back.
+// (host, port, reason) and the line's number in the log, from 1. The proxy
+// writes it and DenyAuditRecords reads it back.
 type denyLine struct {
 	Host   string `json:"host"`
 	Port   uint16 `json:"port"`
 	Reason string `json:"reason"`
 	Count  uint64 `json:"count"`
+	Seq    uint64 `json:"seq"`
 }
 
 const (
@@ -44,10 +46,14 @@ var (
 // sidecar, so each line is untrusted: a line that is not one strict deny
 // object is counted in malformed_lines, never dropped in silence. A host
 // outside the DNS name characters is recorded as (invalid), so no value holds
-// a space or a control character.
+// a space or a control character. The sidecar log rotates out its oldest lines
+// when a flood fills it, so a log that does not number its lines 1, 2, 3, ...
+// lost denials and is never complete.
 func DenyAuditRecords(log []byte) []string {
 	counts := map[denyKey]uint64{}
 	malformed := 0
+	gap := false
+	var seq uint64 // deny lines folded so far
 	lines := strings.Split(string(log), "\n")
 	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
@@ -63,6 +69,8 @@ func DenyAuditRecords(log []byte) []string {
 			continue
 		}
 		counts[key] = max(counts[key], d.Count) // the running count only grows
+		seq++
+		gap = gap || d.Seq != seq
 	}
 	keys := slices.SortedFunc(maps.Keys(counts), func(a, b denyKey) int {
 		return cmp.Or(cmp.Compare(counts[b], counts[a]), cmp.Compare(a.host, b.host),
@@ -88,14 +96,14 @@ func DenyAuditRecords(log []byte) []string {
 	status := "complete"
 	if malformed > 0 {
 		status = "malformed"
-	} else if len(keys) > maxAuditDenyKeys {
+	} else if gap || len(keys) > maxAuditDenyKeys {
 		status = "truncated"
 	}
 	return append(records, fmt.Sprintf("egress_summary status=%s deny_keys=%d deny_total=%d malformed_lines=%d", status, len(keys), total, malformed))
 }
 
-// parseDenyLine accepts one JSON object with only the deny fields, a port and
-// count above zero, a bounded host and a lower-case reason, and nothing after it.
+// parseDenyLine accepts one JSON object with only the deny fields, a port,
+// count and seq above zero, a bounded host and a lower-case reason, and nothing after it.
 func parseDenyLine(line string) (denyLine, bool) {
 	var d denyLine
 	if len(line) > maxDenyLineBytes {
@@ -107,5 +115,5 @@ func parseDenyLine(line string) (denyLine, bool) {
 		return d, false
 	}
 	overflow := d.Host == overflowHost && d.Reason == overflowCause
-	return d, (d.Port != 0 || overflow) && d.Count != 0 && len(d.Host) <= maxLogHost && auditReason.MatchString(d.Reason)
+	return d, (d.Port != 0 || overflow) && d.Count != 0 && d.Seq != 0 && len(d.Host) <= maxLogHost && auditReason.MatchString(d.Reason)
 }
