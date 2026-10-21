@@ -195,10 +195,16 @@ func materializeInStateRoot(contract Contract, req MaterializeRequest) (Material
 }
 
 func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (BootstrapResult, error) {
+	return bootstrapInStateRoot(f.Contract, req)
+}
+
+// bootstrapInStateRoot writes the bootstrap manifest in the host state root.
+// The fake target stops here; a brokered target also prepares the guest.
+func bootstrapInStateRoot(contract Contract, req BootstrapRequest) (BootstrapResult, error) {
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return BootstrapResult{}, fmt.Errorf("state root is required")
 	}
-	targetProvider, err := statePathSegment("target provider", f.Contract.TargetProvider)
+	targetProvider, err := statePathSegment("target provider", contract.TargetProvider)
 	if err != nil {
 		return BootstrapResult{}, err
 	}
@@ -217,16 +223,16 @@ func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (Bo
 	if err := os.MkdirAll(bootstrapRoot, 0o755); err != nil {
 		return BootstrapResult{}, err
 	}
-	manifestPath := filepath.Join(bootstrapRoot, f.Contract.Bootstrap.ManifestName)
+	manifestPath := filepath.Join(bootstrapRoot, contract.Bootstrap.ManifestName)
 	manifest := BootstrapManifest{
 		Version:              1,
-		TargetKind:           f.Contract.TargetKind,
-		TargetProvider:       f.Contract.TargetProvider,
+		TargetKind:           contract.TargetKind,
+		TargetProvider:       contract.TargetProvider,
 		TargetID:             targetID,
-		TargetAssuranceClass: f.Contract.TargetAssuranceClass,
-		SupportBoundary:      f.Contract.SupportBoundary,
-		RuntimeAPI:           f.Contract.RuntimeAPI,
-		AccessModel:          f.Contract.AccessModel,
+		TargetAssuranceClass: contract.TargetAssuranceClass,
+		SupportBoundary:      contract.SupportBoundary,
+		RuntimeAPI:           contract.RuntimeAPI,
+		AccessModel:          contract.AccessModel,
 		BootstrapID:          req.BootstrapID,
 		ImageRef:             req.ImageRef,
 	}
