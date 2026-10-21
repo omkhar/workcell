@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/applecontainer"
 	"github.com/omkhar/workcell/internal/authpolicy"
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
@@ -353,6 +354,7 @@ func helperSubcommands() []helperSubcommand {
 		{"resolve-endpoints", 1, 1, cmdHelperResolveEndpoints},
 		{"validate-egress-proxy-allowlist", 1, 1, cmdHelperValidateEgressProxyAllowlist},
 		{"support-matrix-eval", 8, 8, cmdHelperSupportMatrixEval},
+		{"apple-container-host-check", 3, 3, cmdHelperAppleContainerHostCheck},
 		{"profile-path", 1, -1, cmdHelperProfilePath},
 		// PR 23.4 — injection bundle preparation moved into Go.
 		{"injection-stage-direct-mounts", 2, 2, cmdHelperInjectionStageDirectMounts},
@@ -960,6 +962,13 @@ func cmdHelperSupportMatrixEval(args []string) error {
 		fmt.Println(line)
 	}
 	return nil
+}
+
+// cmdHelperAppleContainerHostCheck runs the apple-container host guard on the
+// launcher host facts (HOST_OS HOST_ARCH MACOS_PRODUCT_VERSION) and fails with
+// the guard reason.
+func cmdHelperAppleContainerHostCheck(args []string) error {
+	return applecontainer.CheckHost(args[0], args[1], args[2])
 }
 
 // cmdHelperProfilePath dispatches the profile-path umbrella

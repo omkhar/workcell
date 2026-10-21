@@ -24,6 +24,17 @@ func RequireMacOS27() error {
 	return requireMacOS27(runtime.GOOS, runtime.GOARCH, swVersProductVersion)
 }
 
+// CheckHost applies the guard to the host facts of the launcher: hostOS is its
+// normalized OS name ("macos", "linux"), hostArch its normalized arch, and
+// productVersion the sw_vers product version ("" off macOS).
+func CheckHost(hostOS, hostArch, productVersion string) error {
+	goos := hostOS
+	if hostOS == "macos" {
+		goos = "darwin"
+	}
+	return requireMacOS27(goos, hostArch, func() (string, error) { return productVersion, nil })
+}
+
 // requireMacOS27 is the testable core of RequireMacOS27: goos/goarch are the
 // runtime OS/architecture and productVersion reports the macOS product version
 // string (e.g. "27.0.1"). It checks the architecture BEFORE the version so an
