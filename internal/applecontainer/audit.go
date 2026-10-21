@@ -17,6 +17,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/omkhar/workcell/internal/host/auditlog"
+	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
@@ -325,11 +327,63 @@ func appendAuditLine(trustedRoot, path, line string) error {
 			prefix = "\n"
 		}
 	}
-	if _, err := io.WriteString(handle, prefix+line+"\n"); err != nil {
+	if end.Size > auditlog.MaxLogBytes {
+		return fmt.Errorf("audit log %q exceeds maximum size of %d bytes", path, auditlog.MaxLogBytes)
+	}
+	// Read the previous record digest under the same lock that appends, so no
+	// concurrent appender can fork the chain between the read and the write.
+	existing := make([]byte, end.Size)
+	if _, err := handle.ReadAt(existing, 0); err != nil {
+		return fmt.Errorf("read audit log %q: %w", path, err)
+	}
+	prev := lastRecordDigest(existing)
+	// line can hold several records (reconcileStartEvents joins them), so each
+	// one links to the record before it.
+	var chained []string
+	for _, l := range strings.Split(line, "\n") {
+		var c string
+		c, prev = chainAuditLine(prev, l)
+		chained = append(chained, c)
+	}
+	if _, err := io.WriteString(handle, prefix+strings.Join(chained, "\n")+"\n"); err != nil {
 		return err // the deferred Close releases the advisory lock
 	}
 	_ = unix.Flock(leaf, unix.LOCK_UN) // release promptly; deferred Close is a backstop
 	return nil
+}
+
+// lastRecordDigest returns the last record_digest value in the log ("" when no
+// record carries one), the same seed scripts/workcell's
+// append_audit_record_to_path reads for its next record.
+func lastRecordDigest(data []byte) string {
+	last := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, tok := range strings.Fields(line) {
+			if k, v, ok := strings.Cut(tok, "="); ok && k == "record_digest" {
+				last = v
+			}
+		}
+	}
+	return last
+}
+
+// chainAuditLine appends the launcher's digest-chain framing to one rendered
+// line: prev_digest when a previous record exists, then record_digest. The
+// digest is hoststate.AuditRecordDigest over the decoded fields, which is what
+// internal/host/auditseal recomputes. The line has no timestamp= field (its
+// time is the ts= field), so the timestamp slot is empty. It returns the framed
+// line and its record digest.
+func chainAuditLine(prevDigest, line string) (string, string) {
+	var args []string
+	for _, tok := range strings.Fields(line) {
+		key, value, _ := strings.Cut(tok, "=")
+		args = append(args, key+"="+DecodeAuditFieldValue(key, value))
+	}
+	digest := hoststate.AuditRecordDigest(prevDigest, "", args)
+	if prevDigest != "" {
+		line += " prev_digest=" + prevDigest
+	}
+	return line + " record_digest=" + digest, digest
 }
 
 // readFileSafe reads path through the openat traversal from trustedRoot (each
@@ -435,12 +489,24 @@ func statPathSafe(trustedRoot, path string) (unix.Stat_t, error) {
 	return st, nil
 }
 
-// filterAuditSessionLines returns the non-empty lines whose session_id equals
-// sessionID (mirrors sessions.SessionAuditRecords over readAuditLog's bytes).
+// renderedAuditLine cuts line after its auditLineSentinel token, dropping the
+// chain framing that appendAuditLine adds (complete or torn). The lifecycle
+// checks compare the line the writer rendered; internal/host/auditseal verifies
+// the framing. Values never hold a space, so " v=1 " matches only the token.
+func renderedAuditLine(line string) string {
+	if i := strings.Index(line+" ", auditLineSentinel+" "); i >= 0 {
+		return line[:i+len(auditLineSentinel)]
+	}
+	return line
+}
+
+// filterAuditSessionLines returns the non-empty rendered lines (renderedAuditLine)
+// whose session_id equals sessionID (mirrors sessions.SessionAuditRecords over
+// readAuditLog's bytes).
 func filterAuditSessionLines(data []byte, sessionID string) []string {
 	var out []string
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		line = strings.TrimSpace(line)
+		line = renderedAuditLine(strings.TrimSpace(line))
 		if line == "" {
 			continue
 		}

@@ -234,8 +234,9 @@ later valid record for another session does not change the earlier head.
 The result does not protect against a host-root attacker who can use the
 private key. Use the preserved files and fingerprints as additional evidence.
 
-Apple container records have no digest chain. Verification reports that these
-records have no signable chain.
+Apple container records use the same digest chain. An Apple container session
+recorded before the chain has no digest, so verification fails for it
+(`internal/host/auditseal/applecontainer_test.go`).
 
 See [Signed Session Audit Records](signed-session-audit-records.md) for the
 format, coverage, and trust limits.

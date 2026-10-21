@@ -684,7 +684,7 @@ func auditLineContaining(t *testing.T, logPath, needle string) string {
 	mustNil(t, err)
 	for _, ln := range strings.Split(string(data), "\n") {
 		if strings.Contains(ln, needle) {
-			return ln
+			return renderedAuditLine(ln)
 		}
 	}
 	t.Fatalf("no audit line containing %q found", needle)

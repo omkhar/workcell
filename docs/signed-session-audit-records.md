@@ -48,6 +48,10 @@ Workcell calculates the record digest as follows:
 SHA-256(prev_digest \x00 timestamp \x00 event_field_0 \x00 event_field_1 ...)
 ```
 
+The `apple-container` writer has no `timestamp` field. Its time is the `ts`
+event field, so the `timestamp` slot is empty. Each event field is hashed after
+the decode of its percent-encoded path value.
+
 The first record with a digest has no `prev_digest`. A changed, missing, or
 reordered chained record breaks the chain.
 
@@ -68,6 +72,10 @@ does not require the external `flock` command on macOS.
 The appender uses approximately 30 seconds of sleep backoff. Helper execution
 can make the total wait longer. If the lock remains unavailable, the append
 operation fails.
+
+The `apple-container` writer uses an advisory lock on the log file instead
+(`internal/applecontainer/audit.go`). It reads the prior digest and appends
+under that lock, with approximately 1 second of retry.
 
 ## Host seal
 
@@ -185,9 +193,12 @@ The `aws-ec2-ssm` and `gcp-vm` targets are preview-only and launch-blocked.
 Workcell does not provide remote-session signatures because it cannot launch
 these targets.
 
-The preview-only `apple-container` target writes unchained lifecycle records.
-It has no operator launch path. Workcell cannot seal those records, and
-`session verify` fails with a `no signable digest chain` reason.
+The preview-only `apple-container` target has no operator launch path. Its Go
+writer appends each lifecycle record with the same `prev_digest` and
+`record_digest` chain. The signer seals its sessions as it does for the other
+providers. Its records from before the chain have no digest, and
+`session verify` fails for those sessions
+(`internal/host/auditseal/applecontainer_test.go`).
 
 `workcell session export --format ocsf` does not include the seal. It rejects
 duplicate keys and excludes records for another session.

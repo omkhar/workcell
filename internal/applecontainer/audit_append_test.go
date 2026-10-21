@@ -16,6 +16,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// unchained drops the chain framing appendAuditLine adds, for test lines that
+// carry no auditLineSentinel.
+func unchained(line string) string {
+	for _, key := range []string{" prev_digest=", " record_digest="} {
+		if i := strings.Index(line, key); i >= 0 {
+			return line[:i]
+		}
+	}
+	return line
+}
+
 // TestAppendAuditLineHealsTornBoundary (FIX A): a torn append leaves a newline-less
 // fragment at EOF; the next clean append must land on its OWN line (a separator is
 // prepended) rather than being glued onto the fragment into one merged physical line.
@@ -32,7 +43,7 @@ func TestAppendAuditLineHealsTornBoundary(t *testing.T) {
 	data, err := os.ReadFile(logPath)
 	mustNil(t, err)
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if lines[len(lines)-1] != clean {
+	if unchained(lines[len(lines)-1]) != clean {
 		t.Fatalf("clean append did not land on its own line:\n%s", data)
 	}
 }
@@ -48,7 +59,7 @@ func TestAppendAuditLineHealsMidValueTear(t *testing.T) {
 	mustNil(t, appendAuditLine(root, logPath, clean))
 	data, _ := os.ReadFile(logPath)
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if lines[len(lines)-1] != clean {
+	if unchained(lines[len(lines)-1]) != clean {
 		t.Fatalf("clean append merged into a mid-value fragment:\n%s", data)
 	}
 	// A newline-terminated tail must NOT get an extra blank line prepended.
@@ -102,7 +113,27 @@ func TestAppendAuditLineConcurrentIntegrity(t *testing.T) {
 	// one appender heals the torn tail; without it, several concurrently see the torn tail
 	// and each prepends a separator, injecting blank lines (and the check/write critical
 	// section is no longer atomic). Any blank line here is a raced, unserialized heal.
-	got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	physical := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	// The digest chain must stay linear under contention: each appender reads the
+	// previous record digest under the same lock that appends, so every chained
+	// line links to the physical line before it. The fragment has no digest, so
+	// the first chained line has no prev_digest.
+	prev := ""
+	got := make([]string, 0, len(physical))
+	for i, ln := range physical {
+		got = append(got, unchained(ln))
+		if i == 0 {
+			continue
+		}
+		want := unchained(ln)
+		if prev != "" {
+			want += " prev_digest=" + prev
+		}
+		if !strings.HasPrefix(ln, want+" record_digest=") {
+			t.Fatalf("line %d does not link to the record before it (forked chain):\n%s", i, data)
+		}
+		prev = ln[strings.LastIndex(ln, "=")+1:]
+	}
 	want := append([]string{"ts=0 session_id=sid event=session_started torn_fragment_no_newline"}, inputs...)
 	sort.Strings(got)
 	sort.Strings(want)
