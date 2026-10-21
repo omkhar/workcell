@@ -151,6 +151,45 @@ func TestEvaluateReturnsAppleContainerPreviewRow(t *testing.T) {
 	}
 }
 
+func TestEvaluateReturnsDockerEngineRows(t *testing.T) {
+	t.Parallel()
+
+	// The L2 docker-engine compat target is a preview on Linux hosts only.
+	// Every row stays launch-blocked until certification promotes it.
+	for _, tc := range []struct {
+		hostOS, hostArch, distro, version, status, evidence, reason string
+	}{
+		{"linux", "amd64", "ubuntu", "24.04", "preview-only", "certification-only", "linux-amd64-docker-engine-compat-preview-certification-only"},
+		{"linux", "arm64", "debian", "13", "preview-only", "certification-only", "linux-arm64-docker-engine-compat-preview-certification-only"},
+		{"macos", "arm64", "none", "none", "unsupported", "none", "macos-docker-engine-needs-a-linux-host-kernel"},
+		{"windows", "amd64", "none", "none", "unsupported", "none", "windows-docker-engine-needs-a-linux-host-kernel"},
+		{"windows", "arm64", "none", "none", "unsupported", "none", "windows-arm64-docker-engine-needs-a-linux-host-kernel"},
+	} {
+		tc := tc
+		t.Run(tc.hostOS+"-"+tc.hostArch, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := Evaluate(realPolicyMatrixPath(t), Query{
+				HostOS:               tc.hostOS,
+				HostArch:             tc.hostArch,
+				HostDistro:           tc.distro,
+				HostDistroVersion:    tc.version,
+				TargetKind:           "local_compat",
+				TargetProvider:       "docker-engine",
+				TargetAssuranceClass: "compat",
+			})
+			if err != nil {
+				t.Fatalf("Evaluate() error = %v", err)
+			}
+			if result.Status != tc.status || result.Launch != "blocked" || result.Evidence != tc.evidence ||
+				result.ValidationLane != "none" || result.Reason != tc.reason {
+				t.Fatalf("result = %+v, want status=%s launch=blocked evidence=%s validation_lane=none reason=%s",
+					result, tc.status, tc.evidence, tc.reason)
+			}
+		})
+	}
+}
+
 func realPolicyMatrixPath(t *testing.T) string {
 	t.Helper()
 
