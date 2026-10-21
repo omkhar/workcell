@@ -245,6 +245,9 @@ func validateAuditLogFd(fd int, path string) error {
 	return nil
 }
 
+// writeAuditPayload is the append write; tests replace it to make a short write.
+var writeAuditPayload = func(f *os.File, s string) (int, error) { return io.WriteString(f, s) }
+
 func appendAuditLine(trustedRoot, path, line string) error {
 	parentFD, err := openAuditParent(trustedRoot, filepath.Dir(path))
 	if err != nil {
@@ -363,7 +366,15 @@ func appendAuditLine(trustedRoot, path, line string) error {
 	if end.Size+int64(len(payload)) > auditlog.MaxLogBytes {
 		return fmt.Errorf("audit log %q would exceed maximum size of %d bytes", path, auditlog.MaxLogBytes)
 	}
-	if _, err := io.WriteString(handle, payload); err != nil {
+	if _, err := writeAuditPayload(handle, payload); err != nil {
+		// Roll a short write back under the same lock: a kept fragment after a
+		// valid digest would make the session unverifiable after a retry.
+		if rbErr := handle.Truncate(end.Size); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("roll back audit log %q: %w", path, rbErr))
+		}
+		if rbErr := handle.Sync(); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("sync rolled-back audit log %q: %w", path, rbErr))
+		}
 		return err // the deferred Close releases the advisory lock
 	}
 	// Make the chained record durable before a caller can seal it: a seal that
