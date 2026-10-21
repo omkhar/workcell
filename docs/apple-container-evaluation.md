@@ -45,8 +45,9 @@ three samples. This result does not create a general performance claim.
 The evaluation probe uses the macOS 26 guard. The Workcell launcher does not
 use this guard because it has no `apple-container` operator target.
 
-The deterministic target writes lifecycle audit records without a signed
-digest chain. Session verification fails closed for this target.
+The deterministic target writes lifecycle audit records with the launcher
+digest chain, so the A5 signer can seal them
+(`internal/host/auditseal/applecontainer_test.go`).
 
 ## Workspace Materialization Safety
 

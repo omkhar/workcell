@@ -30,7 +30,7 @@ import (
 //     POSIX path UNCHANGED. Running such a line through the `%q` decoder would
 //     treat `\` as an escape and DROP it (`/tmp/a\b` → `/tmp/ab`), corrupting the
 //     workspace evidence. This path tokenizes with strings.Fields and percent-
-//     decodes the encoded fields via the canonical applecontainer.DecodeAuditPathValue.
+//     decodes the encoded fields via the canonical applecontainer.DecodeAuditFieldValue.
 //
 // If the source cannot be identified as AppleContainer, the bash `%q` decoder is
 // used (the launcher backends are the common case); the percent decoder is only
@@ -45,15 +45,6 @@ const (
 	// encodingPercentPath is internal/applecontainer's percent-encoded path form.
 	encodingPercentPath
 )
-
-// percentEncodedAuditFields are the audit field keys the AppleContainer writer
-// percent-encodes (encodeAuditPathValue in internal/applecontainer/recovery.go).
-// Only these are percent-decoded on read-back; every other field is raw Sprintf,
-// so decoding it could corrupt a legitimate literal `%` — keep the inverse exact.
-var percentEncodedAuditFields = map[string]struct{}{
-	"workspace":        {},
-	"workspace_origin": {},
-}
 
 // auditEncodingForProvider selects the audit decoder for a session from its
 // record's target_provider. The Go AppleContainer target (provider
@@ -273,9 +264,7 @@ func decodeAuditLine(line string, enc auditEncoding) ([]auditField, error) {
 		}
 		seen[key] = struct{}{}
 		if enc == encodingPercentPath {
-			if _, isPath := percentEncodedAuditFields[key]; isPath {
-				value = applecontainer.DecodeAuditPathValue(value)
-			}
+			value = applecontainer.DecodeAuditFieldValue(key, value)
 		}
 		fields = append(fields, auditField{key: key, value: value})
 	}

@@ -17,6 +17,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/omkhar/workcell/internal/host/auditlog"
+	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
@@ -50,13 +52,25 @@ func encodeAuditPathValue(value string) string {
 	return b.String()
 }
 
-// DecodeAuditPathValue is the exported canonical decoder for audit path values
-// this package writes with encodeAuditPathValue. Cross-package readers (the OCSF
-// export in internal/ocsf) reuse it to recover the exact original path from a
-// percent-encoded AppleContainer audit field, so a literal backslash in a legal
-// POSIX path survives instead of being mis-read as a shell escape.
-func DecodeAuditPathValue(value string) string {
-	return decodeAuditPathValue(value)
+// percentEncodedAuditFields are the audit field keys this package writes with
+// encodeAuditPathValue. Every other field is raw Sprintf, so decoding it could
+// corrupt a legitimate literal `%`.
+var percentEncodedAuditFields = map[string]struct{}{
+	"workspace":        {},
+	"workspace_origin": {},
+}
+
+// DecodeAuditFieldValue is the exported canonical decoder for an audit field
+// this package writes: it percent-decodes the path fields and returns every
+// other value unchanged. Cross-package readers (the OCSF export in
+// internal/ocsf) reuse it to recover the exact original path, so a literal
+// backslash in a legal POSIX path survives instead of being mis-read as a
+// shell escape.
+func DecodeAuditFieldValue(key, value string) string {
+	if _, isPath := percentEncodedAuditFields[key]; isPath {
+		return decodeAuditPathValue(value)
+	}
+	return value
 }
 
 func decodeAuditPathValue(value string) string {
@@ -181,9 +195,17 @@ func openParentDir(trustedRoot, parent string, create bool) (int, error) {
 	for _, comp := range strings.Split(rel, string(filepath.Separator)) {
 		next, err := unix.Openat(dirfd, comp, openFlags, 0)
 		if err == unix.ENOENT && create {
-			if mkErr := unix.Mkdirat(dirfd, comp, 0o755); mkErr != nil && mkErr != unix.EEXIST {
+			mkErr := unix.Mkdirat(dirfd, comp, 0o755)
+			if mkErr != nil && mkErr != unix.EEXIST {
 				unix.Close(dirfd)
 				return -1, fmt.Errorf("create dir %q: %w", comp, mkErr)
+			}
+			// Persist the new directory entry, so a synced record below it survives power loss.
+			if mkErr == nil {
+				if syncErr := unix.Fsync(dirfd); syncErr != nil {
+					unix.Close(dirfd)
+					return -1, fmt.Errorf("sync dir after creating %q: %w", comp, syncErr)
+				}
 			}
 			next, err = unix.Openat(dirfd, comp, openFlags, 0)
 		}
@@ -313,11 +335,81 @@ func appendAuditLine(trustedRoot, path, line string) error {
 			prefix = "\n"
 		}
 	}
-	if _, err := io.WriteString(handle, prefix+line+"\n"); err != nil {
+	// Refuse before allocating: an oversized log would be read whole below.
+	if end.Size > auditlog.MaxLogBytes {
+		return fmt.Errorf("audit log %q exceeds maximum size of %d bytes", path, auditlog.MaxLogBytes)
+	}
+	// Read the previous record digest under the same lock that appends, so no
+	// concurrent appender can fork the chain between the read and the write.
+	existing := make([]byte, end.Size)
+	if _, err := handle.ReadAt(existing, 0); err != nil {
+		return fmt.Errorf("read audit log %q: %w", path, err)
+	}
+	prev := lastRecordDigest(existing)
+	// line can hold several records (reconcileStartEvents joins them), so each
+	// one links to the record before it.
+	var chained []string
+	for _, l := range strings.Split(line, "\n") {
+		var c string
+		c, prev = chainAuditLine(prev, l)
+		// The reader refuses a physical line (with its newline) over the cap.
+		if len(c)+1 > auditlog.MaxLineBytes {
+			return fmt.Errorf("audit record for %q exceeds maximum line size of %d bytes", path, auditlog.MaxLineBytes)
+		}
+		chained = append(chained, c)
+	}
+	payload := prefix + strings.Join(chained, "\n") + "\n"
+	// Count the pending record too: the A5 signer refuses a log over the cap.
+	if end.Size+int64(len(payload)) > auditlog.MaxLogBytes {
+		return fmt.Errorf("audit log %q would exceed maximum size of %d bytes", path, auditlog.MaxLogBytes)
+	}
+	if _, err := io.WriteString(handle, payload); err != nil {
 		return err // the deferred Close releases the advisory lock
+	}
+	// Make the chained record durable before a caller can seal it: a seal that
+	// outlives its record on power loss would fail verify.
+	if err := handle.Sync(); err != nil {
+		return fmt.Errorf("sync audit log %q: %w", path, err)
+	}
+	if err := unix.Fsync(parentFD); err != nil {
+		return fmt.Errorf("sync audit log dir %q: %w", filepath.Dir(path), err)
 	}
 	_ = unix.Flock(leaf, unix.LOCK_UN) // release promptly; deferred Close is a backstop
 	return nil
+}
+
+// lastRecordDigest returns the last record_digest value in the log ("" when no
+// record carries one), the same seed scripts/workcell's
+// append_audit_record_to_path reads for its next record.
+func lastRecordDigest(data []byte) string {
+	last := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, tok := range strings.Fields(line) {
+			if k, v, ok := strings.Cut(tok, "="); ok && k == "record_digest" {
+				last = v
+			}
+		}
+	}
+	return last
+}
+
+// chainAuditLine appends the launcher's digest-chain framing to one rendered
+// line: prev_digest when a previous record exists, then record_digest. The
+// digest is hoststate.AuditRecordDigest over the decoded fields, which is what
+// internal/host/auditseal recomputes. The line has no timestamp= field (its
+// time is the ts= field), so the timestamp slot is empty. It returns the framed
+// line and its record digest.
+func chainAuditLine(prevDigest, line string) (string, string) {
+	var args []string
+	for _, tok := range strings.Fields(line) {
+		key, value, _ := strings.Cut(tok, "=")
+		args = append(args, key+"="+DecodeAuditFieldValue(key, value))
+	}
+	digest := hoststate.AuditRecordDigest(prevDigest, "", args)
+	if prevDigest != "" {
+		line += " prev_digest=" + prevDigest
+	}
+	return line + " record_digest=" + digest, digest
 }
 
 // readFileSafe reads path through the openat traversal from trustedRoot (each
@@ -423,12 +515,24 @@ func statPathSafe(trustedRoot, path string) (unix.Stat_t, error) {
 	return st, nil
 }
 
-// filterAuditSessionLines returns the non-empty lines whose session_id equals
-// sessionID (mirrors sessions.SessionAuditRecords over readAuditLog's bytes).
+// renderedAuditLine cuts line after its auditLineSentinel token, dropping the
+// chain framing that appendAuditLine adds (complete or torn). The lifecycle
+// checks compare the line the writer rendered; internal/host/auditseal verifies
+// the framing. Values never hold a space, so " v=1 " matches only the token.
+func renderedAuditLine(line string) string {
+	if i := strings.Index(line+" ", auditLineSentinel+" "); i >= 0 {
+		return line[:i+len(auditLineSentinel)]
+	}
+	return line
+}
+
+// filterAuditSessionLines returns the non-empty rendered lines (renderedAuditLine)
+// whose session_id equals sessionID (mirrors sessions.SessionAuditRecords over
+// readAuditLog's bytes).
 func filterAuditSessionLines(data []byte, sessionID string) []string {
 	var out []string
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		line = strings.TrimSpace(line)
+		line = renderedAuditLine(strings.TrimSpace(line))
 		if line == "" {
 			continue
 		}
