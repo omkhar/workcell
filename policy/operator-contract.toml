@@ -534,3 +534,13 @@ docs = ["docs/invariants.md", "docs/mode-map.md", "man/workcell.1"]
 evidence = ["internal/adapters/uncertified_test.go"]
 requirements = ["functional.FR-004"]
 target_state = "retain"
+
+[workflows.launch_target_apple_container]
+title = "Preview Apple container target plan"
+support = "supported"
+canonical = "--target apple-container"
+discoverability = ["top-level-help", "manpage"]
+docs = ["man/workcell.1", "docs/apple-container-evaluation.md"]
+evidence = ["tests/scenarios/shared/test-apple-container-dry-run.sh", "internal/applecontainer/guard_test.go"]
+requirements = ["functional.FR-016"]
+target_state = "retain"

@@ -23,6 +23,7 @@ scrub_host_process_env() {
     unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO
     unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION
     unset WORKCELL_TEST_KVM_DEVICE
+    unset WORKCELL_TEST_MACOS_PRODUCT_VERSION
     unset WORKCELL_TEST_CREDENTIAL_BROKER_KEYCHAIN
   fi
   unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
@@ -242,6 +243,7 @@ Options:
   --agent-arg VALUE             Additional provider argv to append (repeatable)
   --target colima|docker-desktop|aws-ec2-ssm|gcp-vm
                                 Runtime target to launch (default: colima)
+                                --target apple-container is a macOS 27 preview: --dry-run and --doctor only
   --target-id ID                Explicit remote target identifier for preview backends
   --cache-profile off|standard  Opt-in persistent non-secret cache plane (default: off)
   --codex-rules-mutability readonly|session
@@ -559,10 +561,10 @@ validate_target_id_name() {
 
 validate_target_backend_name() {
   case "$1" in
-    colima | docker-desktop | aws-ec2-ssm | gcp-vm) ;;
+    colima | docker-desktop | aws-ec2-ssm | gcp-vm | apple-container) ;;
     *)
       echo "Unsupported target backend: $1" >&2
-      echo "Use --target colima, --target docker-desktop, --target aws-ec2-ssm, or --target gcp-vm." >&2
+      echo "Use --target colima, --target docker-desktop, --target aws-ec2-ssm, --target gcp-vm, or --target apple-container." >&2
       exit 2
       ;;
   esac
@@ -2005,7 +2007,7 @@ emit_loaded_session_control_summary() {
 
 current_target_kind() {
   case "${TARGET_BACKEND}" in
-    colima)
+    colima | apple-container)
       printf 'local_vm\n'
       ;;
     docker-desktop)
@@ -2082,7 +2084,7 @@ current_target_id() {
     docker-desktop)
       docker_desktop_context_name
       ;;
-    aws-ec2-ssm | gcp-vm)
+    aws-ec2-ssm | gcp-vm | apple-container)
       printf '%s\n' "${COLIMA_PROFILE}"
       ;;
   esac
@@ -2099,6 +2101,9 @@ current_target_assurance_class() {
     aws-ec2-ssm | gcp-vm)
       printf 'compat\n'
       ;;
+    apple-container)
+      printf 'per-session-vm\n'
+      ;;
   esac
 }
 
@@ -2107,12 +2112,20 @@ current_runtime_api() {
     printf 'brokered\n'
     return 0
   fi
+  if [[ "${TARGET_BACKEND}" == "apple-container" ]]; then
+    printf 'local-cli\n'
+    return 0
+  fi
   printf 'docker\n'
 }
 
 current_workspace_transport() {
   if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
     printf 'remote-materialization\n'
+    return 0
+  fi
+  if [[ "${TARGET_BACKEND}" == "apple-container" ]]; then
+    printf 'local-materialization\n'
     return 0
   fi
   if [[ -n "${SESSION_SOURCE_WORKSPACE:-}" ]] && [[ -n "${WORKSPACE:-}" ]] &&
@@ -2241,6 +2254,34 @@ emit_preview_remote_vm_dry_run() {
     "${WORKSPACE}"
 }
 
+# apple_container_host_ready runs the apple-container host guard
+# (internal/applecontainer/guard.go).  A refusal names its reason on stderr.
+apple_container_host_ready() {
+  go_hostutil helper apple-container-host-check \
+    "$(detected_host_os)" \
+    "$(detected_host_arch)" \
+    "$(detected_macos_product_version)"
+}
+
+# An apple-container dry-run prints the reviewed plan only on a preview-only
+# matrix row and a host that passes the guard.  It never launches.
+apple_container_dry_run_allowed() {
+  [[ "${TARGET_BACKEND}" == "apple-container" ]] &&
+    [[ "${DRY_RUN}" -eq 1 ]] &&
+    apple_container_host_ready &&
+    [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]]
+}
+
+emit_apple_container_dry_run() {
+  emit_preview_launch_state
+  printf 'local_access_model=direct per_session_vm=1 live_smoke=certification-only\n' >&2
+  printf 'execution_path=apple-container-preview-plan audit_log=%s rollout_doc=docs/apple-container-evaluation.md\n' \
+    "$(profile_audit_log_path "${COLIMA_PROFILE}")" >&2
+  printf 'apple-container-preview-plan target=apple-container target_id=%s launch_gate=certification-only workspace=%s\n' \
+    "$(current_target_id)" \
+    "${WORKSPACE}"
+}
+
 # Returns 1 and names the cause when the selected Colima VM type is qemu and
 # /dev/kvm is not usable.  There is no QEMU TCG fallback.
 check_colima_kvm() {
@@ -2255,7 +2296,7 @@ check_colima_kvm() {
 }
 
 fail_for_unsupported_launch_target() {
-  if support_matrix_launch_allowed || preview_remote_vm_dry_run_allowed; then
+  if support_matrix_launch_allowed || preview_remote_vm_dry_run_allowed || apple_container_dry_run_allowed; then
     return 0
   fi
 
@@ -2272,6 +2313,9 @@ fail_for_unsupported_launch_target() {
   elif [[ "$(current_target_provider)" == "gcp-vm" ]]; then
     echo "The GCP remote VM target is a preview-only brokered path. Repo-required dry-run diagnostics are supported, but live launch remains certification-only and must use audited IAP access without inbound public SSH." >&2
     echo "Use --dry-run to inspect the reviewed broker plan, then follow docs/gcp-vm-preview.md for the certification path." >&2
+  elif [[ "$(current_target_provider)" == "apple-container" ]]; then
+    echo "The Apple container target is a preview-only per-session VM path for Apple Silicon macOS 27 or later. Live launch stays blocked until certification." >&2
+    echo "Use --dry-run on such a host to inspect the reviewed plan, and see docs/apple-container-evaluation.md for the certification path." >&2
   else
     echo "The Docker Desktop target remains a lower-assurance compat path and is only supported where the published host matrix allows it." >&2
   fi
@@ -7869,6 +7913,8 @@ missing_launch_host_tools_csv() {
     resolve_host_tool_optional session-manager-plugin /usr/local/bin/session-manager-plugin /usr/local/sessionmanagerplugin/bin/session-manager-plugin >/dev/null || missing+=(session-manager-plugin)
   elif [[ "${TARGET_BACKEND}" == "gcp-vm" ]]; then
     resolve_host_tool_optional gcloud /opt/homebrew/bin/gcloud /usr/local/bin/gcloud /usr/bin/gcloud >/dev/null || missing+=(gcloud)
+  elif [[ "${TARGET_BACKEND}" == "apple-container" ]]; then
+    resolve_host_tool_optional container /usr/local/bin/container /opt/homebrew/bin/container >/dev/null || missing+=(container)
   else
     if docker_bin="$(resolve_host_tool_optional docker /opt/homebrew/bin/docker /usr/local/bin/docker /Applications/Docker.app/Contents/Resources/bin/docker)"; then
       if [[ "${TARGET_BACKEND}" == "docker-desktop" ]]; then
@@ -9331,6 +9377,10 @@ if target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ "${PREPARE}" -e
   echo "--prepare and --prepare-only do not apply to remote VM preview targets." >&2
   exit 2
 fi
+if [[ "${TARGET_BACKEND}" == "apple-container" ]] && [[ "${PREPARE}" -eq 1 ]]; then
+  echo "--prepare and --prepare-only do not apply to the apple-container preview target." >&2
+  exit 2
+fi
 if [[ "${SESSION_DETACHED}" -eq 0 ]] && [[ -n "${SESSION_WORKSPACE_MODE}" ]]; then
   echo "--session-workspace applies only to workcell session start." >&2
   exit 2
@@ -9632,6 +9682,19 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
       printf 'doctor_kvm=not-required\n'
     fi
   fi
+  if [[ "${TARGET_BACKEND}" == "apple-container" ]]; then
+    apple_container_host_state="blocked"
+    apple_container_host_ready && apple_container_host_state="ready"
+    printf 'doctor_apple_container_host=%s\n' "${apple_container_host_state}"
+    if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && [[ "${apple_container_host_state}" == "ready" ]]; then
+      if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
+        printf 'doctor_recommended_next=install-host-tools\n'
+      else
+        printf 'doctor_recommended_next=review-apple-container-preview\n'
+      fi
+      exit 0
+    fi
+  fi
   if ! support_matrix_launch_allowed; then
     if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
       if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
@@ -9750,6 +9813,10 @@ if [[ -n "${INJECTION_DENY_ENDPOINTS}" ]]; then
 fi
 if target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
   emit_preview_remote_vm_dry_run
+  exit 0
+fi
+if [[ "${TARGET_BACKEND}" == "apple-container" ]]; then
+  emit_apple_container_dry_run
   exit 0
 fi
 if [[ "${DRY_RUN}" -eq 0 ]]; then

@@ -8,7 +8,7 @@
 # decomposition (roadmap item D4).  These helpers normalise the host OS,
 # architecture, and (on Linux) distribution/version into the lowercased
 # values the launcher's support-matrix logic consumes.  They depend only
-# on uname/ps/PPID/env vars, /dev/kvm, and each other — no other launcher function —
+# on uname/ps/PPID/sw_vers/env vars, /dev/kvm, and each other — no other launcher function —
 # so they are a self-contained, behaviour-preserving unit.  See
 # docs/launcher-contract.md for the module contract.
 
@@ -27,6 +27,7 @@ support_matrix_host_override_allowed() {
       *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \
       *"tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh"* | \
       *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-apple-container-dry-run.sh"* | \
       *"tests/scenarios/shared/test-linux-colima-qemu-dry-run.sh"* | \
       *"tests/scenarios/shared/test-egress-proxy-smoke.sh"*)
       return 0
@@ -101,6 +102,17 @@ host_kvm_status() {
   else
     printf 'denied\n'
   fi
+}
+
+# macOS product version for the apple-container host guard, or empty off
+# macOS.  The harness override follows the KVM device override above.
+detected_macos_product_version() {
+  if support_matrix_host_override_allowed && [[ -n "${WORKCELL_TEST_MACOS_PRODUCT_VERSION:-}" ]]; then
+    printf '%s\n' "${WORKCELL_TEST_MACOS_PRODUCT_VERSION}"
+    return 0
+  fi
+  [[ "$(detected_host_os)" == "macos" ]] || return 0
+  sw_vers -productVersion 2>/dev/null || true
 }
 
 detected_host_os() {
