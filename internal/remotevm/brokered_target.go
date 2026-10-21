@@ -125,16 +125,17 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 		return "", "", err
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
-	guestWorkspace, err := runBroker(ctx, b.Command(targetID), func(conn io.ReadWriter) (string, error) {
+	guestWorkspace, err := runPinned(ctx, "broker", b.Command(targetID), func(conn io.ReadWriteCloser) (string, error) {
 		return sendWorkspaceArchive(conn, staged.Manifest.MaterializationID, archive, size, digest)
 	})
 	return guestWorkspace, digest, err
 }
 
-// runBroker runs the broker argv without a shell and gives its stdio to
-// transfer. A broker that fails reports its exit status. A timeout sends
-// SIGTERM, and SIGKILL follows after brokerStopGrace.
-func runBroker(ctx context.Context, argv []string, transfer func(io.ReadWriter) (string, error)) (string, error) {
+// runPinned runs argv without a shell and gives its stdio to transfer. Close
+// on that stdio closes the child's stdin. A child that fails reports its exit
+// status and the stderr tail under name. A timeout sends SIGTERM, and SIGKILL
+// follows after brokerStopGrace.
+func runPinned(ctx context.Context, name string, argv []string, transfer func(io.ReadWriteCloser) (string, error)) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, brokerTransferTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -153,14 +154,14 @@ func runBroker(ctx context.Context, argv []string, transfer func(io.ReadWriter) 
 		return "", err
 	}
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start broker: %w", err)
+		return "", fmt.Errorf("start %s: %w", name, err)
 	}
 	// A broker child that keeps the pipes open must not hold a blocked read
 	// past the deadline.
 	defer context.AfterFunc(ctx, func() { stdin.Close(); stdout.Close() })()
 	result, transferErr := transfer(struct {
 		io.Reader
-		io.Writer
+		io.WriteCloser
 	}{stdout, stdin})
 	stdin.Close()
 	if transferErr == nil {
@@ -175,11 +176,11 @@ func runBroker(ctx context.Context, argv []string, transfer func(io.ReadWriter) 
 	case transferErr == nil:
 		return result, nil
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return "", fmt.Errorf("broker transfer timed out: %w", errors.Join(transferErr, waitErr))
+		return "", fmt.Errorf("%s transfer timed out: %w", name, errors.Join(transferErr, waitErr))
 	case waitErr != nil:
-		return "", fmt.Errorf("broker transfer failed (%w): %w; broker stderr: %q", waitErr, transferErr, stderr.b)
+		return "", fmt.Errorf("%s transfer failed (%w): %w; %s stderr: %q", name, waitErr, transferErr, name, stderr.b)
 	default:
-		return "", fmt.Errorf("broker transfer failed: %w; broker stderr: %q", transferErr, stderr.b)
+		return "", fmt.Errorf("%s transfer failed: %w; %s stderr: %q", name, transferErr, name, stderr.b)
 	}
 }
 
