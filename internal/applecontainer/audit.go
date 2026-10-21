@@ -50,13 +50,25 @@ func encodeAuditPathValue(value string) string {
 	return b.String()
 }
 
-// DecodeAuditPathValue is the exported canonical decoder for audit path values
-// this package writes with encodeAuditPathValue. Cross-package readers (the OCSF
-// export in internal/ocsf) reuse it to recover the exact original path from a
-// percent-encoded AppleContainer audit field, so a literal backslash in a legal
-// POSIX path survives instead of being mis-read as a shell escape.
-func DecodeAuditPathValue(value string) string {
-	return decodeAuditPathValue(value)
+// percentEncodedAuditFields are the audit field keys this package writes with
+// encodeAuditPathValue. Every other field is raw Sprintf, so decoding it could
+// corrupt a legitimate literal `%`.
+var percentEncodedAuditFields = map[string]struct{}{
+	"workspace":        {},
+	"workspace_origin": {},
+}
+
+// DecodeAuditFieldValue is the exported canonical decoder for an audit field
+// this package writes: it percent-decodes the path fields and returns every
+// other value unchanged. Cross-package readers (the OCSF export in
+// internal/ocsf) reuse it to recover the exact original path, so a literal
+// backslash in a legal POSIX path survives instead of being mis-read as a
+// shell escape.
+func DecodeAuditFieldValue(key, value string) string {
+	if _, isPath := percentEncodedAuditFields[key]; isPath {
+		return decodeAuditPathValue(value)
+	}
+	return value
 }
 
 func decodeAuditPathValue(value string) string {

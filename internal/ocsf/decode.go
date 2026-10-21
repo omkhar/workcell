@@ -63,9 +63,7 @@ func DecodeAuditLineStrict(line, targetProvider string) ([]AuditField, error) {
 		}
 		seen[key] = struct{}{}
 		if enc == encodingPercentPath {
-			if _, isPath := percentEncodedAuditFields[key]; isPath {
-				value = applecontainer.DecodeAuditPathValue(value)
-			}
+			value = applecontainer.DecodeAuditFieldValue(key, value)
 		}
 		fields = append(fields, AuditField{Key: key, Value: value})
 	}
