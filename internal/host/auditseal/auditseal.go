@@ -2,9 +2,9 @@
 // Copyright 2026 Omkhar Arasaratnam
 
 // Package auditseal implements A5 "Signed Session Audit Records": it signs the
-// head of scripts/workcell's existing audit hash-chain host-side and verifies the
-// signature over the RECOMPUTED head from the authoritative durable log, so any
-// tamper fails closed. This is a boundary/host signature (not agent-signed): it
+// head of the audit hash-chain that scripts/workcell and the apple-container
+// writer append, host-side, and verifies the signature over the RECOMPUTED head
+// from the authoritative durable log, so any tamper fails closed. This is a boundary/host signature (not agent-signed): it
 // detects tamper by any party lacking the per-host key, but does NOT defend a
 // host-root attacker who can read signing.key. See
 // docs/signed-session-audit-records.md.
@@ -29,11 +29,6 @@ import (
 const Algorithm = "ecdsa-p256-sha256"
 
 const sealVersion = 1
-
-// ErrUnsupportedAuditChain reports that a session's audit records carry no digest
-// chain (the preview-only apple-container target). Callers treat it as
-// "unsigned": the hook skips it and `session verify` fails closed.
-var ErrUnsupportedAuditChain = errors.New("auditseal: session audit records have no digest chain (provider audit chain unsupported)")
 
 // Seal is the durable, host-owned signature over a session's audit-chain head,
 // stored beside the session record. Only Version, SessionID, KeyID, Algorithm,
@@ -273,7 +268,7 @@ func walkSessionChain(auditLogPath, targetProvider, sessionID string) ([]session
 		if claimsSession {
 			match := sessionMatch{head: chainHead, err: chainErr, fields: fields}
 			if match.err == nil && !started {
-				match.err = ErrUnsupportedAuditChain
+				match.err = errors.New("auditseal: audit record has no digest chain (unchained legacy record)")
 			}
 			matches = append(matches, match)
 		}
@@ -289,13 +284,4 @@ func walkSessionChain(auditLogPath, targetProvider, sessionID string) ([]session
 		return nil, fmt.Errorf("auditseal: no audit records for session %s", sessionID)
 	}
 	return matches, nil
-}
-
-// HasSignableChain reports whether a session's audit records form a signable
-// digest chain; false only for a no-chain provider (ErrUnsupportedAuditChain,
-// e.g. apple-container). Callers use it only for a clear message; the verdict is
-// the signature.
-func HasSignableChain(auditLogPath, targetProvider, sessionID string) bool {
-	_, err := recomputeSessionHead(auditLogPath, targetProvider, sessionID)
-	return !errors.Is(err, ErrUnsupportedAuditChain)
 }
