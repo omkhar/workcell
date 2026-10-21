@@ -291,6 +291,11 @@ lima_instance() {
   fi
 }
 
+# guest_script_stdin prints the exact bytes a guest shell reads for script.
+guest_script_stdin() {
+  printf 'set -euo pipefail\n%s\n' "$1"
+}
+
 run_in_vm() {
   local script="$1"
   local colima_home=""
@@ -314,7 +319,7 @@ EOF
   colima_home="${COLIMA_HOME:-${REAL_HOME}/.colima}"
   (
     cd / &&
-      printf 'set -euo pipefail\n%s\n' "${script}" |
+      guest_script_stdin "${script}" |
       HOME="${REAL_HOME}" \
         COLIMA_HOME="${colima_home}" \
         LIMA_HOME="${colima_home}/_lima" \
@@ -508,6 +513,20 @@ sudo ip6tables-restore --noflush <<<"${IPV6_RESTORE}"
 EOF
 }
 
+# deliver_apply_plan sends the guest apply plan through a transport. limactl
+# runs it in the Colima VM.
+deliver_apply_plan() {
+  case "$1" in
+    limactl)
+      run_in_vm "$(render_allowlist_apply_plan)"
+      ;;
+    *)
+      echo "Unknown guest transport: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
 case "${COMMAND}" in
   clear)
     clear_rules
@@ -531,7 +550,7 @@ case "${COMMAND}" in
     }
     ENDPOINTS="${3}"
     validate_endpoints "${ENDPOINTS}"
-    run_in_vm "$(render_allowlist_apply_plan)"
+    deliver_apply_plan limactl
     ;;
   *)
     usage

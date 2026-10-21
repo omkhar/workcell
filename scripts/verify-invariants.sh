@@ -3175,7 +3175,7 @@ if ! printf '%s\n' "${RUN_IN_VM_BLOCK}" | awk '
   /initialize_host_tools/ && !host_init { host_init = NR }
   /colima_home="\$\{COLIMA_HOME/ && !capture_home { capture_home = NR }
   /initialize_vm_tools/ && !vm_init { vm_init = NR }
-  /set -euo pipefail/ && !vm_exec { vm_exec = NR }
+  /guest_script_stdin/ && !vm_exec { vm_exec = NR }
   END { exit !(host_init && capture_home && vm_init && vm_exec && host_init < capture_home && vm_init < vm_exec) }
 '; then
   echo "Expected run_in_vm to initialize host tools before the capture branch derives colima_home, and VM tools before real VM execution" >&2
