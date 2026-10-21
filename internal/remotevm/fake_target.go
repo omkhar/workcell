@@ -253,23 +253,51 @@ func bootstrapInStateRoot(contract Contract, req BootstrapRequest) (BootstrapRes
 }
 
 func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (SessionResult, error) {
+	return startSessionInStateRoot(f.Contract, req, appendFakeAuditRecord)
+}
+
+func (f FakeTarget) FinishSession(_ context.Context, req FinishSessionRequest) (SessionResult, error) {
+	return finishSessionInStateRoot(f.Contract, req, appendFakeAuditRecord)
+}
+
+// auditAppender appends one audit record of key=value args at timestamp.
+type auditAppender func(path, timestamp string, args []string) error
+
+// appendFakeAuditRecord writes the fake target's unchained line.
+func appendFakeAuditRecord(path, timestamp string, args []string) error {
+	return appendAuditLine(path, "ts="+timestamp+" "+strings.Join(args, " "))
+}
+
+// checkStartSession validates a start request and returns its session id.
+func checkStartSession(req StartSessionRequest) (string, error) {
 	sessionID, err := statePathSegment("session id", req.SessionID)
 	if err != nil {
-		return SessionResult{}, err
+		return "", err
 	}
 	if strings.TrimSpace(req.Agent) == "" {
-		return SessionResult{}, fmt.Errorf("agent is required")
+		return "", fmt.Errorf("agent is required")
 	}
 	if strings.TrimSpace(req.Mode) == "" {
-		return SessionResult{}, fmt.Errorf("mode is required")
+		return "", fmt.Errorf("mode is required")
 	}
 	if strings.TrimSpace(req.StartedAt) == "" {
-		return SessionResult{}, fmt.Errorf("started at is required")
+		return "", fmt.Errorf("started at is required")
 	}
 	if _, err := os.Stat(req.Materialization.ManifestPath); err != nil {
-		return SessionResult{}, err
+		return "", err
 	}
 	if _, err := os.Stat(req.Bootstrap.ManifestPath); err != nil {
+		return "", err
+	}
+	return sessionID, nil
+}
+
+// startSessionInStateRoot writes the running session record and its start
+// audit records in the host state root. The fake target stops here; a
+// brokered target first starts the session on the guest.
+func startSessionInStateRoot(contract Contract, req StartSessionRequest, appendAudit auditAppender) (SessionResult, error) {
+	sessionID, err := checkStartSession(req)
+	if err != nil {
 		return SessionResult{}, err
 	}
 	recordPath := filepath.Join(req.Bootstrap.TargetRoot, "sessions", sessionID+".json")
@@ -277,15 +305,15 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 		Version:               1,
 		SessionID:             sessionID,
 		Profile:               req.Bootstrap.Manifest.TargetID,
-		TargetKind:            f.Contract.TargetKind,
-		TargetProvider:        f.Contract.TargetProvider,
+		TargetKind:            contract.TargetKind,
+		TargetProvider:        contract.TargetProvider,
 		TargetID:              req.Bootstrap.Manifest.TargetID,
-		TargetAssuranceClass:  f.Contract.TargetAssuranceClass,
-		RuntimeAPI:            f.Contract.RuntimeAPI,
-		WorkspaceTransport:    f.Contract.WorkspaceTransport,
+		TargetAssuranceClass:  contract.TargetAssuranceClass,
+		RuntimeAPI:            contract.RuntimeAPI,
+		WorkspaceTransport:    contract.WorkspaceTransport,
 		Agent:                 req.Agent,
 		Mode:                  req.Mode,
-		Status:                f.Contract.Session.StartStatus,
+		Status:                contract.Session.StartStatus,
 		Workspace:             req.Materialization.MaterializedWorkspace,
 		WorkspaceOrigin:       req.Materialization.Manifest.SourceWorkspace,
 		WorkspaceRoot:         req.Materialization.MaterializedWorkspace,
@@ -293,9 +321,9 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 		AuditLogPath:          req.Bootstrap.AuditLogPath,
 		StartedAt:             req.StartedAt,
 		ObservedAt:            req.StartedAt,
-		InitialAssurance:      f.Contract.Session.Assurance,
-		CurrentAssurance:      f.Contract.Session.Assurance,
-		WorkspaceControlPlane: f.Contract.Session.WorkspaceControlPlane,
+		InitialAssurance:      contract.Session.Assurance,
+		CurrentAssurance:      contract.Session.Assurance,
+		WorkspaceControlPlane: contract.Session.WorkspaceControlPlane,
 	}
 	if err := sessions.WriteSessionRecord(recordPath, map[string]string{
 		"session_id":              record.SessionID,
@@ -322,12 +350,12 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 	}); err != nil {
 		return SessionResult{}, err
 	}
-	for _, line := range []string{
-		fmt.Sprintf("ts=%s session_id=%s event=workspace_materialized target_kind=%s target_provider=%s target_id=%s workspace_transport=%s materialization_id=%s workspace_origin=%s workspace=%s", req.StartedAt, sessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.WorkspaceTransport, req.Materialization.Manifest.MaterializationID, req.Materialization.Manifest.SourceWorkspace, req.Materialization.MaterializedWorkspace),
-		fmt.Sprintf("ts=%s session_id=%s event=bootstrap_ready target_kind=%s target_provider=%s target_id=%s runtime_api=%s access_model=%s bootstrap_id=%s image_ref=%s", req.StartedAt, sessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.RuntimeAPI, f.Contract.AccessModel, req.Bootstrap.Manifest.BootstrapID, req.Bootstrap.Manifest.ImageRef),
-		fmt.Sprintf("ts=%s session_id=%s event=session_started target_kind=%s target_provider=%s target_id=%s status=%s workspace_control_plane=%s", req.StartedAt, sessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Bootstrap.Manifest.TargetID, f.Contract.Session.StartStatus, f.Contract.Session.WorkspaceControlPlane),
+	for _, args := range [][]string{
+		{"session_id=" + sessionID, "event=workspace_materialized", "target_kind=" + contract.TargetKind, "target_provider=" + contract.TargetProvider, "target_id=" + req.Bootstrap.Manifest.TargetID, "workspace_transport=" + contract.WorkspaceTransport, "materialization_id=" + req.Materialization.Manifest.MaterializationID, "workspace_origin=" + req.Materialization.Manifest.SourceWorkspace, "workspace=" + req.Materialization.MaterializedWorkspace},
+		{"session_id=" + sessionID, "event=bootstrap_ready", "target_kind=" + contract.TargetKind, "target_provider=" + contract.TargetProvider, "target_id=" + req.Bootstrap.Manifest.TargetID, "runtime_api=" + contract.RuntimeAPI, "access_model=" + contract.AccessModel, "bootstrap_id=" + req.Bootstrap.Manifest.BootstrapID, "image_ref=" + req.Bootstrap.Manifest.ImageRef},
+		{"session_id=" + sessionID, "event=session_started", "target_kind=" + contract.TargetKind, "target_provider=" + contract.TargetProvider, "target_id=" + req.Bootstrap.Manifest.TargetID, "status=" + contract.Session.StartStatus, "workspace_control_plane=" + contract.Session.WorkspaceControlPlane},
 	} {
-		if err := appendAuditLine(req.Bootstrap.AuditLogPath, line); err != nil {
+		if err := appendAudit(req.Bootstrap.AuditLogPath, req.StartedAt, args); err != nil {
 			return SessionResult{}, err
 		}
 	}
@@ -338,7 +366,9 @@ func (f FakeTarget) StartSession(_ context.Context, req StartSessionRequest) (Se
 	return SessionResult{Record: record, RecordPath: recordPath, AuditLogPath: req.Bootstrap.AuditLogPath}, nil
 }
 
-func (f FakeTarget) FinishSession(_ context.Context, req FinishSessionRequest) (SessionResult, error) {
+// finishSessionInStateRoot writes the final session record and the
+// session_finished audit record in the host state root.
+func finishSessionInStateRoot(contract Contract, req FinishSessionRequest, appendAudit auditAppender) (SessionResult, error) {
 	if strings.TrimSpace(req.FinishedAt) == "" {
 		return SessionResult{}, fmt.Errorf("finished at is required")
 	}
@@ -349,17 +379,17 @@ func (f FakeTarget) FinishSession(_ context.Context, req FinishSessionRequest) (
 		return SessionResult{}, fmt.Errorf("started session record path is required")
 	}
 	if err := sessions.WriteSessionRecord(req.Started.RecordPath, map[string]string{
-		"status":            f.Contract.Session.FinalStatus,
+		"status":            contract.Session.FinalStatus,
 		"live_status":       "stopped",
 		"observed_at":       req.FinishedAt,
 		"finished_at":       req.FinishedAt,
 		"exit_status":       req.ExitStatus,
-		"final_assurance":   f.Contract.Session.Assurance,
-		"current_assurance": f.Contract.Session.Assurance,
+		"final_assurance":   contract.Session.Assurance,
+		"current_assurance": contract.Session.Assurance,
 	}); err != nil {
 		return SessionResult{}, err
 	}
-	if err := appendAuditLine(req.Started.AuditLogPath, fmt.Sprintf("ts=%s session_id=%s event=session_finished target_kind=%s target_provider=%s target_id=%s status=%s exit_status=%s", req.FinishedAt, req.Started.Record.SessionID, f.Contract.TargetKind, f.Contract.TargetProvider, req.Started.Record.TargetID, f.Contract.Session.FinalStatus, req.ExitStatus)); err != nil {
+	if err := appendAudit(req.Started.AuditLogPath, req.FinishedAt, []string{"session_id=" + req.Started.Record.SessionID, "event=session_finished", "target_kind=" + contract.TargetKind, "target_provider=" + contract.TargetProvider, "target_id=" + req.Started.Record.TargetID, "status=" + contract.Session.FinalStatus, "exit_status=" + req.ExitStatus}); err != nil {
 		return SessionResult{}, err
 	}
 	record, err := sessions.ReadSessionRecord(req.Started.RecordPath)
