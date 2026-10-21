@@ -32,6 +32,13 @@ The fake target copies the source workspace into its local target root. It
 excludes `.git` and records each copied entry in `materialization.json`.
 
 The fake target rejects destination names that collide after NFC normalization and Unicode case folding.
+The copy stops with an error at the first limit that it exceeds:
+
+- One file is larger than 256 MiB.
+- All files together are larger than 2 GiB.
+- The walk finds more than 100,000 entries.
+
+The Apple container workspace copy uses the same limits.
 It writes no content at a destination path it rejects for invalid UTF-8 data.
 
 This process is contract evidence only. It does not copy data to AWS or GCP.
