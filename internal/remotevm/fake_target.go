@@ -130,10 +130,17 @@ func NewFakeTarget(contract Contract) (FakeTarget, error) {
 }
 
 func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeRequest) (MaterializeResult, error) {
+	return materializeInStateRoot(f.Contract, req)
+}
+
+// materializeInStateRoot copies the source workspace into the host state root
+// and writes its manifest. The fake target stops here; a brokered target then
+// sends this reviewed host copy to the guest.
+func materializeInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return MaterializeResult{}, fmt.Errorf("state root is required")
 	}
-	targetProvider, err := statePathSegment("target provider", f.Contract.TargetProvider)
+	targetProvider, err := statePathSegment("target provider", contract.TargetProvider)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
@@ -150,28 +157,28 @@ func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeReque
 	}
 	targetRoot := targetRoot(req.StateRoot, targetProvider, targetID)
 	materializationRoot := filepath.Join(targetRoot, "materializations", materializationID)
-	workspaceRoot := filepath.Join(materializationRoot, f.Contract.WorkspaceMaterialization.WorkspaceDir)
-	manifestPath := filepath.Join(materializationRoot, f.Contract.WorkspaceMaterialization.ManifestName)
+	workspaceRoot := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.WorkspaceDir)
+	manifestPath := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.ManifestName)
 	if err := os.RemoveAll(materializationRoot); err != nil {
 		return MaterializeResult{}, err
 	}
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return MaterializeResult{}, err
 	}
-	entries, err := copyWorkspaceTree(req.SourceWorkspace, workspaceRoot, f.Contract.WorkspaceMaterialization.ExcludedPaths)
+	entries, err := copyWorkspaceTree(req.SourceWorkspace, workspaceRoot, contract.WorkspaceMaterialization.ExcludedPaths)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
 	manifest := WorkspaceManifest{
 		Version:               1,
-		TargetKind:            f.Contract.TargetKind,
-		TargetProvider:        f.Contract.TargetProvider,
+		TargetKind:            contract.TargetKind,
+		TargetProvider:        contract.TargetProvider,
 		TargetID:              targetID,
-		WorkspaceTransport:    f.Contract.WorkspaceTransport,
+		WorkspaceTransport:    contract.WorkspaceTransport,
 		SourceWorkspace:       req.SourceWorkspace,
 		MaterializationID:     materializationID,
 		MaterializedWorkspace: workspaceRoot,
-		ExcludedPaths:         append([]string(nil), f.Contract.WorkspaceMaterialization.ExcludedPaths...),
+		ExcludedPaths:         append([]string(nil), contract.WorkspaceMaterialization.ExcludedPaths...),
 		Entries:               entries,
 	}
 	if err := writeJSON(manifestPath, manifest); err != nil {
@@ -431,27 +438,8 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 			if err != nil {
 				return fmt.Errorf("read workspace symlink %q: %q", rel, err.Error())
 			}
-			// The remote-vm contract promises host-auditable materialization:
-			// a symlink that resolves outside the materialized workspace would
-			// smuggle non-workspace content past that audit, so fail closed.
-			if filepath.IsAbs(target) {
-				return fmt.Errorf("workspace symlink %q targets an absolute path: %q", rel, target)
-			}
-			resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
-			if resolved == ".." || strings.HasPrefix(resolved, "../") {
-				return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
-			}
-			// The lexical check above is evadable through symlink chains
-			// (an in-workspace link to a parent directory re-routes a later
-			// ".." through the kernel), so also require the kernel-resolved
-			// target to stay inside the resolved workspace root. Dangling
-			// links fail closed.
-			physical, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return fmt.Errorf("workspace symlink %q does not resolve inside the workspace: %q", rel, err.Error())
-			}
-			if physical != resolvedRoot && !strings.HasPrefix(physical, resolvedRoot+string(filepath.Separator)) {
-				return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
+			if err := checkWorkspaceSymlink(resolvedRoot, path, rel, target); err != nil {
+				return err
 			}
 			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 				return err
@@ -502,6 +490,34 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 		return entries[i].Path < entries[j].Path
 	})
 	return entries, nil
+}
+
+// checkWorkspaceSymlink fails closed unless the symlink at path, which is rel
+// under the workspace root that resolves to resolvedRoot, stays inside it.
+func checkWorkspaceSymlink(resolvedRoot, path, rel, target string) error {
+	// The remote-vm contract promises host-auditable materialization:
+	// a symlink that resolves outside the materialized workspace would
+	// smuggle non-workspace content past that audit, so fail closed.
+	if filepath.IsAbs(target) {
+		return fmt.Errorf("workspace symlink %q targets an absolute path: %q", rel, target)
+	}
+	resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
+	}
+	// The lexical check above is evadable through symlink chains
+	// (an in-workspace link to a parent directory re-routes a later
+	// ".." through the kernel), so also require the kernel-resolved
+	// target to stay inside the resolved workspace root. Dangling
+	// links fail closed.
+	physical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("workspace symlink %q does not resolve inside the workspace: %q", rel, err.Error())
+	}
+	if physical != resolvedRoot && !strings.HasPrefix(physical, resolvedRoot+string(filepath.Separator)) {
+		return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
+	}
+	return nil
 }
 
 func readWorkspaceFile(path string, allowed int64) ([]byte, error) {
