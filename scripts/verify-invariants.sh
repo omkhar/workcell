@@ -7085,6 +7085,35 @@ if (
 fi
 grep -q 'the session clone directory is not a directory: .*/sessions-race/git/workcell-sessions' /tmp/workcell-sessions-race.out
 
+# The session clone directory is created owner-only, and an existing owned one
+# with any group or other mode bit is set to 0700.
+SESSIONS_MODE_FUNCTIONS="${COMMONDIR_ROOT}/sessions-mode-functions.sh"
+sed -n '/^ensure_session_clone_dir() {/,/^}/p' "${ROOT_DIR}/scripts/workcell" >"${SESSIONS_MODE_FUNCTIONS}"
+grep -q '^ensure_session_clone_dir() {' "${SESSIONS_MODE_FUNCTIONS}"
+mkdir -p "${COMMONDIR_ROOT}/sessions-mode/new" "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions"
+(
+  umask 022
+  # shellcheck source=/dev/null
+  source "${SESSIONS_MODE_FUNCTIONS}"
+  ensure_session_clone_dir "${COMMONDIR_ROOT}/sessions-mode/new/workcell-sessions"
+)
+SESSIONS_MODE_LOOSE="$(find "${COMMONDIR_ROOT}/sessions-mode/new/workcell-sessions" -maxdepth 0 ! -perm 0700 -print)" || exit 1
+[[ -z "${SESSIONS_MODE_LOOSE}" ]] || {
+  echo "Expected a new .git/workcell-sessions to be created with mode 0700" >&2
+  exit 1
+}
+chmod 0755 "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions"
+(
+  # shellcheck source=/dev/null
+  source "${SESSIONS_MODE_FUNCTIONS}"
+  ensure_session_clone_dir "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions"
+)
+SESSIONS_MODE_LOOSE="$(find "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions" -maxdepth 0 ! -perm 0700 -print)" || exit 1
+[[ -z "${SESSIONS_MODE_LOOSE}" ]] || {
+  echo "Expected an existing 0755 .git/workcell-sessions to be set to mode 0700" >&2
+  exit 1
+}
+
 # A Git admin directory under a worktrees name outside the masked paths must be rejected.
 COMMONDIR_WT_REPO="${COMMONDIR_ROOT}/worktrees-admin-repo"
 git init -q -b master "${COMMONDIR_WT_REPO}"
