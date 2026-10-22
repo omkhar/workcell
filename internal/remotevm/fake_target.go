@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
@@ -388,6 +389,11 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 	if err != nil {
 		return nil, err
 	}
+	source, err := os.OpenRoot(sourceRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
 	err = filepath.WalkDir(sourceRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -472,7 +478,7 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 			// The bounded read stops one byte past the remaining budget, so an
 			// oversized or growing file fails without a full read into memory.
 			allowed := min(limits.maxFileBytes, limits.maxBytes-totalBytes)
-			content, err := readWorkspaceFile(path, allowed)
+			content, err := readWorkspaceFile(source, rel, info, allowed)
 			if err != nil {
 				return err
 			}
@@ -504,12 +510,24 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 	return entries, nil
 }
 
-func readWorkspaceFile(path string, allowed int64) ([]byte, error) {
-	file, err := os.Open(path)
+// readWorkspaceFile reads rel under source only when it is still the regular
+// file that the walk classified as info. The root keeps the open inside the
+// workspace when a writer swaps a parent or the leaf for a symlink, O_NONBLOCK
+// keeps a swapped-in FIFO from blocking the open, and the SameFile check
+// refuses any other object at rel.
+func readWorkspaceFile(source *os.Root, rel string, info fs.FileInfo, allowed int64) ([]byte, error) {
+	file, err := source.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(opened, info) {
+		return nil, fmt.Errorf("workspace file %q changed during the copy", rel)
+	}
 	return io.ReadAll(io.LimitReader(file, allowed+1))
 }
 

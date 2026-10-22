@@ -101,7 +101,6 @@ internal/publishpr/publish_pr_main.go	os.ReadFile	7382abf1	trust-boundary packag
 internal/remotevm/conformance.go	os.RemoveAll	948e9d7f	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/conformance.go	os.Stat	538339a6	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/contract.go	os.ReadFile	75a20133	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.Open	4202c748	bounded read of a source workspace file that the copy walk classified as regular; the workspace path can have symlinked ancestors that rootio.OpenParentDirectoryNoFollow refuses, so a migration changes which workspaces the copy accepts; migrate with the copy walk
 internal/remotevm/fake_target.go	os.OpenFile	fbf3ee94	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.RemoveAll	0fe0fb29	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.Stat	6ed6cd03,04a89384	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
