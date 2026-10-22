@@ -12,10 +12,10 @@ import (
 	"github.com/omkhar/workcell/internal/host/auditseal"
 )
 
-// TestSignHeadSkipsNoChainProvider proves the signing hook leaves an
-// apple-container-style session (audit records with no record_digest) unsigned
-// rather than erroring or writing a seal that could never verify.
-func TestSignHeadSkipsNoChainProvider(t *testing.T) {
+// TestSignHeadFailsForUnchainedLog proves the signing hook fails for a legacy
+// apple-container session (audit records with no record_digest) and writes no
+// seal, instead of skipping it as an unsupported provider.
+func TestSignHeadFailsForUnchainedLog(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "workcell.audit.log")
 	if err := os.WriteFile(logPath, []byte(strings.Join([]string{
@@ -32,10 +32,10 @@ func TestSignHeadSkipsNoChainProvider(t *testing.T) {
 		"--session-id=session-ac",
 		"--record-path=" + recordPath,
 		"--provider=apple-container",
-	}); err != nil {
-		t.Fatalf("sign-head on a no-chain provider must be a clean no-op, got %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "no digest chain") {
+		t.Fatalf("sign-head on an unchained log must fail with no digest chain, got %v", err)
 	}
 	if _, err := os.Stat(auditseal.SealPathForRecord(recordPath)); !os.IsNotExist(err) {
-		t.Fatalf("no seal must be written for a no-chain provider (stat err=%v)", err)
+		t.Fatalf("no seal must be written for an unchained log (stat err=%v)", err)
 	}
 }

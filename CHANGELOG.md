@@ -103,6 +103,14 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Changed
 
+- The preview-only `apple-container` target now writes its audit records with
+  the `prev_digest` and `record_digest` chain of the launcher. So the A5
+  signer can seal its sessions, and `session verify` can check them. Workcell
+  signs a session only at launcher finalization, and this target has no launch
+  path, so its sessions stay unsigned. No operator command signs them. The
+  no-chain exception is removed: the signer and `session verify` now fail on a
+  log with no digest chain. Older `apple-container` sessions have no chain and do not
+  verify (`internal/host/auditseal/applecontainer_test.go`).
 - On Linux, Workcell stages host inputs, shadows, and token handoffs under
   `~/.cache/colima`, and keeps session snapshots there. Before, it used
   `~/Library/Caches/colima` on every host. macOS does not change.

@@ -195,25 +195,23 @@ func TestVerifyFailsOnMidChainStrippedDigest(t *testing.T) {
 	}
 }
 
-// TestPureLegacyLogIsUnsupported (L185): a session whose records are ALL legacy
-// (no record_digest at all) has no chain to seal — ErrUnsupportedAuditChain,
-// unchanged.
-func TestPureLegacyLogIsUnsupported(t *testing.T) {
+// TestPureLegacyLogFailsSigning (L185): a session whose records are ALL legacy
+// (no record_digest at all) has no chain to seal, so signing fails.
+func TestPureLegacyLogFailsSigning(t *testing.T) {
 	tmp := t.TempDir()
 	signingDir := filepath.Join(tmp, "signing")
 	logPath := writeLog(t, tmp, []string{
 		legacyLine("2026-07-07T00:00:00Z", "sess-A", "launch"),
 		legacyLine("2026-07-07T00:00:01Z", "sess-A", "exit"),
 	})
-	if _, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t"); !errors.Is(err, ErrUnsupportedAuditChain) {
-		t.Fatalf("pure-legacy log must be ErrUnsupportedAuditChain, got %v", err)
+	if _, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t"); err == nil || !strings.Contains(err.Error(), "no digest chain") {
+		t.Fatalf("pure-legacy log must fail with no digest chain, got %v", err)
 	}
 }
 
 // TestStrippedHeadDigestIsTamperNotUnsupported (L179): on a chained provider,
 // stripping record_digest from the session's HEAD record must be reported as a
-// broken chain (missing record_digest) — NOT masked as ErrUnsupportedAuditChain
-// — and HasSignableChain must stay true, since the region still has digests.
+// broken chain (missing record_digest), since the region still has digests.
 func TestStrippedHeadDigestIsTamperNotUnsupported(t *testing.T) {
 	tmp := t.TempDir()
 	signingDir := filepath.Join(tmp, "signing")
@@ -228,21 +226,14 @@ func TestStrippedHeadDigestIsTamperNotUnsupported(t *testing.T) {
 	tampered[3] = strings.Split(tampered[3], " record_digest=")[0]
 	writeLog(t, tmp, tampered)
 	_, err = VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal)
-	if errors.Is(err, ErrUnsupportedAuditChain) {
-		t.Fatalf("stripped head digest must be tamper, not unsupported: %v", err)
-	}
 	if err == nil || !strings.Contains(err.Error(), "missing record_digest") {
 		t.Fatalf("stripped head digest must fail chain-broken, got %v", err)
-	}
-	if !HasSignableChain(logPath, "colima", "sess-A") {
-		t.Fatal("HasSignableChain must stay true when a stripped head is tamper")
 	}
 }
 
 // TestAppendedNoDigestHeadIsTamperNotUnsupported (L179): appending a no-digest
 // record that claims the session AFTER a valid chain (making it the new head)
-// must be reported as broken-chain tamper, not ErrUnsupportedAuditChain, and
-// HasSignableChain must stay true.
+// must be reported as broken-chain tamper.
 func TestAppendedNoDigestHeadIsTamperNotUnsupported(t *testing.T) {
 	tmp := t.TempDir()
 	signingDir := filepath.Join(tmp, "signing")
@@ -257,33 +248,8 @@ func TestAppendedNoDigestHeadIsTamperNotUnsupported(t *testing.T) {
 		legacyLine("2026-07-08T00:00:00Z", "sess-A", "injected"))
 	writeLog(t, tmp, tampered)
 	_, err = VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal)
-	if errors.Is(err, ErrUnsupportedAuditChain) {
-		t.Fatalf("appended no-digest head must be tamper, not unsupported: %v", err)
-	}
 	if err == nil || !strings.Contains(err.Error(), "missing record_digest") {
 		t.Fatalf("appended no-digest head must fail chain-broken, got %v", err)
-	}
-	if !HasSignableChain(logPath, "colima", "sess-A") {
-		t.Fatal("HasSignableChain must stay true when an appended no-digest head is tamper")
-	}
-}
-
-// TestNoChainProviderReportsUnsupported (L179): a session whose records ALL lack
-// record_digest (genuine no-chain provider) stays ErrUnsupportedAuditChain and
-// HasSignableChain=false — the guard must not over-report tamper.
-func TestNoChainProviderReportsUnsupported(t *testing.T) {
-	tmp := t.TempDir()
-	signingDir := filepath.Join(tmp, "signing")
-	logPath := writeLog(t, tmp, []string{
-		legacyLine("2026-07-07T00:00:00Z", "sess-A", "launch"),
-		legacyLine("2026-07-07T00:00:01Z", "sess-B", "launch"),
-		legacyLine("2026-07-07T00:00:02Z", "sess-A", "exit"),
-	})
-	if _, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t"); !errors.Is(err, ErrUnsupportedAuditChain) {
-		t.Fatalf("no-chain provider must be ErrUnsupportedAuditChain, got %v", err)
-	}
-	if HasSignableChain(logPath, "colima", "sess-A") {
-		t.Fatal("HasSignableChain must be false for a no-chain provider")
 	}
 }
 
@@ -538,30 +504,6 @@ func TestVerifyIgnoresUnrelatedLaterTornRecord(t *testing.T) {
 	writeLog(t, tmp, appended)
 	if err := verifyA(signingDir, logPath, seal); err != nil {
 		t.Fatalf("unrelated later records must not fail session A, got %v", err)
-	}
-}
-
-// TestSignUnsupportedForNoChainProvider: a no-chain session (apple-container) is scoped out of signing with a typed ErrUnsupportedAuditChain.
-func TestSignUnsupportedForNoChainProvider(t *testing.T) {
-	tmp := t.TempDir()
-	signingDir := filepath.Join(tmp, "signing")
-	logPath := writeLog(t, tmp, []string{
-		"timestamp=2026-07-08T00:00:00Z session_id=sess-X event=session_started v=1",
-		"timestamp=2026-07-08T00:00:01Z session_id=sess-X event=session_finished v=1",
-	})
-	if _, err := SignSessionHead(signingDir, logPath, "apple-container", "sess-X", "t"); !errors.Is(err, ErrUnsupportedAuditChain) {
-		t.Fatalf("no-chain provider sign must return ErrUnsupportedAuditChain, got %v", err)
-	}
-	if HasSignableChain(logPath, "apple-container", "sess-X") {
-		t.Fatal("no-chain provider must not report a signable chain")
-	}
-
-	signingDir2, logPath2, seal := signGenuine(t, genuineLog(t), "sess-A")
-	if !HasSignableChain(logPath2, "colima", "sess-A") {
-		t.Fatal("chain provider must report a signable chain")
-	}
-	if _, err := VerifySessionSeal(signingDir2, logPath2, "colima", "sess-A", seal); err != nil {
-		t.Fatalf("chain provider must still verify, got %v", err)
 	}
 }
 
