@@ -133,19 +133,21 @@ func TestCredentialBrokerTestKeychainIsHarnessOnly(t *testing.T) {
 // session's broker, or this session's socket inside another argument, is left
 // alone. A stop that found a broker appends the ledger summary, or
 // status=unreadable when no ledger was saved; a no-audit stop appends nothing.
+// The stop scans every process of this uid, so each subtest takes a session id
+// unique on the host: a concurrent run of this test must not match it.
 func TestStopCredentialBrokerSignalsOnlyThisSessionBroker(t *testing.T) {
 	const bin = "/x/workcell-hostutil-abc "
 	const serve = bin + "credential-broker-cli serve --socket $PRIVATE/b.sock "
-	const s1 = "--guest-socket /tmp/workcell-broker-S1.sock --log l"
+	const s1 = "--guest-socket /tmp/workcell-broker-$S1.sock --log l"
 	for _, tc := range []struct {
 		name, argv             string
 		state, killed, cleaned bool
 	}{
 		{"state this session", serve + "--token-fd 3 " + s1, true, true, true},
-		{"state other session", serve + "--guest-socket /tmp/workcell-broker-S2.sock", true, false, true},
+		{"state other session", serve + "--guest-socket /tmp/workcell-broker-$S2.sock", true, false, true},
 		{"no state this session", serve + "--token-fd 3 " + s1, false, true, true},
-		{"no state other session", serve + "--guest-socket /tmp/workcell-broker-S2.sock", false, false, false},
-		{"socket inside another argument", serve + "--ssh-host x--guest-socket /tmp/workcell-broker-S1.sock --log l", false, false, false},
+		{"no state other session", serve + "--guest-socket /tmp/workcell-broker-$S2.sock", false, false, false},
+		{"socket inside another argument", serve + "--ssh-host x--guest-socket /tmp/workcell-broker-$S1.sock --log l", false, false, false},
 		{"not a serving broker", bin + "credential-broker-cli --socket $PRIVATE/b.sock " + s1, false, false, false},
 		{"serve words inside a shell command", bin + "x credential-broker-cli serve --socket $PRIVATE/b.sock " + s1, false, false, false},
 		{"another binary", "/bin/zsh credential-broker-cli serve --socket $PRIVATE/b.sock " + s1, false, false, false},
@@ -154,6 +156,7 @@ func TestStopCredentialBrokerSignalsOnlyThisSessionBroker(t *testing.T) {
 		for _, audit := range []string{"audit", "no-audit"} {
 			t.Run(tc.name+" "+audit, func(t *testing.T) {
 				dir := t.TempDir()
+				session := filepath.Base(filepath.Dir(dir))
 				private := filepath.Join(dir, "wcb.AbC123")
 				for _, d := range []string{filepath.Join(dir, "sessions"), private, filepath.Join(dir, "keep")} {
 					if err := os.MkdirAll(d, 0o700); err != nil {
@@ -170,15 +173,18 @@ func TestStopCredentialBrokerSignalsOnlyThisSessionBroker(t *testing.T) {
 				out, err := brokerLaunchProbe(t, dir, `
 argv="${ARGV//\$PRIVATE/$PRIVATE}"
 argv="${argv//\$DIR/$DIR}"
+argv="${argv//\$S1/$SESSION}"
+argv="${argv//\$S2/${SESSION}x}"
 (exec -a "$argv" sleep 30) &
 pid=$!
-[[ "$STATE" != 1 ]] || printf '%s %s\n' "$pid" "$PRIVATE" >"$DIR/sessions/S1.broker"
-for _ in {1..40}; do [[ "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
-credential_broker_find S1
+[[ "$STATE" != 1 ]] || printf '%s %s\n' "$pid" "$PRIVATE" >"$DIR/sessions/$SESSION.broker"
+for _ in {1..400}; do [[ "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
+[[ "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] || { echo "argv not set"; kill "$pid"; exit 1; }
+credential_broker_find "$SESSION"
 printf 'found=[%s]\n' "$CREDENTIAL_BROKER_FOUND_DIR"
-stop_credential_broker prof S1 "$AUDIT"
+stop_credential_broker prof "$SESSION" "$AUDIT"
 if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; kill "$pid"; else echo killed; fi
-`, "ARGV="+tc.argv, "PRIVATE="+private, "STATE="+state, "AUDIT="+audit)
+`, "ARGV="+tc.argv, "SESSION="+session, "PRIVATE="+private, "STATE="+state, "AUDIT="+audit)
 				if err != nil {
 					t.Fatalf("stop_credential_broker failed: %v\n%s", err, out)
 				}
@@ -193,10 +199,10 @@ if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; k
 					t.Fatalf("killed = %v, want %v\n%s", killed, tc.killed, out)
 				}
 				colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
-				if want := tc.killed || tc.state; (string(colima) == "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n") != want {
+				if want := tc.killed || tc.state; (string(colima) == "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-"+session+".sock\n") != want {
 					t.Fatalf("colima calls = %q, want the guest socket removal %v", colima, want)
 				}
-				ledger, _ := os.ReadFile(filepath.Join(dir, "sessions", "S1.broker.jsonl"))
+				ledger, _ := os.ReadFile(filepath.Join(dir, "sessions", session+".broker.jsonl"))
 				_, privateErr := os.Stat(private)
 				if (string(ledger) == "{\"result\":\"granted\"}\n") != tc.cleaned || os.IsNotExist(privateErr) != tc.cleaned {
 					t.Fatalf("ledger = %q, private dir error = %v, want cleaned %v", ledger, privateErr, tc.cleaned)
@@ -206,16 +212,16 @@ if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; k
 						t.Fatalf("%s removed: %v", kept, err)
 					}
 				}
-				if _, err := os.Stat(filepath.Join(dir, "sessions", "S1.broker")); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(dir, "sessions", session+".broker")); !os.IsNotExist(err) {
 					t.Fatalf("state file remains: %v", err)
 				}
 				want := ""
 				switch {
 				case audit == "no-audit" || !(tc.killed || tc.state):
 				case tc.cleaned:
-					want = "prof S1 credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n"
+					want = "prof " + session + " credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n"
 				default:
-					want = "prof S1 credential_broker_summary status=unreadable\n"
+					want = "prof " + session + " credential_broker_summary status=unreadable\n"
 				}
 				if got, _ := os.ReadFile(filepath.Join(dir, "audit")); string(got) != want {
 					t.Fatalf("audit records = %q, want %q", got, want)
