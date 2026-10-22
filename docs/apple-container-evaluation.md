@@ -20,7 +20,7 @@ Repository tests exercise the local-VM contract and lifecycle. The tests use
 the deterministic `AppleContainerTarget` in
 [`internal/applecontainer`](../internal/applecontainer).
 
-The live probe calls `RequireMacOS26()` before it invokes the Apple CLI. The
+The live probe calls `RequireMacOS27()` before it invokes the Apple CLI. The
 probe measures start time and reads VM isolation properties.
 
 ## Observed Results
@@ -42,8 +42,10 @@ claim for Workcell or operator support.
 The evaluation used one Apple Silicon host. The idle-host measurement used
 three samples. This result does not create a general performance claim.
 
-The evaluation probe uses the macOS 26 guard. The Workcell launcher does not
-use this guard because it has no `apple-container` operator target.
+The evaluation ran under a macOS 26 guard. The guard in
+`internal/applecontainer/guard.go` now requires macOS 27. The Workcell
+launcher does not use this guard because it has no `apple-container` operator
+target.
 
 The deterministic target writes lifecycle audit records with the launcher
 digest chain, so the A5 signer can seal them

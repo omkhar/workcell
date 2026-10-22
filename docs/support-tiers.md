@@ -73,9 +73,9 @@ table below shows every shipped macOS arm64 row and every Linux amd64 row.
 | `linux` | `amd64` | `remote_vm` | `gcp-vm` | `compat` | `validation-host-only` | `blocked` | `repo-required` | `trusted-linux-amd64-validator` |
 
 Linux arm64 and Windows rows are `unsupported`, `blocked`, and have no evidence
-claim. The `apple-container` target also requires macOS 26, but its matrix row
-is still preview-only and blocked. See the canonical matrix for the exact
-reason in each row.
+claim. The `apple-container` target also requires macOS 27
+(`internal/applecontainer/guard.go`), but its matrix row is still preview-only
+and blocked. See the canonical matrix for the exact reason in each row.
 
 See [diagnostics-and-support-matrix.md](diagnostics-and-support-matrix.md) for
 the fields from `--doctor` and `--inspect`.

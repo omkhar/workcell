@@ -376,7 +376,6 @@ docs/stability-contract.md	unanchored-claim	It fails closed.	claim predates the 
 docs/stability-contract.md	unanchored-claim	The value fails closed.	claim predates the rule; cite the enforcing path or drop the claim
 docs/stability-contract.md	unanchored-claim	Workcell rejects each option without its acknowledgement.	claim predates the rule; cite the enforcing path or drop the claim
 docs/stability-contract.md	unanchored-claim	`requires_credentials`	claim predates the rule; cite the enforcing path or drop the claim
-docs/support-tiers.md	unanchored-claim	The `apple-container` target also requires macOS 26, but its matrix row is still preview-only and blocked.	claim predates the rule; cite the enforcing path or drop the claim
 docs/syscall-shim-benchmarks.md	unanchored-claim	The guard refuses a child exec that does not carry exactly the approved preload, `/usr/local/lib/libworkcell_exec_guard.so`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/threat-model.md	unanchored-claim	Workcell blocks the corresponding Linux and Windows operator launches.	claim predates the rule; cite the enforcing path or drop the claim
 docs/unsafe-code-audit-checklist.md	unanchored-claim	`runtime/container/rust/Cargo.toml` sets `undocumented_unsafe_blocks = "deny"`.	claim predates the rule; cite the enforcing path or drop the claim

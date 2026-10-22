@@ -13,22 +13,22 @@ import (
 
 // MinimumMajorVersion is the lowest macOS major version the Apple `container`
 // backend targets. C1 fails closed below it.
-const MinimumMajorVersion = 26
+const MinimumMajorVersion = 27
 
-// RequireMacOS26 fails closed unless the host is Apple Silicon (arm64) running
-// macOS 26 or newer — the exact apple-container support constraint (see
+// RequireMacOS27 fails closed unless the host is Apple Silicon (arm64) running
+// macOS 27 or newer — the exact apple-container support constraint (see
 // docs/apple-container-evaluation.md and policy/host-support-matrix.tsv). On any
-// other OS, on Intel (amd64), or on macOS below 26, it returns an error rather
+// other OS, on Intel (amd64), or on macOS below 27, it returns an error rather
 // than proceeding.
-func RequireMacOS26() error {
-	return requireMacOS26(runtime.GOOS, runtime.GOARCH, swVersProductVersion)
+func RequireMacOS27() error {
+	return requireMacOS27(runtime.GOOS, runtime.GOARCH, swVersProductVersion)
 }
 
-// requireMacOS26 is the testable core of RequireMacOS26: goos/goarch are the
+// requireMacOS27 is the testable core of RequireMacOS27: goos/goarch are the
 // runtime OS/architecture and productVersion reports the macOS product version
-// string (e.g. "26.5.1"). It checks the architecture BEFORE the version so an
+// string (e.g. "27.0.1"). It checks the architecture BEFORE the version so an
 // unsupported host is rejected without shelling out to sw_vers.
-func requireMacOS26(goos, goarch string, productVersion func() (string, error)) error {
+func requireMacOS27(goos, goarch string, productVersion func() (string, error)) error {
 	if goos != "darwin" {
 		return fmt.Errorf("apple container requires macOS %d+, host OS is %q", MinimumMajorVersion, goos)
 	}
