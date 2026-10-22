@@ -19,6 +19,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/workspacelimit"
 )
 
@@ -604,13 +605,17 @@ func writeJSON(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, content, 0o600); err != nil {
+	// A manifest is the host record of a transfer, so it is staged, synced and
+	// renamed into place with its parent synced: a crash or a failed write
+	// leaves the old manifest or the new one, never a truncated file. The
+	// staged file gets mode 0600 through its descriptor, so a rewrite never
+	// keeps an older file's permissions.
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
 		return err
 	}
-	// WriteFile's mode only applies at creation; a manifest rewritten over an
-	// existing file (for example a re-bootstrapped target) keeps its old
-	// permissions otherwise.
-	return os.Chmod(path, 0o600)
+	defer parent.Close()
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(cleaned), content, 0o600, ".manifest-")
 }
 
 func appendAuditLine(path, line string) error {

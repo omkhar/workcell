@@ -104,7 +104,7 @@ internal/remotevm/contract.go	os.ReadFile	75a20133	remote VM contract and fake t
 internal/remotevm/fake_target.go	os.OpenFile	fbf3ee94	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.RemoveAll	bc1dc0f0	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.Stat	6ed6cd03,04a89384	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.WriteFile	c88deaf2,167a6334	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/fake_target.go	os.WriteFile	c88deaf2	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/workspace_archive.go	os.OpenFile	360004b1	the guest receiver creates each archive file with O_EXCL under its own root, in a parent the same archive made as a directory, and streams up to the per-file cap; rootio.StageAndCreateAt needs the whole file in memory and the parent chain from / refuses a receiver root with a symlinked ancestor
 internal/remotevm/workspace_archive.go	os.RemoveAll	110cb4c8,3ea3ff29	the guest receiver clears or rolls back its own materialization directory under its own root; rootio.OpenParentDirectoryNoFollow refuses a receiver root with a symlinked ancestor, and os.RemoveAll does not follow a link inside the tree
 internal/scenarios/scenario_manifest.go	os.ReadFile	c695bb02	CI tooling over the checked-out repository tree; no operator-controlled path
