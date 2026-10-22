@@ -159,7 +159,9 @@ func withScratchGitDir(prefix string, fn func(scratch string) error) error {
 // rejectSpecialAlternates fails when objects/info/alternates in the workspace
 // git dir is present but is not a regular file. The agent can write that file,
 // and git opens it with a blocking read, so a FIFO there hangs every git run
-// that uses the workspace objects as an alternate.
+// that uses the workspace objects as an alternate. This check is only a fast
+// failure: git opens the object store by path, so a writer can swap a FIFO in
+// after it. The process-group timeout of runSnapshotGit bounds that hang.
 func rejectSpecialAlternates(gitDir string) error {
 	objects, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(gitDir, "objects", "anchor"))
 	if err != nil {
