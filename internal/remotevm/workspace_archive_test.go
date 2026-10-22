@@ -279,3 +279,20 @@ func TestWorkspaceArchiveRefusesASwappedStagedFile(t *testing.T) {
 		}
 	}
 }
+
+func TestSendWorkspaceArchiveRejectsAnIDOutsideTheFrame(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []string{"m 1", "m\n1", "m\r1", "", "a/b"} {
+		var sent bytes.Buffer
+		if _, err := sendWorkspaceArchive(struct {
+			io.Reader
+			io.Writer
+		}{strings.NewReader(""), &sent}, id, strings.NewReader("tar"), 3, strings.Repeat("a", 64)); err == nil {
+			t.Fatalf("id %q: send succeeded", id)
+		}
+		if sent.Len() != 0 {
+			t.Fatalf("id %q: sent %q before the refusal", id, sent.String())
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 // The wire format is one header line, the archive bytes, and one ack line:
@@ -109,6 +112,11 @@ func writeArchiveFile(archive *tar.Writer, header *tar.Header, source *os.Root, 
 // sendWorkspaceArchive sends the framed archive and returns the guest
 // workspace path from an ack that names the same digest.
 func sendWorkspaceArchive(conn io.ReadWriter, materializationID string, archive io.Reader, size int64, digest string) (string, error) {
+	// The header is space-separated and newline-terminated, so the receiver
+	// can parse only an ID that is a path segment without those delimiters.
+	if _, err := statePathSegment("materialization id", materializationID); err != nil || strings.ContainsAny(materializationID, " \r\n") {
+		return "", fmt.Errorf("materialization id %q cannot be sent in a workspace archive header", materializationID)
+	}
 	if _, err := fmt.Fprintf(conn, "%s %s %s %d\n", archiveMagic, materializationID, digest, size); err != nil {
 		return "", err
 	}
@@ -193,10 +201,41 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 	if err == nil {
 		err = unpackWorkspaceArchive(spool, workspace, limits)
 	}
+	if err == nil {
+		err = syncMaterialization(root, materializationRoot)
+	}
 	if err != nil {
 		return "", "", errors.Join(err, os.RemoveAll(materializationRoot))
 	}
 	return workspace, digest, nil
+}
+
+// syncMaterialization fsyncs every directory of the unpacked materialization
+// and the directories above it up to root, so the workspace that the receiver
+// acks survives a guest power loss. unpackArchiveFile already synced the files.
+func syncMaterialization(root, materializationRoot string) error {
+	rootParent, cleanedRoot, err := rootio.OpenParentDirectoryNoFollow(root)
+	if err != nil {
+		return err
+	}
+	defer rootParent.Close()
+	rel, err := filepath.Rel(root, materializationRoot)
+	if err != nil {
+		return err
+	}
+	rel = filepath.Join(filepath.Base(cleanedRoot), rel)
+	return filepath.WalkDir(materializationRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || !entry.IsDir() {
+			return err
+		}
+		below, err := filepath.Rel(materializationRoot, path)
+		if err != nil {
+			return err
+		}
+		// SyncDirAt syncs each directory on the way down, so the first call
+		// also syncs root and the materializations directory.
+		return rootio.SyncDirAt(rootParent, filepath.Join(rel, below))
+	})
 }
 
 // unpackWorkspaceArchive applies the host copy rules again on the guest: safe
