@@ -187,7 +187,7 @@ func TestCopyWorkspaceTreeReservesBeforeWrite(t *testing.T) {
 	}
 	destination := filepath.Join(t.TempDir(), "destination")
 	reservation := &failingWorkspaceReservation{err: errors.New("reserve failed")}
-	if _, err := copyWorkspaceTreeWithReservation(source, destination, nil, reservation); !errors.Is(err, reservation.err) {
+	if _, err := copyWorkspaceTreeWithReservation(source, destination, nil, reservation, defaultWorkspaceLimits); !errors.Is(err, reservation.err) {
 		t.Fatalf("copy error = %v", err)
 	}
 	if len(reservation.calls) != 1 || reservation.calls[0] != "first" {
@@ -454,5 +454,110 @@ func TestFakeTargetMaterializeWorkspaceRejectsSymlinkChainEscape(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("expected symlink chain escape rejection, got %v", err)
+	}
+}
+
+func TestCopyWorkspaceTreeEnforcesSizeAndEntryCaps(t *testing.T) {
+	t.Parallel()
+
+	source := t.TempDir()
+	for name, size := range map[string]int{"a.txt": 6, "b.txt": 6} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(strings.Repeat("x", size)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		limits workspaceLimits
+		want   string
+	}{
+		"per-file":  {workspaceLimits{maxFileBytes: 5, maxBytes: 100, maxEntries: 10}, "per-file limit of 5 bytes"},
+		"aggregate": {workspaceLimits{maxFileBytes: 10, maxBytes: 11, maxEntries: 10}, "aggregate file-byte limit of 11 bytes"},
+		"entries":   {workspaceLimits{maxFileBytes: 10, maxBytes: 100, maxEntries: 1}, "more than 1 entries"},
+		"fits":      {workspaceLimits{maxFileBytes: 6, maxBytes: 12, maxEntries: 2}, ""},
+	} {
+		_, err := copyWorkspaceTreeWithReservation(source, filepath.Join(t.TempDir(), "workspace"), nil, newWorkspaceDestinationState(), tc.limits)
+		if tc.want == "" {
+			if err != nil {
+				t.Fatalf("%s: copy error = %v, want nil", name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: copy error = %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
+func TestReadWorkspaceFileStopsOneBytePastTheBudget(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 64)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	content, err := readWorkspaceFile(source, "big.txt", info, 3)
+	if err != nil || len(content) != 4 {
+		t.Fatalf("readWorkspaceFile() len = %d, err = %v, want 4 bytes", len(content), err)
+	}
+}
+
+func TestReadWorkspaceFileRefusesASwappedLeaf(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file")
+	if err := os.WriteFile(path, []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	content, err := readWorkspaceFile(source, "file", info, 10)
+	if err != nil || string(content) != "ok" {
+		t.Fatalf("unchanged file = %q, %v", content, err)
+	}
+
+	swap := func(make func() error) {
+		t.Helper()
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := make(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	swap(func() error { return os.Symlink("other", path) })
+	if content, err := readWorkspaceFile(source, "file", info, 10); err == nil {
+		t.Fatalf("a symlink swapped in after the walk was read: %q", content)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hosts", path); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := readWorkspaceFile(source, "file", info, 10); err == nil {
+		t.Fatalf("a symlink out of the workspace was read: %q", content)
+	}
+	swap(func() error { return unix.Mkfifo(path, 0o600) })
+	if _, err := readWorkspaceFile(source, "file", info, 10); err == nil {
+		t.Fatal("a FIFO swapped in after the walk was accepted")
 	}
 }

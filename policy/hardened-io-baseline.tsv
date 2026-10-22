@@ -102,7 +102,6 @@ internal/remotevm/conformance.go	os.RemoveAll	948e9d7f	remote VM contract and fa
 internal/remotevm/conformance.go	os.Stat	538339a6	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/contract.go	os.ReadFile	75a20133	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.OpenFile	fbf3ee94	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.ReadFile	e1972186	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.RemoveAll	0fe0fb29	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.Stat	6ed6cd03,04a89384	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.WriteFile	c88deaf2,167a6334	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships

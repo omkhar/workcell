@@ -15,9 +15,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/workspacelimit"
 )
 
 type WorkspaceEntry struct {
@@ -366,12 +368,20 @@ func statePathSegment(label, value string) (string, error) {
 	return value, nil
 }
 
-func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]WorkspaceEntry, error) {
-	return copyWorkspaceTreeWithReservation(sourceRoot, destRoot, excluded, newWorkspaceDestinationState())
+type workspaceLimits struct {
+	maxFileBytes, maxBytes int64
+	maxEntries             int
 }
 
-func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []string, destinations workspaceDestinationReservation) ([]WorkspaceEntry, error) {
+var defaultWorkspaceLimits = workspaceLimits{workspacelimit.MaxFileBytes, workspacelimit.MaxBytes, workspacelimit.MaxEntries}
+
+func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]WorkspaceEntry, error) {
+	return copyWorkspaceTreeWithReservation(sourceRoot, destRoot, excluded, newWorkspaceDestinationState(), defaultWorkspaceLimits)
+}
+
+func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []string, destinations workspaceDestinationReservation, limits workspaceLimits) ([]WorkspaceEntry, error) {
 	entries := make([]WorkspaceEntry, 0)
+	entryCount, totalBytes := 0, int64(0)
 	if destinations == nil {
 		return nil, fmt.Errorf("workspace destination reservation is required")
 	}
@@ -379,6 +389,11 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 	if err != nil {
 		return nil, err
 	}
+	source, err := os.OpenRoot(sourceRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
 	err = filepath.WalkDir(sourceRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -386,6 +401,10 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 		if path == sourceRoot {
 			return nil
 		}
+		if entryCount >= limits.maxEntries {
+			return fmt.Errorf("workspace has more than %d entries", limits.maxEntries)
+		}
+		entryCount++
 		if _, err := pathutil.CollisionKey(d.Name()); err != nil {
 			return fmt.Errorf("invalid workspace entry: %w", err)
 		}
@@ -456,10 +475,17 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 				return err
 			}
-			content, err := os.ReadFile(path)
+			// The bounded read stops one byte past the remaining budget, so an
+			// oversized or growing file fails without a full read into memory.
+			allowed := min(limits.maxFileBytes, limits.maxBytes-totalBytes)
+			content, err := readWorkspaceFile(source, rel, info, allowed)
 			if err != nil {
 				return err
 			}
+			if int64(len(content)) > allowed {
+				return workspaceSizeError(rel, int64(len(content)), limits)
+			}
+			totalBytes += int64(len(content))
 			if err := os.WriteFile(destPath, content, info.Mode().Perm()); err != nil {
 				return err
 			}
@@ -482,6 +508,34 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 		return entries[i].Path < entries[j].Path
 	})
 	return entries, nil
+}
+
+// readWorkspaceFile reads rel under source only when it is still the regular
+// file that the walk classified as info. The root keeps the open inside the
+// workspace when a writer swaps a parent or the leaf for a symlink, O_NONBLOCK
+// keeps a swapped-in FIFO from blocking the open, and the SameFile check
+// refuses any other object at rel.
+func readWorkspaceFile(source *os.Root, rel string, info fs.FileInfo, allowed int64) ([]byte, error) {
+	file, err := source.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(opened, info) {
+		return nil, fmt.Errorf("workspace file %q changed during the copy", rel)
+	}
+	return io.ReadAll(io.LimitReader(file, allowed+1))
+}
+
+func workspaceSizeError(rel string, size int64, limits workspaceLimits) error {
+	if size > limits.maxFileBytes {
+		return fmt.Errorf("workspace file %q exceeds the per-file limit of %d bytes", rel, limits.maxFileBytes)
+	}
+	return fmt.Errorf("workspace exceeds the aggregate file-byte limit of %d bytes", limits.maxBytes)
 }
 
 func isExcludedPath(rel string, excluded []string) (bool, error) {
