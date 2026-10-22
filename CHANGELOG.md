@@ -9,6 +9,13 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Added
 
+- `--target apple-container` selects the preview-only
+  `local_vm/apple-container/per-session-vm` target. On Apple Silicon macOS 27
+  or later, `--dry-run` prints a reviewed plan and `--doctor` prints
+  `doctor_apple_container_host`. On other hosts, the dry-run names the host
+  guard reason and exits with status 2. A live launch exits with status 2, and
+  the matrix row stays `preview-only` and `blocked`
+  (`tests/scenarios/shared/test-apple-container-dry-run.sh`).
 - `--allow-uncertified-agent` runs an adapter whose manifest tier is
   `uncertified`. Without the option, or with a certified adapter, the launch
   fails (`internal/adapters/uncertified_test.go`). The session records

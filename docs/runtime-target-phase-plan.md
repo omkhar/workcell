@@ -115,8 +115,9 @@ completed before Phase 13. The provider support source is
 
 Workcell completed the C1 evaluation on Apple Silicon macOS 26. The result was
 GO for the technical evaluation. Workcell deferred operator promotion. The target
-remains `preview-only` and `blocked`. The CLI does not expose it as a target.
-Colima remains the default.
+remains `preview-only` and `blocked`. The CLI exposes it only as a dry-run plan
+and a `--doctor` boundary (`--target apple-container`). Colima remains the
+default.
 
 ## Planned Phases
 

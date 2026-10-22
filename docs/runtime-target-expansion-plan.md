@@ -33,15 +33,19 @@ target can be supported, preview-only, or unsupported.
 | Linux amd64 Docker Desktop row | `unsupported` | blocked | none |
 | Linux arm64 and Windows target rows | `unsupported` | blocked | none |
 
-The Workcell CLI accepts `colima`, `docker-desktop`, `aws-ec2-ssm`, and
-`gcp-vm` as target values. It does not accept `apple-container`, a managed
-workstation, or Azure as an operator target.
+The Workcell CLI accepts `colima`, `docker-desktop`, `aws-ec2-ssm`, `gcp-vm`,
+and `apple-container` as target values. It does not accept a managed
+workstation or Azure as an operator target.
 
 Workcell defines a managed-workstation contract. Workcell has no
 managed-workstation CLI target or host-support matrix row.
 
 The AWS and GCP values expose reviewed dry-run broker plans. The operator
 launch path blocks both values. They do not provide supported remote execution.
+
+The `apple-container` value exposes a reviewed dry-run plan on Apple Silicon
+macOS 27 or later. A live launch exits with status 2
+(`tests/scenarios/shared/test-apple-container-dry-run.sh`).
 
 ## Delivered Program Results
 

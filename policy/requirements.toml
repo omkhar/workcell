@@ -309,6 +309,19 @@ docs = [
   "docs/benchmark-evidence/c3-two-container-isolation-2026-07-15.md",
 ]
 
+[functional.FR-016]
+title = "Preview Apple container target"
+summary = "Workcell exposes the preview-only apple-container local_vm target as a reviewed dry-run plan and doctor boundary on Apple Silicon macOS 27 or later, refuses other hosts with the host guard reason, and keeps live launch blocked until certification."
+workflows = ["launch_target_apple_container"]
+evidence = [
+  "tests/scenarios/shared/test-apple-container-dry-run.sh",
+  "internal/applecontainer/guard_test.go",
+]
+docs = [
+  "man/workcell.1",
+  "docs/apple-container-evaluation.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."
