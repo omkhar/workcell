@@ -7062,57 +7062,9 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   echo "Expected repo with a symlinked .git/workcell-sessions to be rejected" >&2
   exit 1
 fi
-grep -q 'the session clone directory is not a directory: .*/.git/workcell-sessions' /tmp/workcell-sessions-link.out
+grep -q 'the session clone directory is not an owner-only directory that you own: .*/.git/workcell-sessions' /tmp/workcell-sessions-link.out
 
-# A symlink planted after the absence check and before the create must be
-# refused, not followed: the stub mkdir plants it in that window.
-SESSIONS_RACE_FUNCTIONS="${COMMONDIR_ROOT}/sessions-race-functions.sh"
-{
-  sed -n '/^ensure_session_clone_dir() {/,/^}/p' "${ROOT_DIR}/scripts/workcell"
-  cat <<'STUB'
-mkdir() { ln -s ../exposed "${@: -1}" && command mkdir "$@"; }
-STUB
-} >"${SESSIONS_RACE_FUNCTIONS}"
-grep -q '^ensure_session_clone_dir() {' "${SESSIONS_RACE_FUNCTIONS}"
-mkdir -p "${COMMONDIR_ROOT}/sessions-race/git" "${COMMONDIR_ROOT}/sessions-race/exposed"
-if (
-  # shellcheck source=/dev/null
-  source "${SESSIONS_RACE_FUNCTIONS}"
-  ensure_session_clone_dir "${COMMONDIR_ROOT}/sessions-race/git/workcell-sessions"
-) >/tmp/workcell-sessions-race.out 2>&1; then
-  echo "Expected a .git/workcell-sessions symlink planted before the create to be rejected" >&2
-  exit 1
-fi
-grep -q 'the session clone directory is not a directory: .*/sessions-race/git/workcell-sessions' /tmp/workcell-sessions-race.out
-
-# The session clone directory is created owner-only, and an existing owned one
-# with any group or other mode bit is set to 0700.
-SESSIONS_MODE_FUNCTIONS="${COMMONDIR_ROOT}/sessions-mode-functions.sh"
-sed -n '/^ensure_session_clone_dir() {/,/^}/p' "${ROOT_DIR}/scripts/workcell" >"${SESSIONS_MODE_FUNCTIONS}"
-grep -q '^ensure_session_clone_dir() {' "${SESSIONS_MODE_FUNCTIONS}"
-mkdir -p "${COMMONDIR_ROOT}/sessions-mode/new" "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions"
-(
-  umask 022
-  # shellcheck source=/dev/null
-  source "${SESSIONS_MODE_FUNCTIONS}"
-  ensure_session_clone_dir "${COMMONDIR_ROOT}/sessions-mode/new/workcell-sessions"
-)
-SESSIONS_MODE_LOOSE="$(find "${COMMONDIR_ROOT}/sessions-mode/new/workcell-sessions" -maxdepth 0 ! -perm 0700 -print)" || exit 1
-[[ -z "${SESSIONS_MODE_LOOSE}" ]] || {
-  echo "Expected a new .git/workcell-sessions to be created with mode 0700" >&2
-  exit 1
-}
-chmod 0755 "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions"
-(
-  # shellcheck source=/dev/null
-  source "${SESSIONS_MODE_FUNCTIONS}"
-  ensure_session_clone_dir "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions"
-)
-SESSIONS_MODE_LOOSE="$(find "${COMMONDIR_ROOT}/sessions-mode/loose/workcell-sessions" -maxdepth 0 ! -perm 0700 -print)" || exit 1
-[[ -z "${SESSIONS_MODE_LOOSE}" ]] || {
-  echo "Expected an existing 0755 .git/workcell-sessions to be set to mode 0700" >&2
-  exit 1
-}
+# TestEnsureOwnerOnlyDirectory covers the race, the mode and the symlink target.
 
 # A Git admin directory under a worktrees name outside the masked paths must be rejected.
 COMMONDIR_WT_REPO="${COMMONDIR_ROOT}/worktrees-admin-repo"

@@ -1658,38 +1658,21 @@ session_workspace_parent_dir() {
   printf '%s/%s\n' "${git_dir}" "${SESSION_WORKSPACES_GIT_ENTRY}"
 }
 
-# ensure_session_clone_dir PATH makes the session clone directory at PATH
-# owner-only (0700) when it is absent and fails closed unless PATH is then a
-# real directory that the current user owns. It sets an owned directory with
-# group or other mode bits, such as one that an older launch made, to 0700.
-# The clones hold checked-out files, so other local accounts must not read or
-# change them.
-# mkdir(2) never follows a final symlink, and the check runs after the create,
-# so a symlink that a concurrent session plants at PATH at any time before the
-# check is refused, not followed. A failed mkdir (for example a directory that
-# a concurrent launch made first) is decided by the check.
+# ensure_session_clone_dir PATH makes the session clone directory at PATH an
+# owner-only (0700) directory that the current user owns, and creates it when
+# it is absent. It sets an owned directory with group or other mode bits, such
+# as one that an older launch made, to 0700. The clones hold checked-out files,
+# so other local accounts must not read or change them. The Go helper works on
+# no-follow descriptors, so a symlink that a concurrent session plants at PATH
+# is refused and its target is never changed.
 ensure_session_clone_dir() {
   local path="$1"
-  local loose=""
 
-  if [[ ! -e "${path}" ]] && [[ ! -L "${path}" ]]; then
-    mkdir -m 0700 "${path}" || true
-  fi
-  if [[ -L "${path}" ]] || [[ ! -d "${path}" ]]; then
-    echo "Refusing git workspace: the session clone directory is not a directory: ${path}" >&2
-    exit 2
-  fi
-  if [[ ! -O "${path}" ]]; then
-    echo "Refusing git workspace: the session clone directory is not yours: ${path}" >&2
+  go_hostutil helper ensure-owner-only-directory "${path}" || {
+    echo "Refusing git workspace: the session clone directory is not an owner-only directory that you own: ${path}" >&2
     echo "Next step: remove it so Workcell can recreate it." >&2
     exit 2
-  fi
-  chmod 0700 "${path}" || exit 2
-  loose="$(find "${path}" -maxdepth 0 \( -perm -040 -o -perm -020 -o -perm -010 -o -perm -004 -o -perm -002 -o -perm -001 \) -print)" || exit 2
-  if [[ -L "${path}" ]] || [[ -n "${loose}" ]]; then
-    echo "Refusing git workspace: the session clone directory is not owner-only: ${path}" >&2
-    exit 2
-  fi
+  }
 }
 
 isolated_session_workspace_path() {
