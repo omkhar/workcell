@@ -407,6 +407,35 @@ dry_run_mount_specs() {
   '
 }
 
+# dry_run_has_single_ro_mount OUTPUT DESTINATION decodes the dry-run output,
+# which is printf %q text, into argv tokens with xargs. It succeeds when
+# DESTINATION appears in exactly one token, and that token is a whole
+# SOURCE:DESTINATION:ro value of a -v option before the image token. Docker
+# reads tokens after the image as the container command. A second mount of
+# the same destination, or the text outside a -v value, fails.
+dry_run_has_single_ro_mount() {
+  local destination="$2"
+  local line=""
+  local hits=0
+  local masked=0
+  local options=1
+  local i=0
+  local -a argv=()
+
+  while IFS= read -r line; do
+    argv+=("${line}")
+  done < <(printf '%s\n' "$1" | xargs -n1 printf '%s\n')
+  for ((i = 0; i < ${#argv[@]}; i++)); do
+    [[ "${argv[i]}" == workcell:local ]] && options=0
+    [[ "${argv[i]}" == *"${destination}"* ]] || continue
+    hits=$((hits + 1))
+    if [[ "${options}" -eq 1 && "${i}" -gt 0 && "${argv[i - 1]}" == -v && "${argv[i]}" == ?*:"${destination}":ro ]]; then
+      masked=1
+    fi
+  done
+  [[ "${hits}" -eq 1 && "${masked}" -eq 1 ]]
+}
+
 mount_source_from_spec() {
   local spec="$1"
   local part=""
@@ -7084,26 +7113,7 @@ mkdir -p "${COMMONDIR_UPLINK_REPO}/.git/modules/foo"
 printf '[core]\n' >"${COMMONDIR_UPLINK_REPO}/external-config"
 ln -s ../../../external-config "${COMMONDIR_UPLINK_REPO}/.git/modules/foo/CONFIG"
 COMMONDIR_UPLINK_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_UPLINK_REPO}" --dry-run 2>/dev/null)"
-# The dry-run output is printf %q text, so xargs decodes it into argv tokens.
-# The destination must appear in exactly one token, and that token must be a
-# whole SOURCE:DESTINATION:ro value of a -v option before the image token.
-# Docker reads tokens after the image as the container command.
-COMMONDIR_UPLINK_ARGV=()
-while IFS= read -r line; do
-  COMMONDIR_UPLINK_ARGV+=("${line}")
-done < <(printf '%s\n' "${COMMONDIR_UPLINK_OUT}" | xargs -n1 printf '%s\n')
-commondir_uplink_hits=0
-commondir_uplink_masked=0
-commondir_uplink_options=1
-for ((i = 0; i < ${#COMMONDIR_UPLINK_ARGV[@]}; i++)); do
-  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == workcell:local ]] && commondir_uplink_options=0
-  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == *'/workspace/.git/modules/foo/CONFIG'* ]] || continue
-  commondir_uplink_hits=$((commondir_uplink_hits + 1))
-  if [[ "${commondir_uplink_options}" -eq 1 && "${i}" -gt 0 && "${COMMONDIR_UPLINK_ARGV[i - 1]}" == -v && "${COMMONDIR_UPLINK_ARGV[i]}" == ?*:/workspace/.git/modules/foo/CONFIG:ro ]]; then
-    commondir_uplink_masked=1
-  fi
-done
-if [[ "${commondir_uplink_hits}" -ne 1 || "${commondir_uplink_masked}" -ne 1 ]]; then
+if ! dry_run_has_single_ro_mount "${COMMONDIR_UPLINK_OUT}" /workspace/.git/modules/foo/CONFIG; then
   echo "Expected a resolving mixed-case module CONFIG link to be masked by a readonly shadow mount" >&2
   exit 1
 fi
