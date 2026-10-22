@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -84,6 +85,9 @@ func TestReceiveWorkspaceUnpacksAValidArchive(t *testing.T) {
 	}
 	if content, err := os.ReadFile(filepath.Join(workspace, "src", "b")); err != nil || string(content) != "alpha" {
 		t.Fatalf("unpacked link content = %q, err = %v", content, err)
+	}
+	if info, err := os.Stat(filepath.Dir(workspace)); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("materialization root = %v, %v; want mode 0700", info, err)
 	}
 }
 
@@ -233,6 +237,45 @@ func TestSendWorkspaceArchiveRequiresAnAckForTheSameDigest(t *testing.T) {
 		}
 		if got, want := sent.String(), archiveMagic+" m1 "+digest+" 3\ntar"; got != want {
 			t.Fatalf("sent = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestWorkspaceArchiveRefusesASwappedStagedFile(t *testing.T) {
+	t.Parallel()
+
+	for name, swap := range map[string]func(string) error{
+		"fifo":   func(path string) error { return syscall.Mkfifo(path, 0o600) },
+		"escape": func(path string) error { return os.Symlink("/etc/hosts", path) },
+		"oversize": func(path string) error {
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				return err
+			}
+			return os.Truncate(path, defaultWorkspaceLimits.maxFileBytes+1)
+		},
+	} {
+		staged, err := materializeInStateRoot(DefaultContract(), MaterializeRequest{StateRoot: t.TempDir(), TargetID: "t", MaterializationID: "m", SourceWorkspace: filepath.Join("testdata", "source-workspace")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range staged.Manifest.Entries {
+			if entry.Kind == "file" {
+				path := filepath.Join(staged.MaterializedWorkspace, filepath.FromSlash(entry.Path))
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := swap(path); err != nil {
+					t.Fatal(err)
+				}
+				break
+			}
+		}
+		var archive bytes.Buffer
+		if err := writeWorkspaceArchive(&archive, staged.MaterializedWorkspace, staged.Manifest.Entries); err == nil {
+			t.Fatalf("%s: a swapped staged file was archived", name)
+		}
+		if archive.Len() > 1<<20 {
+			t.Fatalf("%s: %d bytes were archived before the refusal", name, archive.Len())
 		}
 	}
 }
