@@ -414,7 +414,7 @@ func TestTerminateRefusesTraceAndConnect(t *testing.T) {
 		}
 	}
 	d := denies(t, p, log)
-	want := denyLine{Host: "example.com", Port: 443, Reason: "method_refused", Count: 2}
+	want := denyLine{Host: "example.com", Port: 443, Reason: "method_refused", Count: 2, Seq: 2}
 	if len(d) != 2 || d[1] != want {
 		t.Fatalf("deny lines = %+v, want 2 ending in %+v", d, want)
 	}
