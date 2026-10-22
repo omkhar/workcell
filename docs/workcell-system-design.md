@@ -47,8 +47,10 @@ The command line interface also accepts the AWS EC2 SSM and GCP VM target names.
 Those targets supply reviewed dry-run broker plans. Their operator launch rows
 are blocked. They do not start a Workcell-managed remote session.
 
-The Apple `container` evaluation and the managed-workstation contract do not
-have operator target values.
+The command line interface accepts `apple-container` as a macOS 27 preview.
+That target supplies a reviewed dry-run plan and a `--doctor` boundary. A live
+launch exits with status 2. The managed-workstation contract does not have an
+operator target value.
 
 ## Host Control Plane
 
@@ -291,7 +293,8 @@ Use these sources for detailed claims:
 - AWS and GCP remote targets have preview rows on macOS arm64.
 - The Colima, AWS, and GCP Linux amd64 rows are `validation-host-only`.
 - Operator launch remains blocked for all these rows.
-- Apple `container` is preview-only and has no operator target value.
+- Apple `container` is preview-only. Its target supports only `--dry-run` and
+  `--doctor`.
 - Workcell has no managed-workstation backend.
 - The session plane has no queue, pause, resume, or checkpoint model.
   `workcell session fork` starts new children from a signed snapshot of a
