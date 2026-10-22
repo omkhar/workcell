@@ -196,14 +196,13 @@ each session. The mask applies when the directory is absent, because Workcell
 can make a clone there after the launch. Workcell makes the directory first,
 with mode `0700`.
 
-`EnsureOwnerOnlyDirectory` in `internal/host/hoststate` refuses the workspace
-when `workcell-sessions` is a symlink or is not a directory, or when the user
-does not own it. It sets an owned one with a group or other permission bit to
-`0700`. It uses no-follow descriptors, so it never follows a symlink that appears
-during the check. It fsyncs the directory and its parent before Workcell clones
-into it. `ensure_session_clone_dir` calls it through the
-`ensure-owner-only-directory` helper, and the shadow setup adds the mask. Both
-are in `scripts/workcell`.
+`EnsureOwnerOnlyDirectory` in `internal/host/hoststate` refuses a
+`workcell-sessions` that is a symlink, is not a directory, or has an extended
+ACL. It also refuses one that the user does not own. It sets an owned one with
+a group or other permission bit to `0700`, and it never follows a symlink. It
+fsyncs the directory and its parent before Workcell clones into it.
+`ensure_session_clone_dir` calls it through the `ensure-owner-only-directory`
+helper, and the shadow setup adds the mask. Both are in `scripts/workcell`.
 
 Workcell refuses a safe-path workspace in these cases. Each case can make Git
 read config and hooks from a directory that the masks do not cover.

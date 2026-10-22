@@ -125,6 +125,10 @@ func EnsureOwnerOnlyDirectory(path string) error {
 	if stat.Uid != uint32(os.Geteuid()) {
 		return fmt.Errorf("%s is not owned by the current user", cleaned)
 	}
+	// An extended ACL can grant another account access that the mode hides.
+	if err := rootio.RejectExtendedACL(int(dir.Fd())); err != nil {
+		return fmt.Errorf("%s: %w", cleaned, err)
+	}
 	if stat.Mode&0o7777 != 0o700 {
 		if err := unix.Fchmod(int(dir.Fd()), 0o700); err != nil {
 			return err
