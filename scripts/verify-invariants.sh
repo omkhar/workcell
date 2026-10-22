@@ -5589,16 +5589,16 @@ for required in "--user" "HOME=/state/agent-home" "CODEX_HOME=/state/agent-home/
   fi
 done
 
-for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.git/workcell-sessions:ro" "/workspace/.github/hooks:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
-  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
-    echo "Missing workspace control-plane masking mount in dry-run output: ${required}" >&2
+for required in /workspace/AGENTS.md /workspace/.codex /workspace/.git/config /workspace/.git/workcell-sessions /workspace/.github/hooks /workspace/.github/skills /workspace/.agents/skills; do
+  if ! dry_run_has_single_ro_mount "${MASK_DRY_RUN_OUTPUT}" "${required}"; then
+    echo "Missing single readonly workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
 
-for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/hooks:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro" "/workspace/.alt/.git/workcell-sessions:ro"; do
-  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
-    echo "Missing nested workspace control-plane masking mount in dry-run output: ${required}" >&2
+for required in /workspace/nested/.claude /workspace/nested/.github/hooks /workspace/nested/.github/skills /workspace/nested/.agents/skills /workspace/.alt/.git/config /workspace/.alt/.git/workcell-sessions; do
+  if ! dry_run_has_single_ro_mount "${MASK_DRY_RUN_OUTPUT}" "${required}"; then
+    echo "Missing single readonly nested workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
