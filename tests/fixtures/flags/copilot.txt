@@ -1,5 +1,5 @@
 # Option inventory for the PINNED runtime copilot CLI. The stamp must equal the pin.
-# copilot-version: 1.0.98
+# copilot-version: 1.0.100
 # Regenerate: scripts/check-flag-inventory.sh --write. Classify: adapters/copilot/adapter.toml [flags].
 --acp
 --add-dir
