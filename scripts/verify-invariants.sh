@@ -5589,6 +5589,22 @@ for required in "--user" "HOME=/state/agent-home" "CODEX_HOME=/state/agent-home/
   fi
 done
 
+if ! dry_run_has_single_ro_mount "docker run -v /h/x:/workspace/x:ro workcell:local true" /workspace/x; then
+  echo "dry_run_has_single_ro_mount rejects a valid readonly mount" >&2
+  exit 1
+fi
+for fixture in \
+  "docker run -v /h/x:/workspace/x:ro -v /h/y:/workspace/x:ro workcell:local true" \
+  "docker run -v /h/x:/workspace/x workcell:local true" \
+  "docker run -v /h/x:/workspace/x:rw workcell:local true" \
+  "docker run --label /h/x:/workspace/x:ro workcell:local true" \
+  "docker run workcell:local -v /h/x:/workspace/x:ro"; do
+  if dry_run_has_single_ro_mount "${fixture}" /workspace/x; then
+    echo "dry_run_has_single_ro_mount accepts a bad fixture: ${fixture}" >&2
+    exit 1
+  fi
+done
+
 for required in /workspace/AGENTS.md /workspace/.codex /workspace/.git/config /workspace/.git/workcell-sessions /workspace/.github/hooks /workspace/.github/skills /workspace/.agents/skills; do
   if ! dry_run_has_single_ro_mount "${MASK_DRY_RUN_OUTPUT}" "${required}"; then
     echo "Missing single readonly workspace control-plane masking mount in dry-run output: ${required}" >&2
