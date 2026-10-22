@@ -230,7 +230,8 @@ writable by group or other. It removes that binary and builds it again.
 
 The function builds into a temporary
 file. It then reads the key again. If the key changed, it stops with an error.
-It flushes the file with `sync` and renames the file into position.
+It flushes only that file with `dd conv=fsync` and renames the file into
+position.
 
 ### `go_hostutil()`
 
