@@ -53,7 +53,7 @@ var (
 	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+](# codex-version: |#.*openai/codex tag rust-v)[0-9]+\.[0-9]+\.[0-9]+(\D|$)`)
 	scopeGuardSemverRE         = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
 	scopeGuardPathRE           = regexp.MustCompile(
-		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/codex-subcommands\.txt|tests/fixtures/flags/[a-z][a-z0-9-]*\.txt|runtime/container/control-plane-manifest\.json)$`)
+		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/codex-subcommands\.txt|tests/fixtures/flags/[a-z][a-z0-9-]*\.txt)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
 	// The lockfile may change only the Gemini CLI entry (version, resolved,
