@@ -103,6 +103,10 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Changed
 
+- The `apple-container` host guard now requires Apple Silicon macOS 27 or
+  later. It required macOS 26 before. `RequireMacOS26` is now `RequireMacOS27`
+  (`internal/applecontainer/guard.go`). The matrix row stays `preview-only`
+  and `blocked`.
 - The preview-only `apple-container` target now writes its audit records with
   the `prev_digest` and `record_digest` chain of the launcher. So the A5
   signer can seal its sessions, and `session verify` can check them. Workcell

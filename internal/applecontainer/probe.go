@@ -18,7 +18,7 @@ import (
 
 // ErrAppleContainerUnavailable is the skip sentinel returned by
 // ProbeAppleContainer when the `container` CLI is absent or its system service
-// is not running. Callers (and CI on non-macOS-26 hosts) should treat it as a
+// is not running. Callers (and CI on non-macOS-27 hosts) should treat it as a
 // graceful skip, not a failure.
 var ErrAppleContainerUnavailable = errors.New("apple container runtime unavailable")
 
@@ -52,13 +52,13 @@ var (
 )
 
 // ProbeAppleContainer shells out to the live `container` CLI to gather boot
-// latency and per-VM isolation evidence. It first fails closed via RequireMacOS26
+// latency and per-VM isolation evidence. It first fails closed via RequireMacOS27
 // (returning the guard error WITHOUT exec'ing the CLI) on any host outside the
-// Apple-Silicon + macOS-26 support constraint, then returns
+// Apple-Silicon + macOS-27 support constraint, then returns
 // ErrAppleContainerUnavailable (wrapped) when the runtime is absent or its
 // service is stopped, so it skips gracefully on hosts without Apple container.
 func ProbeAppleContainer(ctx context.Context) (Evidence, error) {
-	return probeAppleContainer(ctx, RequireMacOS26)
+	return probeAppleContainer(ctx, RequireMacOS27)
 }
 
 // probeAppleContainer is the testable core of ProbeAppleContainer: guard is the host-support gate,
