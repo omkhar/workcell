@@ -363,7 +363,9 @@ every allowlisted port. Then it replaces the `egress-proxy-ip` token in the
 agent command with the sidecar address. A failure stops the launch.
 
 The sidecar log is bounded: `json-file` with `max-size=10m`, so a flood of denied
-connections cannot fill the VM disk. The oldest lines rotate out.
+connections cannot fill the VM disk. The oldest lines rotate out. Each line
+holds its number in the log, from 1, so a log that lost its oldest lines gets
+`egress_summary status=truncated`, never `status=complete`.
 
 `stop_egress_proxy` saves the proxy deny lines to
 `<sessions-dir>/<session>.egress-deny.jsonl`, beside the session record.

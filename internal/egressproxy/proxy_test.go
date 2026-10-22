@@ -268,8 +268,8 @@ func TestProxyTLSEndToEnd(t *testing.T) {
 		}
 	}
 	want := []denyLine{
-		{Host: "other.example.com", Port: 443, Reason: "sni_not_allowed", Count: 1},
-		{Host: "other.example.com", Port: 443, Reason: "sni_not_allowed", Count: 2},
+		{Host: "other.example.com", Port: 443, Reason: "sni_not_allowed", Count: 1, Seq: 1},
+		{Host: "other.example.com", Port: 443, Reason: "sni_not_allowed", Count: 2, Seq: 2},
 	}
 	if d := denies(t, p, log); len(d) != 2 || d[0] != want[0] || d[1] != want[1] {
 		t.Fatalf("deny lines = %+v, want %+v", d, want)
@@ -296,7 +296,7 @@ func TestProxyRefusesBlockedResolution(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("proxy dialed %d times, want 0", n)
 	}
-	want := denyLine{Host: "example.com", Port: 443, Reason: "blocked_address", Count: 1}
+	want := denyLine{Host: "example.com", Port: 443, Reason: "blocked_address", Count: 1, Seq: 1}
 	if d := denies(t, p, log); len(d) != 1 || d[0] != want {
 		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
 	}
@@ -342,7 +342,7 @@ func TestProxyTCPForward(t *testing.T) {
 	if n, err := other.Read(make([]byte, 1)); n != 0 || !errors.Is(err, io.EOF) {
 		t.Fatalf("read on a non-allowlisted port = (%d, %v), want EOF", n, err)
 	}
-	want := denyLine{Port: 5433, Reason: "port_not_allowed", Count: 1}
+	want := denyLine{Port: 5433, Reason: "port_not_allowed", Count: 1, Seq: 1}
 	if d := denies(t, p, log); len(d) != 1 || d[0] != want {
 		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
 	}
@@ -468,7 +468,7 @@ func TestServeShedsConnectionsOverTheLimit(t *testing.T) {
 	if _, err := extra.Read(make([]byte, 1)); err != io.EOF && !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("read on a connection over the limit = %v, want EOF or reset", err)
 	}
-	want := denyLine{Port: 443, Reason: "overloaded", Count: 1}
+	want := denyLine{Port: 443, Reason: "overloaded", Count: 1, Seq: 1}
 	var d []denyLine
 	for deadline := time.Now().Add(5 * time.Second); len(d) == 0 && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
 		d = denies(t, p, log)
