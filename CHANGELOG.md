@@ -169,6 +169,10 @@ The fixes are below.
   longer than 24 hours plus the one-minute backdate. It checks the period, not
   the host clock, so VM clock skew does not refuse a valid CA
   (`internal/injection/egress_ca.go`).
+- Workcell now creates `.git/workcell-sessions` with mode `0700`, and sets an
+  existing one with a group or other permission bit to `0700`. It refuses one
+  that the user does not own, one with an extended ACL, or a symlink, and never
+  changes a symlink target (#945).
 
 ### Added
 

@@ -700,3 +700,67 @@ func TestPublishSessionCaptureFileAcceptsLargeTrace(t *testing.T) {
 		t.Fatalf("destination = %v, %v; want %d bytes", info, err, size)
 	}
 }
+
+func TestEnsureOwnerOnlyDirectory(t *testing.T) {
+	root := t.TempDir()
+	mode := func(path string) os.FileMode {
+		t.Helper()
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Mode().Perm()
+	}
+
+	created := filepath.Join(root, "new")
+	old := unix.Umask(0o022)
+	err := EnsureOwnerOnlyDirectory(created)
+	unix.Umask(old)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := mode(created); got != 0o700 {
+		t.Fatalf("new directory mode = %o, want 700", got)
+	}
+
+	loose := filepath.Join(root, "loose")
+	if err := os.Mkdir(loose, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureOwnerOnlyDirectory(loose); err != nil {
+		t.Fatalf("tighten: %v", err)
+	}
+	if got := mode(loose); got != 0o700 {
+		t.Fatalf("loose directory mode = %o, want 700", got)
+	}
+
+	// A symlink at path is refused, and its target keeps its mode.
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureOwnerOnlyDirectory(link); err == nil {
+		t.Fatal("a symlink at path was accepted")
+	}
+	if got := mode(target); got != 0o755 {
+		t.Fatalf("symlink target mode = %o, want 755 (unchanged)", got)
+	}
+
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureOwnerOnlyDirectory(file); err == nil {
+		t.Fatal("a regular file at path was accepted")
+	}
+}

@@ -333,6 +333,7 @@ func helperSubcommands() []helperSubcommand {
 		{"build-inputs-digest", 1, 1, cmdHelperBuildInputsDigest},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
+		{"ensure-owner-only-directory", 1, 1, cmdHelperEnsureOwnerOnlyDirectory},
 		{"egress-deny-audit-records", 1, 1, cmdHelperEgressDenyAuditRecords},
 		{"credential-broker-audit-records", 1, 1, cmdHelperCredentialBrokerAuditRecords},
 		{"credential-broker-plan", 2, 2, cmdHelperCredentialBrokerPlan},
@@ -765,6 +766,10 @@ func cmdHelperDirectMountCacheKey(args []string) error {
 
 func cmdHelperPublishSessionCaptureFile(args []string) error {
 	return hoststate.PublishSessionCaptureFile(args[0], args[1])
+}
+
+func cmdHelperEnsureOwnerOnlyDirectory(args []string) error {
+	return hoststate.EnsureOwnerOnlyDirectory(args[0])
 }
 
 func cmdHelperResolveHostOutputCandidate(args []string) error {
