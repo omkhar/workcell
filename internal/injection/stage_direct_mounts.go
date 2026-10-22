@@ -14,13 +14,14 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/host/hoststate"
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/runtimeutil"
 	"golang.org/x/sys/unix"
 )
 
 // hostInputMountPrefix is the only mount root that may be staged for the
 // container via direct mounts.  Matches the bash guard "/opt/workcell/host-inputs/*".
-const hostInputMountPrefix = "/opt/workcell/host-inputs/"
+const hostInputMountPrefix = injectionpolicy.HostInputRoot + "/"
 
 // StageDirectMounts replicates the legacy prepare_injection_direct_mounts helper
 // in Go.  It reads the mount spec produced by extract_direct_mounts, validates
