@@ -195,9 +195,10 @@ these targets.
 
 The preview-only `apple-container` target has no operator launch path. Its Go
 writer appends each lifecycle record with the same `prev_digest` and
-`record_digest` chain. So `session sign-head` can seal its sessions, as it does
-for the other providers. Nothing calls it for this target yet, so a finished
-session is unsigned until an operator runs `session sign-head`. Its records from before the chain have no digest, and
+`record_digest` chain, so the signer can seal its sessions. Workcell signs a
+session only at launcher finalization, and this target has no launch path. So
+its sessions stay unsigned, and no operator command signs them. Its records
+from before the chain have no digest, and
 `session verify` fails for those sessions
 (`internal/host/auditseal/applecontainer_test.go`).
 
