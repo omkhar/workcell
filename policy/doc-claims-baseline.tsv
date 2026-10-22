@@ -216,7 +216,6 @@ docs/invariants.md	unanchored-claim	The check also fails when an expansion hides
 docs/invariants.md	unanchored-claim	The check fails when a `uses:` pin has no row in `tests/fixtures/actions/inputs.tsv`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	The server rejects any other name and any unlisted value, and builds the helper environment itself.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	Workcell also refuses the workspace when it cannot list the workspace, a Git directory, or its modules.	claim predates the rule; cite the enforcing path or drop the claim
-docs/invariants.md	unanchored-claim	Workcell refuses a safe-path workspace in these cases.	claim predates the rule; cite the enforcing path or drop the claim
 docs/launcher-contract.md	unanchored-claim	It also refuses a cache root that group or other can write.	claim predates the rule; cite the enforcing path or drop the claim
 docs/launcher-contract.md	unanchored-claim	It prevents accidental operator use.	claim predates the rule; cite the enforcing path or drop the claim
 docs/launcher-contract.md	unanchored-claim	It returns `missing` when the device does not exist, and `denied` when the device exists but the open fails.	claim predates the rule; cite the enforcing path or drop the claim

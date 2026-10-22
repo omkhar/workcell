@@ -265,7 +265,6 @@ The scope guard allows only these changes:
 - The pinned Gemini CLI version line in `runtime/container/providers/package.json`
 - The Gemini CLI entry in `runtime/container/providers/package-lock.json`
 - The version stamp and source tag in the header of `tests/fixtures/codex-subcommands.txt`
-- `runtime/container/control-plane-manifest.json`
 
 A lockfile change to any other package, for example a new transitive dependency, fails the guard.
 

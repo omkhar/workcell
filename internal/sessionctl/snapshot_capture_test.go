@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const snapshotTestOrigin = "0000000000000000000000000000000000000000000000000000000000000001"
@@ -120,6 +122,73 @@ func TestSnapshotCaptureRefusesSymlinkedStore(t *testing.T) {
 		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 			t.Fatalf("snapshotCapture wrote through the symlink: %v", entries)
 		}
+	}
+}
+
+// snapshotTestCaptureWithin runs snapshotCapture with a short git timeout and
+// fails the test if the capture does not return within limit.
+func snapshotTestCaptureWithin(t *testing.T, opts snapshotCaptureOptions, limit time.Duration) error {
+	t.Helper()
+	old := snapshotGitTimeout
+	snapshotGitTimeout = 2 * time.Second
+	t.Cleanup(func() { snapshotGitTimeout = old })
+	done := make(chan error, 1)
+	go func() { _, _, err := snapshotCapture(opts); done <- err }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(limit):
+		t.Fatalf("snapshotCapture still blocked after %v", limit)
+		return nil
+	}
+}
+
+// An agent-planted FIFO or symlink at the workspace objects/info/alternates is
+// refused before git runs, so it cannot hang the capture.
+func TestSnapshotCaptureRefusesSpecialAlternates(t *testing.T) {
+	for _, kind := range []string{"fifo", "symlink"} {
+		workspace, head := snapshotTestWorkspace(t)
+		alternates := filepath.Join(workspace, ".git", "objects", "info", "alternates")
+		if err := os.MkdirAll(filepath.Dir(alternates), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		if kind == "fifo" {
+			err = syscall.Mkfifo(alternates, 0o600)
+		} else {
+			err = os.Symlink(filepath.Join(t.TempDir(), "alternates"), alternates)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = snapshotTestCaptureWithin(t, snapshotTestOptions(t, workspace, head), 10*time.Second)
+		if err == nil || !strings.Contains(err.Error(), "objects/info/alternates is not a regular file") {
+			t.Fatalf("%s alternates: err = %v, want a refusal", kind, err)
+		}
+	}
+}
+
+// A git run that blocks, here on a FIFO behind a chained alternate, is stopped
+// by the timeout and the capture fails instead of hanging.
+func TestSnapshotCaptureStopsBlockedGit(t *testing.T) {
+	workspace, head := snapshotTestWorkspace(t)
+	chained := filepath.Join(t.TempDir(), "objects")
+	if err := os.MkdirAll(filepath.Join(chained, "info"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(chained, "info", "alternates"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alternates := filepath.Join(workspace, ".git", "objects", "info", "alternates")
+	if err := os.MkdirAll(filepath.Dir(alternates), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(alternates, []byte(chained+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := snapshotTestCaptureWithin(t, snapshotTestOptions(t, workspace, head), 20*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("err = %v, want a git timeout", err)
 	}
 }
 

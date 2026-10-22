@@ -20,6 +20,9 @@ import (
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
+// credentialContainerRoot holds every staged credential in the container.
+const credentialContainerRoot = injectionpolicy.HostInputRoot + "/credentials/"
+
 // ManifestSchema is the only adapters/<id>/adapter.toml schema version that
 // parseManifest accepts.
 const ManifestSchema = 1
@@ -100,6 +103,9 @@ func LoadManifests(root string) ([]Manifest, error) {
 	}
 	slices.Sort(names)
 	var out []Manifest
+	// The staged credential set is keyed by name, so a key declared twice
+	// would put one adapter's credential in the scope of another.
+	credentialOwners := map[string]string{}
 	for _, name := range names {
 		path := filepath.Join(root, name, "adapter.toml")
 		content, err := readManifestFile(rootFD, name)
@@ -116,6 +122,15 @@ func LoadManifests(root string) ([]Manifest, error) {
 		}
 		if m.ID != name {
 			return nil, fmt.Errorf("%s: id %q does not match directory %q", path, m.ID, name)
+		}
+		for _, c := range m.Credentials {
+			if slices.Contains(sharedCredentialKeys, c.Key) {
+				return nil, fmt.Errorf("%s: credential %q is a shared credential key", path, c.Key)
+			}
+			if owner, ok := credentialOwners[c.Key]; ok {
+				return nil, fmt.Errorf("%s: credential %q is declared by adapters %q and %q", path, c.Key, owner, m.ID)
+			}
+			credentialOwners[c.Key] = m.ID
 		}
 		out = append(out, m)
 	}
@@ -266,8 +281,9 @@ func validateManifest(m Manifest, schema int) error {
 		if !credentialKeyPattern.MatchString(c.Key) {
 			return fmt.Errorf("invalid credential key %q", c.Key)
 		}
-		if !filepath.IsAbs(c.ContainerPath) {
-			return fmt.Errorf("credential %q container_path must be absolute", c.Key)
+		// Clean first, so a ".." segment cannot leave the root.
+		if !strings.HasPrefix(filepath.Clean(c.ContainerPath), credentialContainerRoot) {
+			return fmt.Errorf("credential %q container_path must be under %s", c.Key, credentialContainerRoot)
 		}
 	}
 	switch m.Tier {

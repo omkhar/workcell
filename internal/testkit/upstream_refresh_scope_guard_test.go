@@ -51,8 +51,7 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 	t.Parallel()
 
 	inScope := scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=0.153.2", "ARG CODEX_VERSION=0.154.0") +
-		scopeGuardCodexFixturePatch("0.153.2", "0.154.0") +
-		scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "old", "new")
+		scopeGuardCodexFixturePatch("0.153.2", "0.154.0")
 
 	cases := []struct {
 		name    string
@@ -83,6 +82,16 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			name:    "out-of-scope path",
 			patch:   inScope + scopeGuardFilePatch("scripts/workcell", "old", "new"),
 			wantErr: "path scripts/workcell",
+		},
+		{
+			// No refresh step writes the manifest, so a forged digest or key goes to a human.
+			name: "control-plane manifest edit",
+			patch: inScope + "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1,4 +1,7 @@\n" +
+				"-      \"sha256\": \"fd50afd189afe506433e48849e71e7d3d4e5dee949da4cdbfd0cbcbc59339915\"\n" +
+				"+      \"sha256\": \"" + strings.Repeat("0", 64) + "\"\n" +
+				"   ],\n-  \"schema_version\": 2\n+  \"schema_version\": 2,\n+  \"x2auto_injected\": {\n+    \"anything\": \"goes\"\n+  }\n }\n",
+			wantErr: "path runtime/container/control-plane-manifest.json",
 		},
 		{
 			name:    "provider-policy.sh edit",
@@ -169,13 +178,15 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch: scopeGuardFilePatch("runtime/container/providers/package.json", `    "@google/gemini-cli": "0.58.0"`, `    "@google/gemini-cli": "0.62.0"`),
 		},
 		{
+			// The dev-null header parses, but no in-scope file may be created.
 			name: "new file with dev-null old header",
-			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nnew file mode 100644\n" + scopeGuardIndex +
-				"--- /dev/null\n+++ b/runtime/container/control-plane-manifest.json\n@@ -0,0 +1 @@\n+new\n",
+			patch: "diff --git a/tests/fixtures/flags/codex.txt b/tests/fixtures/flags/codex.txt\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/tests/fixtures/flags/codex.txt\n@@ -0,0 +1 @@\n+# codex-version: 0.154.0\n",
+			wantErr: "tests/fixtures/flags/codex.txt: provider assignments must be replaced one for one",
 		},
 		{
 			name:  "no-newline marker",
-			patch: scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "\\ No newline at end of file\n",
+			patch: scopeGuardCodexFixturePatch("0.153.2", "0.154.0") + "\\ No newline at end of file\n",
 		},
 		{
 			name:    "codex fixture header replaced by another versioned comment",
@@ -425,7 +436,7 @@ func TestUpstreamRefreshScopeGuardRejectsSymlinkedPatch(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
-	if err := os.WriteFile(target, []byte(scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b")), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(scopeGuardCodexFixturePatch("0.153.2", "0.154.0")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "patch")
@@ -442,7 +453,7 @@ func TestUpstreamRefreshScopeGuardResolvesRelativePatchFromCallerDirectory(t *te
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "patch"), []byte(scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b")), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "patch"), []byte(scopeGuardCodexFixturePatch("0.153.2", "0.154.0")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-scope-guard.sh"), "patch")

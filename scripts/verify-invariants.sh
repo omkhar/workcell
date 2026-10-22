@@ -407,6 +407,35 @@ dry_run_mount_specs() {
   '
 }
 
+# dry_run_has_single_ro_mount OUTPUT DESTINATION decodes the dry-run output,
+# which is printf %q text, into argv tokens with xargs. It succeeds when
+# DESTINATION appears in exactly one token, and that token is a whole
+# SOURCE:DESTINATION:ro value of a -v option before the image token. Docker
+# reads tokens after the image as the container command. A second mount of
+# the same destination, or the text outside a -v value, fails.
+dry_run_has_single_ro_mount() {
+  local destination="$2"
+  local line=""
+  local hits=0
+  local masked=0
+  local options=1
+  local i=0
+  local -a argv=()
+
+  while IFS= read -r line; do
+    argv+=("${line}")
+  done < <(printf '%s\n' "$1" | xargs -n1 printf '%s\n')
+  for ((i = 0; i < ${#argv[@]}; i++)); do
+    [[ "${argv[i]}" == workcell:local ]] && options=0
+    [[ "${argv[i]}" == *"${destination}"* ]] || continue
+    hits=$((hits + 1))
+    if [[ "${options}" -eq 1 && "${i}" -gt 0 && "${argv[i - 1]}" == -v && "${argv[i]}" == ?*:"${destination}":ro ]]; then
+      masked=1
+    fi
+  done
+  [[ "${hits}" -eq 1 && "${masked}" -eq 1 ]]
+}
+
 mount_source_from_spec() {
   local spec="$1"
   local part=""
@@ -5560,16 +5589,32 @@ for required in "--user" "HOME=/state/agent-home" "CODEX_HOME=/state/agent-home/
   fi
 done
 
-for required in "/workspace/AGENTS.md:ro" "/workspace/.codex:ro" "/workspace/.git/config:ro" "/workspace/.github/hooks:ro" "/workspace/.github/skills:ro" "/workspace/.agents/skills:ro"; do
-  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
-    echo "Missing workspace control-plane masking mount in dry-run output: ${required}" >&2
+if ! dry_run_has_single_ro_mount "docker run -v /h/x:/workspace/x:ro workcell:local true" /workspace/x; then
+  echo "dry_run_has_single_ro_mount rejects a valid readonly mount" >&2
+  exit 1
+fi
+for fixture in \
+  "docker run -v /h/x:/workspace/x:ro -v /h/y:/workspace/x:ro workcell:local true" \
+  "docker run -v /h/x:/workspace/x workcell:local true" \
+  "docker run -v /h/x:/workspace/x:rw workcell:local true" \
+  "docker run --label /h/x:/workspace/x:ro workcell:local true" \
+  "docker run workcell:local -v /h/x:/workspace/x:ro"; do
+  if dry_run_has_single_ro_mount "${fixture}" /workspace/x; then
+    echo "dry_run_has_single_ro_mount accepts a bad fixture: ${fixture}" >&2
     exit 1
   fi
 done
 
-for required in "/workspace/nested/.claude:ro" "/workspace/nested/.github/hooks:ro" "/workspace/nested/.github/skills:ro" "/workspace/nested/.agents/skills:ro" "/workspace/.alt/.git/config:ro"; do
-  if ! echo "${MASK_DRY_RUN_OUTPUT}" | grep -- "${required}" >/dev/null; then
-    echo "Missing nested workspace control-plane masking mount in dry-run output: ${required}" >&2
+for required in /workspace/AGENTS.md /workspace/.codex /workspace/.git/config /workspace/.git/workcell-sessions /workspace/.github/hooks /workspace/.github/skills /workspace/.agents/skills; do
+  if ! dry_run_has_single_ro_mount "${MASK_DRY_RUN_OUTPUT}" "${required}"; then
+    echo "Missing single readonly workspace control-plane masking mount in dry-run output: ${required}" >&2
+    exit 1
+  fi
+done
+
+for required in /workspace/nested/.claude /workspace/nested/.github/hooks /workspace/nested/.github/skills /workspace/nested/.agents/skills /workspace/.alt/.git/config /workspace/.alt/.git/workcell-sessions; do
+  if ! dry_run_has_single_ro_mount "${MASK_DRY_RUN_OUTPUT}" "${required}"; then
+    echo "Missing single readonly nested workspace control-plane masking mount in dry-run output: ${required}" >&2
     exit 1
   fi
 done
@@ -7008,6 +7053,38 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'symlinked module path that redirects Git config and hooks: .git/worktrees' /tmp/workcell-commondir-wtlink.out
 
+# A session clone directory link would move the clones of later sessions.
+COMMONDIR_SESSIONS_REPO="${COMMONDIR_ROOT}/sessions-link-repo"
+git init -q -b master "${COMMONDIR_SESSIONS_REPO}"
+git -C "${COMMONDIR_SESSIONS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+ln -s ../exposed "${COMMONDIR_SESSIONS_REPO}/.git/workcell-sessions"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_SESSIONS_REPO}" --dry-run >/tmp/workcell-sessions-link.out 2>&1; then
+  echo "Expected repo with a symlinked .git/workcell-sessions to be rejected" >&2
+  exit 1
+fi
+grep -q 'the session clone directory is not a directory: .*/.git/workcell-sessions' /tmp/workcell-sessions-link.out
+
+# A symlink planted after the absence check and before the create must be
+# refused, not followed: the stub mkdir plants it in that window.
+SESSIONS_RACE_FUNCTIONS="${COMMONDIR_ROOT}/sessions-race-functions.sh"
+{
+  sed -n '/^ensure_session_clone_dir() {/,/^}/p' "${ROOT_DIR}/scripts/workcell"
+  cat <<'STUB'
+mkdir() { ln -s ../exposed "${@: -1}" && command mkdir "$@"; }
+STUB
+} >"${SESSIONS_RACE_FUNCTIONS}"
+grep -q '^ensure_session_clone_dir() {' "${SESSIONS_RACE_FUNCTIONS}"
+mkdir -p "${COMMONDIR_ROOT}/sessions-race/git" "${COMMONDIR_ROOT}/sessions-race/exposed"
+if (
+  # shellcheck source=/dev/null
+  source "${SESSIONS_RACE_FUNCTIONS}"
+  ensure_session_clone_dir "${COMMONDIR_ROOT}/sessions-race/git/workcell-sessions"
+) >/tmp/workcell-sessions-race.out 2>&1; then
+  echo "Expected a .git/workcell-sessions symlink planted before the create to be rejected" >&2
+  exit 1
+fi
+grep -q 'the session clone directory is not a directory: .*/sessions-race/git/workcell-sessions' /tmp/workcell-sessions-race.out
+
 # A Git admin directory under a worktrees name outside the masked paths must be rejected.
 COMMONDIR_WT_REPO="${COMMONDIR_ROOT}/worktrees-admin-repo"
 git init -q -b master "${COMMONDIR_WT_REPO}"
@@ -7073,26 +7150,7 @@ mkdir -p "${COMMONDIR_UPLINK_REPO}/.git/modules/foo"
 printf '[core]\n' >"${COMMONDIR_UPLINK_REPO}/external-config"
 ln -s ../../../external-config "${COMMONDIR_UPLINK_REPO}/.git/modules/foo/CONFIG"
 COMMONDIR_UPLINK_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_UPLINK_REPO}" --dry-run 2>/dev/null)"
-# The dry-run output is printf %q text, so xargs decodes it into argv tokens.
-# The destination must appear in exactly one token, and that token must be a
-# whole SOURCE:DESTINATION:ro value of a -v option before the image token.
-# Docker reads tokens after the image as the container command.
-COMMONDIR_UPLINK_ARGV=()
-while IFS= read -r line; do
-  COMMONDIR_UPLINK_ARGV+=("${line}")
-done < <(printf '%s\n' "${COMMONDIR_UPLINK_OUT}" | xargs -n1 printf '%s\n')
-commondir_uplink_hits=0
-commondir_uplink_masked=0
-commondir_uplink_options=1
-for ((i = 0; i < ${#COMMONDIR_UPLINK_ARGV[@]}; i++)); do
-  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == workcell:local ]] && commondir_uplink_options=0
-  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == *'/workspace/.git/modules/foo/CONFIG'* ]] || continue
-  commondir_uplink_hits=$((commondir_uplink_hits + 1))
-  if [[ "${commondir_uplink_options}" -eq 1 && "${i}" -gt 0 && "${COMMONDIR_UPLINK_ARGV[i - 1]}" == -v && "${COMMONDIR_UPLINK_ARGV[i]}" == ?*:/workspace/.git/modules/foo/CONFIG:ro ]]; then
-    commondir_uplink_masked=1
-  fi
-done
-if [[ "${commondir_uplink_hits}" -ne 1 || "${commondir_uplink_masked}" -ne 1 ]]; then
+if ! dry_run_has_single_ro_mount "${COMMONDIR_UPLINK_OUT}" /workspace/.git/modules/foo/CONFIG; then
   echo "Expected a resolving mixed-case module CONFIG link to be masked by a readonly shadow mount" >&2
   exit 1
 fi

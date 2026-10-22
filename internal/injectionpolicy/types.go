@@ -17,6 +17,10 @@
 // function-dedup work; this package is the type-level first step.
 package injectionpolicy
 
+// HostInputRoot is the in-container root under which every host input is
+// staged. The direct-mount guard and the adapter credential paths use it.
+const HostInputRoot = "/opt/workcell/host-inputs"
+
 // PolicySource is the per-policy-file metadata that every
 // injection-policy reader emits.  Field names + JSON tags here are
 // the canonical form; package-local types in authpolicy/injection/

@@ -190,6 +190,13 @@ Workcell also masks Git execution-control paths for the workspace repository and
 its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 `worktrees`.
 
+Workcell also masks `workcell-sessions` in each Git directory of the workspace
+with an empty read-only directory. That directory holds the isolated clone of
+each session. The mask applies when the directory is absent, because Workcell
+can make a clone there after the launch. Workcell makes the directory first.
+Workcell refuses the workspace when `workcell-sessions` is a symlink or is not a
+directory. The shadow setup in `scripts/workcell` adds this mask.
+
 Workcell refuses a safe-path workspace in these cases. Each case can make Git
 read config and hooks from a directory that the masks do not cover.
 
@@ -304,7 +311,8 @@ keychain knob to an allowed harness.
 `phantom-no-real-secret`: a brokered key never reaches the agent container.
 The agent environment, its processes, the injection bundle and the provider
 home hold only the `wcph-` placeholder. The sidecar swaps it for the key on the
-wire, and only for the brokered host and header.
+wire, and only for the brokered host and header. It refuses TRACE and CONNECT
+on a brokered host with 405 before the swap, so an echo cannot return the key.
 
 `internal/injection/prepare_bundle_test.go` enforces that the bundle stages
 only the placeholder (`TestPrepareBundleBrokersAPIKeys`).
