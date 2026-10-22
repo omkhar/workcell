@@ -258,3 +258,28 @@ func TestAppendAuditLineRefusesOversizedLogBeforeRead(t *testing.T) {
 		t.Fatalf("oversized log: got %v, want a size refusal", err)
 	}
 }
+
+// TestAppendAuditLineRollsBackShortWrite: a write that fails part way must
+// leave the log byte-identical, so a retry does not keep a fragment after a
+// valid digest. Drop the truncate → the fragment stays → FAIL.
+func TestAppendAuditLineRollsBackShortWrite(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "workcell.audit.log")
+	mustNil(t, appendAuditLine(root, logPath, "ts=1 session_id=sid event=a k=v"))
+	before, err := os.ReadFile(logPath)
+	mustNil(t, err)
+	orig := writeAuditPayload
+	t.Cleanup(func() { writeAuditPayload = orig })
+	writeAuditPayload = func(f *os.File, s string) (int, error) {
+		n, _ := f.WriteString(s[:len(s)/2])
+		return n, fmt.Errorf("injected short write")
+	}
+	if err := appendAuditLine(root, logPath, "ts=2 session_id=sid event=b k=v\nts=3 session_id=sid event=c k=v"); err == nil {
+		t.Fatal("short write: want an error")
+	}
+	after, err := os.ReadFile(logPath)
+	mustNil(t, err)
+	if string(after) != string(before) {
+		t.Fatalf("short write left %q, want the log unchanged", after[len(before):])
+	}
+}
