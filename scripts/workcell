@@ -1658,6 +1658,24 @@ session_workspace_parent_dir() {
   printf '%s/%s\n' "${git_dir}" "${SESSION_WORKSPACES_GIT_ENTRY}"
 }
 
+# ensure_session_clone_dir PATH makes the session clone directory at PATH
+# when it is absent and fails closed unless PATH is then a real directory.
+# mkdir(2) never follows a final symlink, and the check runs after the create,
+# so a symlink that a concurrent session plants at PATH at any time before the
+# check is refused, not followed. A failed mkdir (for example a directory that
+# a concurrent launch made first) is decided by the check.
+ensure_session_clone_dir() {
+  local path="$1"
+
+  if [[ ! -e "${path}" ]] && [[ ! -L "${path}" ]]; then
+    mkdir "${path}" || true
+  fi
+  if [[ -L "${path}" ]] || [[ ! -d "${path}" ]]; then
+    echo "Refusing git workspace: the session clone directory is not a directory: ${path}" >&2
+    exit 2
+  fi
+}
+
 isolated_session_workspace_path() {
   local source_workspace="$1"
   local session_id="$2"
@@ -8745,11 +8763,7 @@ prepare_workspace_control_plane_shadow() {
     # when it is absent, because Workcell can make a clone there after this
     # launch. A symlink there would move the clones to its target.
     rel="${git_rel}/${SESSION_WORKSPACES_GIT_ENTRY}"
-    if [[ -L "${workspace}/${rel}" ]] || { [[ -e "${workspace}/${rel}" ]] && [[ ! -d "${workspace}/${rel}" ]]; }; then
-      echo "Refusing git workspace: the session clone directory is not a directory: ${workspace}/${rel}" >&2
-      exit 2
-    fi
-    mkdir -p "${workspace}/${rel}"
+    ensure_session_clone_dir "${workspace}/${rel}"
     add_shadow_dir_mount "${workspace}" "${rel}"
     if [[ -d "${workspace}/${git_rel}/modules" ]]; then
       # A lone NUL after a successful walk is the completion sentinel. Bash
