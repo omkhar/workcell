@@ -233,6 +233,10 @@ file. It then reads the key again. If the key changed, it stops with an error.
 It flushes only that file with `dd conv=fsync` and renames the file into
 position.
 
+The function does not flush the directory. The cache can be built again, so
+a crash that loses the rename or the new `bin` directory only causes one more
+build. A crash cannot leave a partial binary under the final name.
+
 ### `go_hostutil()`
 
 This function runs the cached `cmd/workcell-hostutil` binary with the selected
