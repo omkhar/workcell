@@ -37,30 +37,32 @@ func TestDenyAuditRecordsReadsProxyOutput(t *testing.T) {
 // TestDenyAuditRecordsRejectsMalformedLines counts each hostile line as
 // malformed and keeps the valid line beside it.
 func TestDenyAuditRecordsRejectsMalformedLines(t *testing.T) {
-	valid := `{"host":"a.example","port":443,"reason":"no_sni","count":1}`
+	valid := `{"host":"a.example","port":443,"reason":"no_sni","count":1,"seq":1}`
 	for name, line := range map[string]string{
 		"not json":         `deny a.example`,
-		"unknown field":    `{"host":"a","port":443,"reason":"no_sni","count":1,"extra":1}`,
+		"unknown field":    `{"host":"a","port":443,"reason":"no_sni","count":1,"seq":1,"extra":1}`,
 		"trailing object":  valid + `{}`,
 		"trailing space":   valid + ` `,
 		"blank line":       ``,
 		"null":             `null`,
 		"array":            `[1]`,
-		"port zero":        `{"host":"a","port":0,"reason":"no_sni","count":1}`,
-		"missing port":     `{"host":"a","reason":"no_sni","count":1}`,
-		"port too large":   `{"host":"a","port":70000,"reason":"no_sni","count":1}`,
-		"port as string":   `{"host":"a","port":"443","reason":"no_sni","count":1}`,
-		"negative count":   `{"host":"a","port":443,"reason":"no_sni","count":-1}`,
-		"count zero":       `{"host":"a","port":443,"reason":"no_sni","count":0}`,
-		"fraction count":   `{"host":"a","port":443,"reason":"no_sni","count":1.5}`,
-		"host not string":  `{"host":7,"port":443,"reason":"no_sni","count":1}`,
-		"host too long":    `{"host":"` + strings.Repeat("a", maxLogHost+1) + `","port":443,"reason":"no_sni","count":1}`,
-		"reason space":     `{"host":"a","port":443,"reason":"no sni","count":1}`,
-		"reason control":   `{"host":"a","port":443,"reason":"no_sni\u0007","count":1}`,
-		"reason newline":   `{"host":"a","port":443,"reason":"no_sni\nevent=exit","count":1}`,
-		"reason uppercase": `{"host":"a","port":443,"reason":"NO_SNI","count":1}`,
-		"reason empty":     `{"host":"a","port":443,"reason":"","count":1}`,
-		"line too long":    `{"host":"a","port":443,"reason":"no_sni","count":1` + strings.Repeat(" ", maxDenyLineBytes) + `}`,
+		"port zero":        `{"host":"a","port":0,"reason":"no_sni","count":1,"seq":1}`,
+		"missing port":     `{"host":"a","reason":"no_sni","count":1,"seq":1}`,
+		"port too large":   `{"host":"a","port":70000,"reason":"no_sni","count":1,"seq":1}`,
+		"port as string":   `{"host":"a","port":"443","reason":"no_sni","count":1,"seq":1}`,
+		"negative count":   `{"host":"a","port":443,"reason":"no_sni","count":-1,"seq":1}`,
+		"count zero":       `{"host":"a","port":443,"reason":"no_sni","count":0,"seq":1}`,
+		"fraction count":   `{"host":"a","port":443,"reason":"no_sni","count":1.5,"seq":1}`,
+		"host not string":  `{"host":7,"port":443,"reason":"no_sni","count":1,"seq":1}`,
+		"host too long":    `{"host":"` + strings.Repeat("a", maxLogHost+1) + `","port":443,"reason":"no_sni","count":1,"seq":1}`,
+		"reason space":     `{"host":"a","port":443,"reason":"no sni","count":1,"seq":1}`,
+		"reason control":   `{"host":"a","port":443,"reason":"no_sni\u0007","count":1,"seq":1}`,
+		"reason newline":   `{"host":"a","port":443,"reason":"no_sni\nevent=exit","count":1,"seq":1}`,
+		"reason uppercase": `{"host":"a","port":443,"reason":"NO_SNI","count":1,"seq":1}`,
+		"reason empty":     `{"host":"a","port":443,"reason":"","count":1,"seq":1}`,
+		"seq zero":         `{"host":"a","port":443,"reason":"no_sni","count":1,"seq":0}`,
+		"missing seq":      `{"host":"a","port":443,"reason":"no_sni","count":1}`,
+		"line too long":    `{"host":"a","port":443,"reason":"no_sni","count":1,"seq":1` + strings.Repeat(" ", maxDenyLineBytes) + `}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := DenyAuditRecords([]byte(line + "\n" + valid + "\n"))
@@ -76,14 +78,14 @@ func TestDenyAuditRecordsRejectsMalformedLines(t *testing.T) {
 // the DNS name characters but never writes its bytes into the audit record.
 func TestDenyAuditRecordsRewritesHostileHosts(t *testing.T) {
 	for _, host := range []string{`a b`, `a\u001b[31m`, `a\nevent=exit`, `café`, `Kelvin`, `a=b`, `$(id)`} {
-		line := `{"host":"` + host + `","port":443,"reason":"sni_not_allowed","count":4}`
+		line := `{"host":"` + host + `","port":443,"reason":"sni_not_allowed","count":4,"seq":1}`
 		got := DenyAuditRecords([]byte(line))
 		want := []string{"egress_deny host=(invalid) port=443 reason=sni_not_allowed count=4", summary("complete", 1, 4, 0)}
 		if !slices.Equal(got, want) {
 			t.Fatalf("host %q: records = %q, want %q", host, got, want)
 		}
 	}
-	got := DenyAuditRecords([]byte(`{"host":"(overflow)","port":443,"reason":"sni_not_allowed","count":1}`))
+	got := DenyAuditRecords([]byte(`{"host":"(overflow)","port":443,"reason":"sni_not_allowed","count":1,"seq":1}`))
 	if got[0] != "egress_deny host=(overflow) port=443 reason=sni_not_allowed count=1" {
 		t.Fatalf("overflow host = %q", got[0])
 	}
@@ -93,9 +95,11 @@ func TestDenyAuditRecordsRewritesHostileHosts(t *testing.T) {
 // counts, refuses more keys than the proxy can write and saturates the total.
 func TestDenyAuditRecordsBounds(t *testing.T) {
 	var log strings.Builder
+	seq := 0
 	for i := range maxAuditDenyKeys + 8 {
 		for c := range i + 1 {
-			fmt.Fprintf(&log, `{"host":"h%d.example","port":443,"reason":"no_sni","count":%d}`+"\n", i, c+1)
+			seq++
+			fmt.Fprintf(&log, `{"host":"h%d.example","port":443,"reason":"no_sni","count":%d,"seq":%d}`+"\n", i, c+1, seq)
 		}
 	}
 	got := DenyAuditRecords([]byte(log.String()))
@@ -112,7 +116,7 @@ func TestDenyAuditRecordsBounds(t *testing.T) {
 
 	log.Reset()
 	for i := range maxDenyKeys + 2 {
-		fmt.Fprintf(&log, `{"host":"h%d","port":443,"reason":"no_sni","count":1}`+"\n", i)
+		fmt.Fprintf(&log, `{"host":"h%d","port":443,"reason":"no_sni","count":1,"seq":%d}`+"\n", i, i+1)
 	}
 	got = DenyAuditRecords([]byte(log.String()))
 	if want := summary("malformed", maxDenyKeys+1, maxDenyKeys+1, 1); got[len(got)-1] != want {
@@ -120,14 +124,14 @@ func TestDenyAuditRecordsBounds(t *testing.T) {
 	}
 
 	// A later, smaller running count for a key never lowers the folded count.
-	got = DenyAuditRecords([]byte(`{"host":"a","port":1,"reason":"no_sni","count":3}` + "\n" +
-		`{"host":"a","port":1,"reason":"no_sni","count":1}`))
+	got = DenyAuditRecords([]byte(`{"host":"a","port":1,"reason":"no_sni","count":3,"seq":1}` + "\n" +
+		`{"host":"a","port":1,"reason":"no_sni","count":1,"seq":2}`))
 	if want := "egress_deny host=a port=1 reason=no_sni count=3"; got[0] != want {
 		t.Fatalf("folded record = %q, want %q", got[0], want)
 	}
 
-	got = DenyAuditRecords([]byte(`{"host":"a","port":1,"reason":"no_sni","count":18446744073709551615}` + "\n" +
-		`{"host":"b","port":1,"reason":"no_sni","count":2}`))
+	got = DenyAuditRecords([]byte(`{"host":"a","port":1,"reason":"no_sni","count":18446744073709551615,"seq":1}` + "\n" +
+		`{"host":"b","port":1,"reason":"no_sni","count":2,"seq":2}`))
 	if want := summary("complete", 2, 18446744073709551615, 0); got[len(got)-1] != want {
 		t.Fatalf("saturated summary = %q, want %q", got[len(got)-1], want)
 	}
@@ -135,16 +139,47 @@ func TestDenyAuditRecordsBounds(t *testing.T) {
 
 func TestDenyAuditRecordsPortZeroOnlyForOverflow(t *testing.T) {
 	t.Parallel()
-	got := DenyAuditRecords([]byte(`{"host":"(overflow)","port":0,"reason":"key_limit","count":2}`))
+	got := DenyAuditRecords([]byte(`{"host":"(overflow)","port":0,"reason":"key_limit","count":2,"seq":1}`))
 	if want := "egress_deny host=(overflow) port=0 reason=key_limit count=2"; got[0] != want {
 		t.Fatalf("overflow record = %q, want %q", got[0], want)
 	}
 	for _, line := range []string{
-		`{"host":"a.example","port":0,"reason":"key_limit","count":1}`,
-		`{"host":"(overflow)","port":0,"reason":"no_sni","count":1}`,
+		`{"host":"a.example","port":0,"reason":"key_limit","count":1,"seq":1}`,
+		`{"host":"(overflow)","port":0,"reason":"no_sni","count":1,"seq":1}`,
 	} {
 		if got := DenyAuditRecords([]byte(line)); !strings.HasSuffix(got[len(got)-1], "malformed_lines=1") {
 			t.Fatalf("%s: summary = %q, want one malformed line", line, got[len(got)-1])
+		}
+	}
+}
+
+// TestDenyAuditRecordsSeesRotatedHead cuts the head off a real proxy log, as
+// the sidecar's json-file rotation does when a deny flood fills it. The first
+// denial is gone, so the summary must not say complete. That holds also when
+// the flood ends with fresh keys, whose running counts start again at 1.
+func TestDenyAuditRecordsSeesRotatedHead(t *testing.T) {
+	var log bytes.Buffer
+	p := New(&Allowlist{}, &log)
+	p.deny("exfil.example", 443, "sni_not_allowed")
+	for range 100 {
+		p.deny("flood.example", 443, "sni_not_allowed")
+	}
+	for i := range 10 {
+		p.deny(fmt.Sprintf("f%d.example", i), 443, "sni_not_allowed")
+	}
+	lines := strings.SplitAfter(log.String(), "\n")
+	for _, tc := range []struct {
+		name   string
+		cut    int
+		status string
+	}{
+		{"whole log", 0, "status=complete "},
+		{"flood key survives", 50, "status=truncated "},
+		{"only fresh keys survive", 105, "status=truncated "},
+	} {
+		got := DenyAuditRecords([]byte(strings.Join(lines[tc.cut:], "")))
+		if !strings.Contains(got[len(got)-1], tc.status) {
+			t.Errorf("%s: summary = %q, want %s", tc.name, got[len(got)-1], tc.status)
 		}
 	}
 }

@@ -371,6 +371,8 @@ the launcher, monitor and session stop paths.
 its session, under the session seal. When the proxy stops, the launcher appends bounded `egress_deny`
 records and one `egress_summary` record before it seals the session. A failed
 launch has no seal, so its cleanup appends them before the `aborted` record.
+A deny flood can rotate the oldest lines out of the sidecar log. Then the
+summary says `status=truncated`, never `status=complete`.
 The OCSF export maps `egress_deny` to Network Activity (`class_uid` 4001).
 
 `internal/testkit/egress_proxy_deny_log_test.go` enforces the records and

@@ -231,7 +231,7 @@ func TestTerminateRefusesUnswappedPlaceholder(t *testing.T) {
 	}
 	d := denies(t, p, log)
 	total := len(cases) + len(trailers)
-	want := denyLine{Host: "example.com", Port: 443, Reason: "placeholder_unswapped", Count: uint64(total)}
+	want := denyLine{Host: "example.com", Port: 443, Reason: "placeholder_unswapped", Count: uint64(total), Seq: uint64(total)}
 	if len(d) != total || d[len(d)-1] != want {
 		t.Fatalf("deny lines = %+v, want %d ending in %+v", d, total, want)
 	}
@@ -245,7 +245,7 @@ func TestTerminateBrokerErrorIs502(t *testing.T) {
 	if code != http.StatusBadGateway || strings.Contains(body, testPlaceholder) {
 		t.Fatalf("broker error GET = (%d, %q), want 502 without reaching upstream", code, body)
 	}
-	want := denyLine{Host: "example.com", Port: 443, Reason: "broker_denied", Count: 1}
+	want := denyLine{Host: "example.com", Port: 443, Reason: "broker_denied", Count: 1, Seq: 1}
 	if d := denies(t, p, log); len(d) != 1 || d[0] != want {
 		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
 	}

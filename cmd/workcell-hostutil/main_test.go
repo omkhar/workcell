@@ -763,7 +763,7 @@ func TestAdaptersGenReplacesSymlinkWithoutFollowing(t *testing.T) {
 func TestWriteEgressDenyAuditRecords(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "S1.egress-deny.jsonl")
-	if err := os.WriteFile(log, []byte(`{"host":"a.example","port":443,"reason":"no_sni","count":2}`+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(log, []byte(`{"host":"a.example","port":443,"reason":"no_sni","count":2,"seq":1}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
