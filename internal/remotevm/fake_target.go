@@ -191,6 +191,11 @@ func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeRes
 	if err := mkdirAllSynced(workspaceRoot); err != nil {
 		return MaterializeResult{}, err
 	}
+	// The copy keeps the source file modes, so the directory above it must
+	// keep other local accounts out. An earlier run can have left it open.
+	if err := restrictToOwner(materializationRoot); err != nil {
+		return MaterializeResult{}, err
+	}
 	entries, err := copyWorkspaceTree(req.SourceWorkspace, workspaceRoot, contract.WorkspaceMaterialization.ExcludedPaths)
 	if err != nil {
 		return MaterializeResult{}, err
@@ -633,7 +638,8 @@ func removeAllNoFollow(path string) error {
 // mkdirAllSynced creates dir and its missing ancestors. From the deepest
 // directory that exists, it opens each component without following a symlink
 // and syncs each directory that gains an entry. A manifest that writeJSON
-// then publishes in dir cannot lose a created ancestor in a crash.
+// then publishes in dir cannot lose a created ancestor in a crash. Each
+// directory that it creates is owner-only.
 func mkdirAllSynced(dir string) error {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
@@ -660,7 +666,21 @@ func mkdirAllSynced(dir string) error {
 		return err
 	}
 	defer anchor.Close()
-	return rootio.MkdirAllSyncedAt(anchor, relative, 0o755)
+	return rootio.MkdirAllSyncedAt(anchor, relative, 0o700)
+}
+
+// restrictToOwner gives dir mode 0700 through a descriptor that no symlink
+// can redirect. It fails for a directory that another account owns.
+func restrictToOwner(dir string) error {
+	handle, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(dir, "entry"))
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	if err := handle.Chmod(0o700); err != nil {
+		return err
+	}
+	return handle.Sync()
 }
 
 func writeJSON(path string, value any) error {

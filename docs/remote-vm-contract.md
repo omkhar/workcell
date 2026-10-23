@@ -88,7 +88,9 @@ The transfer has these steps:
 
 Before step 3, the host writes `archive_sha256` and
 `"guest_transfer": "unconfirmed"` to `materialization.json`. The host syncs
-that file and each directory that it creates for it.
+that file and each directory that it creates for it. The host creates each
+state directory with mode 0700, and it sets that mode on the materialization
+directory.
 
 An error at any step stops the transfer. The receiver removes a partial
 workspace. A transfer stops after 30 minutes. The broker then gets SIGTERM,

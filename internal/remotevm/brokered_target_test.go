@@ -284,3 +284,29 @@ func TestMaterializeCreatesAStateRootBelowMissingParents(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMaterializeKeepsOtherAccountsOutOfTheHostCopy(t *testing.T) {
+	t.Parallel()
+
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	targets := filepath.Join(req.StateRoot, "targets")
+	materializationRoot := filepath.Join(targets, TargetKind, GCPVMProvider, req.TargetID, "materializations", req.MaterializationID)
+	for _, prepare := range []func() error{
+		// A first run creates each directory.
+		func() error { return nil },
+		// An earlier run left the materialization directory open.
+		func() error { return os.Chmod(materializationRoot, 0o755) },
+	} {
+		if err := prepare(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := materializeInStateRoot(DefaultGCPVMContract(), req); err != nil {
+			t.Fatal(err)
+		}
+		for _, dir := range []string{targets, materializationRoot} {
+			if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+				t.Fatalf("%s = %v, %v; want mode 0700", dir, info.Mode().Perm(), err)
+			}
+		}
+	}
+}
