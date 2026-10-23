@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -43,7 +44,15 @@ type WorkspaceManifest struct {
 	ExcludedPaths         []string         `json:"excluded_paths"`
 	Entries               []WorkspaceEntry `json:"entries"`
 	ArchiveSHA256         string           `json:"archive_sha256,omitempty"`
+	// GuestTransfer is GuestTransferUnconfirmed from the time a brokered
+	// target starts the broker until the guest acknowledges the archive.
+	GuestTransfer string `json:"guest_transfer,omitempty"`
 }
+
+// GuestTransferUnconfirmed marks a host manifest whose archive went to the
+// broker without a guest acknowledgment that the host accepted. The guest can
+// hold this workspace, an earlier one with the same ID, or none.
+const GuestTransferUnconfirmed = "unconfirmed"
 
 type BootstrapManifest struct {
 	Version              int    `json:"version"`
@@ -136,10 +145,24 @@ func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeReque
 	return materializeInStateRoot(f.Contract, req)
 }
 
-// materializeInStateRoot copies the source workspace into the host state root
-// and writes its manifest. The fake target stops here; a brokered target then
-// sends this reviewed host copy to the guest.
+// materializeInStateRoot stages the source workspace in the host state root
+// and writes its manifest. The fake target stops here.
 func materializeInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
+	result, err := stageInStateRoot(contract, req)
+	if err != nil {
+		return MaterializeResult{}, err
+	}
+	if err := writeJSON(result.ManifestPath, result.Manifest); err != nil {
+		return MaterializeResult{}, err
+	}
+	return result, nil
+}
+
+// stageInStateRoot copies the source workspace into the host state root and
+// returns its manifest unwritten. It replaces the host copy of an earlier run
+// with the same ID but leaves that run's manifest in place: a brokered target
+// keeps it as the record of the guest copy until it sends this copy.
+func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return MaterializeResult{}, fmt.Errorf("state root is required")
 	}
@@ -162,10 +185,10 @@ func materializeInStateRoot(contract Contract, req MaterializeRequest) (Material
 	materializationRoot := filepath.Join(targetRoot, "materializations", materializationID)
 	workspaceRoot := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.WorkspaceDir)
 	manifestPath := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.ManifestName)
-	if err := os.RemoveAll(materializationRoot); err != nil {
+	if err := removeAllNoFollow(workspaceRoot); err != nil {
 		return MaterializeResult{}, err
 	}
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+	if err := mkdirAllSynced(workspaceRoot); err != nil {
 		return MaterializeResult{}, err
 	}
 	entries, err := copyWorkspaceTree(req.SourceWorkspace, workspaceRoot, contract.WorkspaceMaterialization.ExcludedPaths)
@@ -183,9 +206,6 @@ func materializeInStateRoot(contract Contract, req MaterializeRequest) (Material
 		MaterializedWorkspace: workspaceRoot,
 		ExcludedPaths:         append([]string(nil), contract.WorkspaceMaterialization.ExcludedPaths...),
 		Entries:               entries,
-	}
-	if err := writeJSON(manifestPath, manifest); err != nil {
-		return MaterializeResult{}, err
 	}
 	return MaterializeResult{
 		TargetRoot:            targetRoot,
@@ -594,6 +614,53 @@ func (s *workspaceDestinationState) reserve(path string) error {
 	}
 	s.paths[key] = fmt.Sprintf("%q", path)
 	return nil
+}
+
+// removeAllNoFollow removes path and everything below it. It refuses a
+// symlinked parent before it removes anything. A missing path is not an error.
+func removeAllNoFollow(path string) error {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return rootio.RemoveAllAtNoFollow(parent, filepath.Base(cleaned))
+}
+
+// mkdirAllSynced creates dir and its missing ancestors. From the deepest
+// directory that exists, it opens each component without following a symlink
+// and syncs each directory that gains an entry. A manifest that writeJSON
+// then publishes in dir cannot lose a created ancestor in a crash.
+func mkdirAllSynced(dir string) error {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	existing := dir
+	for {
+		_, err := os.Lstat(existing)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) || existing == filepath.Dir(existing) {
+			return err
+		}
+		existing = filepath.Dir(existing)
+	}
+	relative, err := filepath.Rel(existing, dir)
+	if err != nil || relative == "." {
+		return err
+	}
+	// The parent of a name in existing is existing, opened without a follow.
+	anchor, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(existing, "entry"))
+	if err != nil {
+		return err
+	}
+	defer anchor.Close()
+	return rootio.MkdirAllSyncedAt(anchor, relative, 0o755)
 }
 
 func writeJSON(path string, value any) error {

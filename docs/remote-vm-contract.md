@@ -83,12 +83,23 @@ The transfer has these steps:
    applies the same size and entry limits.
 7. The receiver acknowledges the SHA-256 and the guest workspace path. The host
    accepts only an acknowledgment with the same SHA-256.
-8. The host records the guest path and `archive_sha256` in
-   `materialization.json`.
+8. The host records the guest path in `materialization.json` and removes the
+   `guest_transfer` field.
+
+Before step 3, the host writes `archive_sha256` and
+`"guest_transfer": "unconfirmed"` to `materialization.json`. The host syncs
+that file and each directory that it creates for it.
 
 An error at any step stops the transfer. The receiver removes a partial
-workspace. The host removes `materialization.json`. A transfer stops after 30
-minutes. The broker then gets SIGTERM, and SIGKILL follows after 5 seconds.
+workspace. A transfer stops after 30 minutes. The broker then gets SIGTERM,
+and SIGKILL follows after 5 seconds.
+
+The host does not remove `materialization.json` after an error. An error
+before step 3 keeps the record of an earlier transfer with the same ID. An
+error after that point keeps the unconfirmed record. The guest can then have
+this workspace, an earlier workspace with the same ID, or no workspace. To
+reconcile, send the same materialization ID again. An acknowledged transfer
+replaces the guest copy and the record.
 
 The error includes the last 1 KiB of the broker standard error and a nonzero
 broker exit status. `gcloud` can exit 0 after a failed IAP connection, so the
