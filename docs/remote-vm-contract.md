@@ -53,6 +53,64 @@ It must exclude `.git` and record each copied entry in
 Workcell must not use a live host mount for a remote workspace. The transfer
 must be explicit and auditable.
 
+## Brokered Workspace Transfer
+
+`remotevm.BrokeredTarget` in `internal/remotevm/brokered_target.go`
+implements the transfer as library code. No launcher path calls it. The
+`policy/host-support-matrix.tsv` matrix still blocks launch of each remote
+target.
+
+The transfer has these steps:
+
+1. The target copies the workspace into the host state root with the fake
+   target copy rules and limits.
+2. The target writes a tar of that copy in manifest order. Each header has
+   owner 0, group 0, and modification time 0, so one workspace gives the same
+   bytes on each run. Each file must still match its manifest SHA-256.
+3. The target runs the provider broker CLI without a shell. The broker connects
+   its standard input and output to the guest receiver port:
+   - GCP: `gcloud compute start-iap-tunnel <vm> <port> --listen-on-stdin`.
+   - AWS: `aws ssm start-session` with the `AWS-StartSSHSession` document and
+     `portNumber=<port>`.
+4. The target sends one header line with the materialization ID, the archive
+   SHA-256, and the archive size. Then it sends the archive.
+5. The guest receiver reads the archive into a spool file. It verifies the size
+   and the SHA-256 before it unpacks any entry.
+6. The receiver applies the copy rules again. It accepts only safe relative
+   names, directories, regular files, and symlinks that stay in the workspace.
+   `internal/remotevm/workspace_archive.go` rejects `.git`, name collisions,
+   and an entry whose parent is not a directory from the same archive. It
+   applies the same size and entry limits.
+7. The receiver acknowledges the SHA-256 and the guest workspace path. The host
+   accepts only an acknowledgment with the same SHA-256.
+8. The host records the guest path in `materialization.json` and removes the
+   `guest_transfer` field.
+
+Before step 3, the host writes `archive_sha256` and
+`"guest_transfer": "unconfirmed"` to `materialization.json`. The host syncs
+that file and each directory that it creates for it. The host creates each
+state directory with mode 0700, and it sets that mode on the materialization
+directory.
+
+An error at any step stops the transfer. The receiver removes a partial
+workspace. A transfer stops after 30 minutes. The broker then gets SIGTERM,
+and SIGKILL follows after 5 seconds.
+
+The host does not remove `materialization.json` after an error. An error
+before step 3 keeps the record of an earlier transfer with the same ID. An
+error after that point keeps the unconfirmed record. The guest can then have
+this workspace, an earlier workspace with the same ID, or no workspace. To
+reconcile, send the same materialization ID again. An acknowledged transfer
+replaces the guest copy and the record.
+
+The error includes the last 1 KiB of the broker standard error and a nonzero
+broker exit status. `gcloud` can exit 0 after a failed IAP connection, so the
+standard error can be the only cause.
+
+The other `ConformanceTarget` methods return an error. Remote bootstrap and
+session control are later roadmap items. Workcell does not install the guest
+receiver, and it does not provision cloud resources.
+
 ## Session and Audit Requirements
 
 The contract requires `bootstrap.json`, session records, and a target audit
