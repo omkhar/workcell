@@ -1990,9 +1990,19 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   # Echo the argv the entrypoint hands the provider binary. A shell stub runs on
   # the image's own /bin/sh; binding the runner's /bin/echo ties the check to the
   # runner's glibc, and an ubuntu-26.04 runner needs GLIBC_2.43, newer than the
-  # image has.
+  # image has. No expected token holds whitespace, so a token that does means two
+  # flags were merged into one; print that instead of the joined argv so the
+  # assertion fails.
   cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-argv-echo.sh"
 #!/bin/sh
+for arg do
+  case "${arg}" in
+    *[[:space:]]* | '')
+      printf 'argv token is empty or holds whitespace: [%s]\n' "${arg}"
+      exit 0
+      ;;
+  esac
+done
 printf '%s\n' "$*"
 EOF
   align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-argv-echo.sh" 0755 0755
