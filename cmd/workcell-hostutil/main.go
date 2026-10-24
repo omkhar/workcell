@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/applecontainer"
 	"github.com/omkhar/workcell/internal/authpolicy"
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
@@ -332,6 +333,7 @@ func helperSubcommands() []helperSubcommand {
 		{"build-inputs-digest", 1, 1, cmdHelperBuildInputsDigest},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
+		{"ensure-owner-only-directory", 1, 1, cmdHelperEnsureOwnerOnlyDirectory},
 		{"egress-deny-audit-records", 1, 1, cmdHelperEgressDenyAuditRecords},
 		{"credential-broker-audit-records", 1, 1, cmdHelperCredentialBrokerAuditRecords},
 		{"credential-broker-plan", 2, 2, cmdHelperCredentialBrokerPlan},
@@ -353,6 +355,7 @@ func helperSubcommands() []helperSubcommand {
 		{"resolve-endpoints", 1, 1, cmdHelperResolveEndpoints},
 		{"validate-egress-proxy-allowlist", 1, 1, cmdHelperValidateEgressProxyAllowlist},
 		{"support-matrix-eval", 8, 8, cmdHelperSupportMatrixEval},
+		{"apple-container-host-check", 3, 3, cmdHelperAppleContainerHostCheck},
 		{"profile-path", 1, -1, cmdHelperProfilePath},
 		// PR 23.4 — injection bundle preparation moved into Go.
 		{"injection-stage-direct-mounts", 2, 2, cmdHelperInjectionStageDirectMounts},
@@ -765,6 +768,10 @@ func cmdHelperPublishSessionCaptureFile(args []string) error {
 	return hoststate.PublishSessionCaptureFile(args[0], args[1])
 }
 
+func cmdHelperEnsureOwnerOnlyDirectory(args []string) error {
+	return hoststate.EnsureOwnerOnlyDirectory(args[0])
+}
+
 func cmdHelperResolveHostOutputCandidate(args []string) error {
 	value, err := hoststate.ResolveHostOutputCandidate(args[0])
 	if err != nil {
@@ -960,6 +967,13 @@ func cmdHelperSupportMatrixEval(args []string) error {
 		fmt.Println(line)
 	}
 	return nil
+}
+
+// cmdHelperAppleContainerHostCheck runs the apple-container host guard on the
+// launcher host facts (HOST_OS HOST_ARCH MACOS_PRODUCT_VERSION) and fails with
+// the guard reason.
+func cmdHelperAppleContainerHostCheck(args []string) error {
+	return applecontainer.CheckHost(args[0], args[1], args[2])
 }
 
 // cmdHelperProfilePath dispatches the profile-path umbrella

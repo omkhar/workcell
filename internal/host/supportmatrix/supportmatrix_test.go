@@ -144,8 +144,8 @@ func TestEvaluateReturnsAppleContainerPreviewRow(t *testing.T) {
 			if result.ValidationLane != "none" {
 				t.Fatalf("validation_lane = %q, want none", result.ValidationLane)
 			}
-			if result.Reason != "apple-silicon-macos-26-apple-container-evaluation-preview" {
-				t.Fatalf("reason = %q, want apple-silicon-macos-26-apple-container-evaluation-preview", result.Reason)
+			if result.Reason != "apple-silicon-macos-27-apple-container-evaluation-preview" {
+				t.Fatalf("reason = %q, want apple-silicon-macos-27-apple-container-evaluation-preview", result.Reason)
 			}
 		})
 	}
@@ -232,7 +232,7 @@ func writeSupportMatrixFixture(t *testing.T) string {
 		"macos\tarm64\tnone\tnone\tlocal_vm\tcolima\tstrict\tsupported\tallowed\tcertification-only\tnone\tapple-silicon-macos-reviewed-launch-host",
 		"macos\tarm64\tnone\tnone\tremote_vm\taws-ec2-ssm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-aws-ec2-ssm-preview-certification-only",
 		"macos\tarm64\tnone\tnone\tremote_vm\tgcp-vm\tcompat\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-gcp-vm-preview-certification-only",
-		"macos\tarm64\tnone\tnone\tlocal_vm\tapple-container\tper-session-vm\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-26-apple-container-evaluation-preview",
+		"macos\tarm64\tnone\tnone\tlocal_vm\tapple-container\tper-session-vm\tpreview-only\tblocked\tcertification-only\tnone\tapple-silicon-macos-27-apple-container-evaluation-preview",
 		"linux\tamd64\tany\tany\tlocal_vm\tcolima\tstrict\tvalidation-host-only\tblocked\trepo-required\ttrusted-linux-amd64-validator\ttrusted-linux-amd64-validation-host-only",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

@@ -551,6 +551,16 @@ use remains certification-only and does not allow inbound public SSH on the
 reviewed path.
 Workcell does not silently fall back between targets.
 .TP
+.B --target apple-container
+Select the preview-only local_vm/apple-container/per-session-vm target. It
+needs Apple Silicon macOS 27 or later. With
+.BR --dry-run ,
+it prints the reviewed plan; with
+.BR --doctor ,
+it prints the host guard result in doctor_apple_container_host. A live launch
+exits with status 2 until certification promotes the target. On any other
+host, the dry-run names the guard reason and exits with status 2.
+.TP
 .B --target-id ID
 Set an explicit remote target identifier for preview backends such as
 .BR aws-ec2-ssm

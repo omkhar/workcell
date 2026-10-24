@@ -87,48 +87,58 @@ func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req Materializ
 	if strings.HasPrefix(req.TargetID, "-") {
 		return MaterializeResult{}, fmt.Errorf("target id must not start with '-': %q", req.TargetID)
 	}
-	result, err := materializeInStateRoot(b.Contract, req)
+	result, err := stageInStateRoot(b.Contract, req)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
-	guestWorkspace, digest, err := b.sendStagedWorkspace(ctx, req.TargetID, result)
+	// No error path removes the host manifest. Before the broker starts, the
+	// manifest of an earlier run with this ID is still true. After that, the
+	// unconfirmed manifest is the record that the guest can hold a workspace:
+	// a lost acknowledgment, a refusal that kept an earlier guest copy, and a
+	// host crash all leave it for an operator to reconcile.
+	guestWorkspace, err := b.sendStagedWorkspace(ctx, req.TargetID, &result)
 	if err != nil {
-		// The host manifest names the host copy; drop it so no record claims
-		// a guest materialization that did not happen.
-		return MaterializeResult{}, errors.Join(err, os.Remove(result.ManifestPath))
+		return MaterializeResult{}, err
 	}
 	result.MaterializedWorkspace = guestWorkspace
 	result.Manifest.MaterializedWorkspace = guestWorkspace
-	result.Manifest.ArchiveSHA256 = digest
+	result.Manifest.GuestTransfer = ""
 	if err := writeJSON(result.ManifestPath, result.Manifest); err != nil {
 		return MaterializeResult{}, err
 	}
 	return result, nil
 }
 
-func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string, staged MaterializeResult) (string, string, error) {
+// sendStagedWorkspace archives the staged host copy and sends it through the
+// broker. Before the broker starts, it writes the manifest with the archive
+// digest and the unconfirmed state.
+func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string, staged *MaterializeResult) (string, error) {
 	archive, err := os.CreateTemp(staged.MaterializationRoot, ".archive-")
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	defer os.Remove(archive.Name())
 	defer archive.Close()
 	hash := sha256.New()
 	if err := writeWorkspaceArchive(io.MultiWriter(archive, hash), staged.MaterializedWorkspace, staged.Manifest.Entries); err != nil {
-		return "", "", err
+		return "", err
 	}
 	size, err := archive.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if _, err := archive.Seek(0, io.SeekStart); err != nil {
-		return "", "", err
+		return "", err
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
-	guestWorkspace, err := runBroker(ctx, b.Command(targetID), func(conn io.ReadWriter) (string, error) {
+	staged.Manifest.ArchiveSHA256 = digest
+	staged.Manifest.GuestTransfer = GuestTransferUnconfirmed
+	if err := writeJSON(staged.ManifestPath, staged.Manifest); err != nil {
+		return "", err
+	}
+	return runBroker(ctx, b.Command(targetID), func(conn io.ReadWriter) (string, error) {
 		return sendWorkspaceArchive(conn, staged.Manifest.MaterializationID, archive, size, digest)
 	})
-	return guestWorkspace, digest, err
 }
 
 // runBroker runs the broker argv without a shell and gives its stdio to

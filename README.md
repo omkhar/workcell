@@ -234,6 +234,9 @@ options.
   [provider quickstarts](docs/provider-quickstarts.md)).
 - `--target colima|docker-desktop|aws-ec2-ssm|gcp-vm` — select the runtime
   backend ([safe-path expectations](docs/safe-path-expectations.md)).
+  `--target apple-container` is a macOS 27 preview that supports only
+  `--dry-run` and `--doctor`
+  ([Apple container evaluation](docs/apple-container-evaluation.md)).
 - `--prepare` and `--prepare-only` — pre-build the runtime image before, or
   instead of, launching ([safe-path expectations](docs/safe-path-expectations.md)).
 - `--doctor`, `--inspect`, and `--auth-status` — inspect host readiness, a

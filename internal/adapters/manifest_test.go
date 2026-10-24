@@ -720,7 +720,7 @@ version_arg = "DEMO_VERSION"
 provenance = "scripts/verify-demo.sh"
 
 [credentials.demo_auth]
-container_path = "/opt/demo.json"
+container_path = "/opt/workcell/host-inputs/credentials/demo.json"
 `
 	cases := map[string]string{
 		"unknown key":             strings.Replace(valid, `binary = "demo"`, "binary = \"demo\"\nextra = true", 1),
@@ -754,7 +754,9 @@ container_path = "/opt/demo.json"
 		"binary without arg":      strings.Replace(valid, "version_arg = \"DEMO_VERSION\"\n", "", 1),
 		"npm without package":     strings.Replace(valid, `method = "binary"`, `method = "npm"`, 1),
 		"missing provenance":      strings.Replace(valid, "provenance = \"scripts/verify-demo.sh\"\n", "", 1),
-		"relative container path": strings.Replace(valid, `"/opt/demo.json"`, `"demo.json"`, 1),
+		"relative container path": strings.Replace(valid, `"/opt/workcell/host-inputs/credentials/demo.json"`, `"demo.json"`, 1),
+		"container path outside":  strings.Replace(valid, `"/opt/workcell/host-inputs/credentials/demo.json"`, `"/state/agent-home/demo.json"`, 1),
+		"container path escapes":  strings.Replace(valid, `"/opt/workcell/host-inputs/credentials/demo.json"`, `"/opt/workcell/host-inputs/credentials/../demo.json"`, 1),
 		"subset parser rejection": valid + "\n[[install]]\n",
 		"quoted credential key":   strings.Replace(valid, "[credentials.demo_auth]", "[credentials.\"demo'auth\"]", 1),
 		"upper-case credential":   strings.Replace(valid, "[credentials.demo_auth]", "[credentials.Demo_auth]", 1),
@@ -776,6 +778,37 @@ container_path = "/opt/demo.json"
 		if _, err := parseManifest("case.toml", []byte(content)); err == nil {
 			t.Errorf("%s: parseManifest accepted invalid input", name)
 		}
+	}
+}
+
+func TestLoadManifestsRejectsCredentialKeyOfAnotherAdapter(t *testing.T) {
+	manifest := func(id, key string) string {
+		return "schema = 1\nid = \"" + id + "\"\ntier = \"certified\"\nbinary = \"" + id + "\"\n\n[install]\nmethod = \"npm\"\npackage = \"" + id +
+			"\"\nprovenance = \"scripts/verify.sh\"\n\n[credentials." + key + "]\ncontainer_path = \"/opt/workcell/host-inputs/credentials/" + id + ".json\"\n"
+	}
+	cases := map[string]struct {
+		manifests map[string]string
+		wantErr   string
+	}{
+		"two adapters": {map[string]string{"codex": manifest("codex", "codex_auth"), "opencode": manifest("opencode", "codex_auth")},
+			`credential "codex_auth" is declared by adapters "codex" and "opencode"`},
+		"shared key": {map[string]string{"demo": manifest("demo", "github_hosts")}, `credential "github_hosts" is a shared credential key`},
+	}
+	for name, tc := range cases {
+		root := t.TempDir()
+		for id, content := range tc.manifests {
+			writeTestFile(t, filepath.Join(root, id, "adapter.toml"), []byte(content), 0o600)
+		}
+		if _, err := LoadManifests(root); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s: LoadManifests error = %v, want %q", name, err, tc.wantErr)
+		}
+	}
+	// Positive control: distinct keys load.
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "codex", "adapter.toml"), []byte(manifest("codex", "codex_auth")), 0o600)
+	writeTestFile(t, filepath.Join(root, "opencode", "adapter.toml"), []byte(manifest("opencode", "opencode_auth")), 0o600)
+	if manifests, err := LoadManifests(root); err != nil || len(manifests) != 2 {
+		t.Errorf("LoadManifests = %v, %v; want two manifests", manifests, err)
 	}
 }
 

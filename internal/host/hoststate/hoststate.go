@@ -21,6 +21,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/rootio"
+	"golang.org/x/sys/unix"
 )
 
 func AuditRecordDigest(prevDigest, timestamp string, args []string) string {
@@ -94,6 +95,46 @@ func PublishSessionCaptureFile(source, destination string) error {
 	}
 	defer parent.Close()
 	return rootio.StageAndPublishReaderAt(parent, filepath.Base(cleaned), file, 0o600, ".workcell-capture-")
+}
+
+// EnsureOwnerOnlyDirectory makes path a directory that the current user owns
+// with mode 0700, and creates it when it is absent. Every step works on a
+// descriptor opened with O_NOFOLLOW from a pinned parent, so a symlink that
+// another session swaps in at path is refused and its target is never
+// changed. The parent and the directory are fsynced, so a crash cannot keep
+// content written under path after this call while it loses the mode.
+func EnsureOwnerOnlyDirectory(path string) error {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := filepath.Base(cleaned)
+	if err := rootio.MkdirAllSyncedAt(parent, name, 0o700); err != nil {
+		return err
+	}
+	dir, err := rootio.OpenDirectoryAtNoFollow(parent, name)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(dir.Fd()), &stat); err != nil {
+		return err
+	}
+	if stat.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("%s is not owned by the current user", cleaned)
+	}
+	// An extended ACL can grant another account access that the mode hides.
+	if err := rootio.RejectExtendedACL(int(dir.Fd())); err != nil {
+		return fmt.Errorf("%s: %w", cleaned, err)
+	}
+	if stat.Mode&0o7777 != 0o700 {
+		if err := unix.Fchmod(int(dir.Fd()), 0o700); err != nil {
+			return err
+		}
+	}
+	return dir.Sync()
 }
 
 func ResolveHostOutputCandidate(raw string) (string, error) {

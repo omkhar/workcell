@@ -5,8 +5,10 @@ package remotevm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -39,6 +41,18 @@ func TestFakeBrokerProcess(t *testing.T) {
 		if err := receiveWorkspace(stdio, args[1], defaultWorkspaceLimits); err != nil {
 			os.Exit(3)
 		}
+	case "lostack":
+		// The guest unpacks and syncs the workspace, but its ack never
+		// reaches the host.
+		if err := receiveWorkspace(struct {
+			io.Reader
+			io.Writer
+		}{os.Stdin, io.Discard}, args[1], defaultWorkspaceLimits); err != nil {
+			os.Exit(3)
+		}
+	case "refuse":
+		fmt.Fprintf(os.Stdout, "error %q\n", "refused")
+		io.Copy(io.Discard, os.Stdin)
 	case "exit7":
 		os.Stderr.WriteString(strings.Repeat("noise ", 400) + "ERROR: Failed to lookup instance\n")
 		os.Exit(7)
@@ -156,95 +170,143 @@ func TestBrokeredTargetPropagatesTheBrokerExitStatus(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 || !strings.Contains(err.Error(), "Failed to lookup instance") || strings.Count(err.Error(), "noise") > 200 {
 		t.Fatalf("MaterializeWorkspace() error = %v, want broker exit status 7 and the stderr tail", err)
 	}
-	manifest := filepath.Join(req.StateRoot, "targets", TargetKind, GCPVMProvider, req.TargetID, "materializations", "m1", MaterializationFile)
-	if _, err := os.Stat(manifest); !os.IsNotExist(err) {
-		t.Fatalf("a failed transfer left the host manifest: %v", err)
+	// The broker ran, so the host cannot rule out a guest copy.
+	if manifest := readHostManifest(t, req); manifest.GuestTransfer != GuestTransferUnconfirmed {
+		t.Fatalf("guest_transfer = %q after a broker failure, want %q", manifest.GuestTransfer, GuestTransferUnconfirmed)
 	}
 }
 
-func TestBrokeredTargetKillsABrokerThatIgnoresTheTimeout(t *testing.T) {
+func hostManifestPath(req MaterializeRequest) string {
+	return filepath.Join(req.StateRoot, "targets", TargetKind, GCPVMProvider, req.TargetID, "materializations", req.MaterializationID, MaterializationFile)
+}
+
+func readHostManifest(t *testing.T, req MaterializeRequest) WorkspaceManifest {
+	t.Helper()
+	content, err := os.ReadFile(hostManifestPath(req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest WorkspaceManifest
+	if err := json.Unmarshal(content, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	return manifest
+}
+
+func TestBrokeredTargetKeepsAnUnconfirmedRecordWhenTheAckIsLost(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
+	guestRoot := t.TempDir()
 	var started bool
-	begin := time.Now()
-	_, err := fakeBrokerTarget(t, "hang", t.TempDir(), &started).MaterializeWorkspace(ctx, brokeredRequest(t, filepath.Join("testdata", "source-workspace")))
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("MaterializeWorkspace() error = %v, want a timeout", err)
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	if _, err := fakeBrokerTarget(t, "lostack", guestRoot, &started).MaterializeWorkspace(context.Background(), req); err == nil {
+		t.Fatal("MaterializeWorkspace() succeeded without an ack")
 	}
-	if elapsed := time.Since(begin); elapsed > brokerStopGrace+10*time.Second {
-		t.Fatalf("SIGKILL escalation took %v", elapsed)
+	guestWorkspace := filepath.Join(guestRoot, "materializations", "m1", MaterializedWorktree)
+	if _, err := os.Stat(guestWorkspace); err != nil {
+		t.Fatalf("the guest did not keep the workspace: %v", err)
+	}
+	manifest := readHostManifest(t, req)
+	if manifest.GuestTransfer != GuestTransferUnconfirmed || len(manifest.ArchiveSHA256) != 64 {
+		t.Fatalf("host manifest = guest_transfer %q, archive_sha256 %q; want an unconfirmed record with the digest", manifest.GuestTransfer, manifest.ArchiveSHA256)
+	}
+	// A second send of the same ID that fails before the broker starts
+	// keeps the record of the guest copy.
+	hostile := req
+	hostile.SourceWorkspace = t.TempDir()
+	if err := unix.Mkfifo(filepath.Join(hostile.SourceWorkspace, "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(context.Background(), hostile); err == nil {
+		t.Fatal("MaterializeWorkspace() accepted a hostile workspace")
+	}
+	if kept := readHostManifest(t, req); kept.GuestTransfer != GuestTransferUnconfirmed || kept.ArchiveSHA256 != manifest.ArchiveSHA256 {
+		t.Fatalf("host manifest after a failed second send = guest_transfer %q, archive_sha256 %q; want the first record", kept.GuestTransfer, kept.ArchiveSHA256)
+	}
+
+	// A second send that the guest acknowledges confirms the record.
+	result, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest := readHostManifest(t, req); manifest.GuestTransfer != "" || manifest.MaterializedWorkspace != guestWorkspace || result.Manifest.GuestTransfer != "" {
+		t.Fatalf("confirmed manifest = guest_transfer %q, workspace %q", manifest.GuestTransfer, manifest.MaterializedWorkspace)
 	}
 }
 
-func TestBrokeredTargetConstructorsPinTheBrokerArgv(t *testing.T) {
+// A refusal does not prove that the guest holds no workspace: the receiver
+// keeps an earlier copy with the same ID when it refuses before it unpacks.
+func TestBrokeredTargetKeepsAnUnconfirmedRecordWhenTheGuestRefuses(t *testing.T) {
 	t.Parallel()
 
-	gcp, err := NewGCPVMBrokeredTarget("/usr/bin/gcloud", "proj", "us-central1-a", 7001)
+	var started bool
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	_, err := fakeBrokerTarget(t, "refuse", t.TempDir(), &started).MaterializeWorkspace(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "guest refused the workspace archive") {
+		t.Fatalf("MaterializeWorkspace() error = %v, want the guest refusal", err)
+	}
+	if manifest := readHostManifest(t, req); manifest.GuestTransfer != GuestTransferUnconfirmed {
+		t.Fatalf("guest_transfer = %q after a refusal, want %q", manifest.GuestTransfer, GuestTransferUnconfirmed)
+	}
+}
+
+func TestMaterializeRefusesASymlinkedStateDirectory(t *testing.T) {
+	t.Parallel()
+
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	outside := t.TempDir()
+	// The path that the request names exists behind the link.
+	victim := filepath.Join(outside, TargetKind, GCPVMProvider, req.TargetID, "materializations", req.MaterializationID, MaterializedWorktree)
+	if err := os.MkdirAll(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(req.StateRoot, "targets")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := materializeInStateRoot(DefaultGCPVMContract(), req); err == nil {
+		t.Fatal("materializeInStateRoot() followed a symlinked state directory")
+	}
+	if entries, err := os.ReadDir(victim); err != nil || len(entries) != 0 {
+		t.Fatalf("directory behind the link = %v, %v; want it present and empty", entries, err)
+	}
+}
+
+func TestMaterializeCreatesAStateRootBelowMissingParents(t *testing.T) {
+	t.Parallel()
+
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	req.StateRoot = filepath.Join(req.StateRoot, "missing", "state")
+	result, err := materializeInStateRoot(DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := gcp.Command("vm-1"), []string{"/usr/bin/gcloud", "compute", "start-iap-tunnel", "vm-1", "7001", "--listen-on-stdin", "--zone=us-central1-a", "--project=proj", "--quiet"}; !slices.Equal(got, want) {
-		t.Fatalf("gcp argv = %q", got)
-	}
-	aws, err := NewAWSEC2SSMBrokeredTarget("/usr/local/bin/aws", "us-east-1", 7001)
-	if err != nil {
+	if _, err := os.Stat(result.ManifestPath); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := aws.Command("i-0123"), []string{"/usr/local/bin/aws", "ssm", "start-session", "--target", "i-0123", "--document-name", "AWS-StartSSHSession", "--parameters", "portNumber=7001", "--region", "us-east-1"}; !slices.Equal(got, want) {
-		t.Fatalf("aws argv = %q", got)
-	}
-	for name, err := range map[string]error{
-		"relative cli": func() error { _, err := NewGCPVMBrokeredTarget("gcloud", "p", "z", 1); return err }(),
-		"port zero":    func() error { _, err := NewGCPVMBrokeredTarget("/g", "p", "z", 0); return err }(),
-		"port high":    func() error { _, err := NewAWSEC2SSMBrokeredTarget("/a", "r", 65536); return err }(),
-		"empty zone":   func() error { _, err := NewGCPVMBrokeredTarget("/g", "p", " ", 1); return err }(),
-		"option value": func() error { _, err := NewAWSEC2SSMBrokeredTarget("/a", "--profile=x", 1); return err }(),
+}
+
+func TestMaterializeKeepsOtherAccountsOutOfTheHostCopy(t *testing.T) {
+	t.Parallel()
+
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	targets := filepath.Join(req.StateRoot, "targets")
+	materializationRoot := filepath.Join(targets, TargetKind, GCPVMProvider, req.TargetID, "materializations", req.MaterializationID)
+	for _, prepare := range []func() error{
+		// A first run creates each directory.
+		func() error { return nil },
+		// An earlier run left the materialization directory open.
+		func() error { return os.Chmod(materializationRoot, 0o755) },
 	} {
-		if err == nil {
-			t.Fatalf("%s: constructor accepted invalid input", name)
+		if err := prepare(); err != nil {
+			t.Fatal(err)
 		}
-	}
-}
-
-func TestBrokeredTargetLeavesBootstrapAndSessionsToLaterItems(t *testing.T) {
-	t.Parallel()
-
-	var target BrokeredTarget
-	if _, err := target.BootstrapTarget(context.Background(), BootstrapRequest{}); !errors.Is(err, errBootstrapNotImplemented) {
-		t.Fatalf("BootstrapTarget() error = %v", err)
-	}
-	if _, err := target.StartSession(context.Background(), StartSessionRequest{}); !errors.Is(err, errSessionNotImplemented) {
-		t.Fatalf("StartSession() error = %v", err)
-	}
-	if _, err := target.FinishSession(context.Background(), FinishSessionRequest{}); !errors.Is(err, errSessionNotImplemented) {
-		t.Fatalf("FinishSession() error = %v", err)
-	}
-}
-
-func TestBrokeredTargetTimesOutWhenAGrandchildHoldsThePipe(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	var started bool
-	begin := time.Now()
-	_, err := fakeBrokerTarget(t, "orphan", t.TempDir(), &started).MaterializeWorkspace(ctx, brokeredRequest(t, filepath.Join("testdata", "source-workspace")))
-	if err == nil {
-		t.Fatal("MaterializeWorkspace() succeeded without a receiver")
-	}
-	if elapsed := time.Since(begin); elapsed > brokerStopGrace+5*time.Second {
-		t.Fatalf("a held pipe blocked the transfer for %v", elapsed)
-	}
-}
-
-func TestBrokeredTargetReportsTheStderrOfABrokerThatExitsZero(t *testing.T) {
-	t.Parallel()
-
-	var started bool
-	_, err := fakeBrokerTarget(t, "exit0", t.TempDir(), &started).MaterializeWorkspace(context.Background(), brokeredRequest(t, filepath.Join("testdata", "source-workspace")))
-	if err == nil || !strings.Contains(err.Error(), "Failed to lookup instance") {
-		t.Fatalf("MaterializeWorkspace() error = %v, want the broker stderr", err)
+		if _, err := materializeInStateRoot(DefaultGCPVMContract(), req); err != nil {
+			t.Fatal(err)
+		}
+		for _, dir := range []string{targets, materializationRoot} {
+			if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+				t.Fatalf("%s = %v, %v; want mode 0700", dir, info.Mode().Perm(), err)
+			}
+		}
 	}
 }

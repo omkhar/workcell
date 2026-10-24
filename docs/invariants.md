@@ -190,6 +190,20 @@ Workcell also masks Git execution-control paths for the workspace repository and
 its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 `worktrees`.
 
+Workcell also masks `workcell-sessions` in each Git directory of the workspace
+with an empty read-only directory. That directory holds the isolated clone of
+each session. The mask applies when the directory is absent, because Workcell
+can make a clone there after the launch. Workcell makes the directory first,
+with mode `0700`.
+
+`EnsureOwnerOnlyDirectory` in `internal/host/hoststate` refuses a
+`workcell-sessions` that is a symlink, is not a directory, or has an extended
+ACL. It also refuses one that the user does not own. It sets an owned one with
+a group or other permission bit to `0700`, and it never follows a symlink. It
+fsyncs the directory and its parent before Workcell clones into it.
+`ensure_session_clone_dir` calls it through the `ensure-owner-only-directory`
+helper, and the shadow setup adds the mask. Both are in `scripts/workcell`.
+
 Workcell refuses a safe-path workspace in these cases. Each case can make Git
 read config and hooks from a directory that the masks do not cover.
 
@@ -304,7 +318,8 @@ keychain knob to an allowed harness.
 `phantom-no-real-secret`: a brokered key never reaches the agent container.
 The agent environment, its processes, the injection bundle and the provider
 home hold only the `wcph-` placeholder. The sidecar swaps it for the key on the
-wire, and only for the brokered host and header.
+wire, and only for the brokered host and header. It refuses TRACE and CONNECT
+on a brokered host with 405 before the swap, so an echo cannot return the key.
 
 `internal/injection/prepare_bundle_test.go` enforces that the bundle stages
 only the placeholder (`TestPrepareBundleBrokersAPIKeys`).
@@ -364,6 +379,8 @@ the launcher, monitor and session stop paths.
 its session, under the session seal. When the proxy stops, the launcher appends bounded `egress_deny`
 records and one `egress_summary` record before it seals the session. A failed
 launch has no seal, so its cleanup appends them before the `aborted` record.
+A deny flood can rotate the oldest lines out of the sidecar log. Then the
+summary says `status=truncated`, never `status=complete`.
 The OCSF export maps `egress_deny` to Network Activity (`class_uid` 4001).
 
 `internal/testkit/egress_proxy_deny_log_test.go` enforces the records and

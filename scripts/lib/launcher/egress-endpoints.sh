@@ -101,8 +101,9 @@ fail_empty_egress_after_deny() {
 # per-session default-deny allowlist. Only the colima target applies the
 # iptables/ip6tables DOCKER-USER allowlist (scripts/colima-egress-allowlist.sh),
 # and only when NETWORK_POLICY=allowlist. Every other target (docker-desktop,
-# aws-ec2-ssm, gcp-vm) relies on its own network controls, so this prints
-# 'none' to make the parity gap explicit on the launch summary.
+# aws-ec2-ssm, gcp-vm, apple-container) relies on its own network controls, so
+# this prints 'none' to make the parity gap explicit on the launch summary.
+# apple-container prints 'proxy' once its launch wires the egress proxy.
 egress_enforcement_label() {
   if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
     printf 'proxy\n'

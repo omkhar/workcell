@@ -94,7 +94,6 @@ docs/adapter-control-planes.md	unanchored-claim	It rejects host Copilot state, k
 docs/adapter-control-planes.md	unanchored-claim	The Claude adapter installs a reviewed `PreToolUse` Bash hook that blocks common trust-widening shell patterns.	claim predates the rule; cite the enforcing path or drop the claim
 docs/adapter-control-planes.md	unanchored-claim	Workcell replaces an invalid configuration and fails closed.	claim predates the rule; cite the enforcing path or drop the claim
 docs/apple-container-evaluation.md	unanchored-claim	It rejects a source workspace that overlaps `StateRoot`.	plan or review record describes intent or state at the time of writing
-docs/apple-container-evaluation.md	unanchored-claim	Session verification fails closed for this target.	plan or review record describes intent or state at the time of writing
 docs/apple-container-evaluation.md	unanchored-claim	The manifest reader rejects noncanonical JSON and trailing data.	plan or review record describes intent or state at the time of writing
 docs/aws-ec2-ssm-preview.md	unanchored-claim	The preview broker plan requires these IAM actions:	claim predates the rule; cite the enforcing path or drop the claim
 docs/aws-ec2-ssm-preview.md	unanchored-claim	Workcell blocks operator launch.	claim predates the rule; cite the enforcing path or drop the claim
@@ -217,7 +216,6 @@ docs/invariants.md	unanchored-claim	The check also fails when an expansion hides
 docs/invariants.md	unanchored-claim	The check fails when a `uses:` pin has no row in `tests/fixtures/actions/inputs.tsv`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	The server rejects any other name and any unlisted value, and builds the helper environment itself.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	Workcell also refuses the workspace when it cannot list the workspace, a Git directory, or its modules.	claim predates the rule; cite the enforcing path or drop the claim
-docs/invariants.md	unanchored-claim	Workcell refuses a safe-path workspace in these cases.	claim predates the rule; cite the enforcing path or drop the claim
 docs/launcher-contract.md	unanchored-claim	It also refuses a cache root that group or other can write.	claim predates the rule; cite the enforcing path or drop the claim
 docs/launcher-contract.md	unanchored-claim	It prevents accidental operator use.	claim predates the rule; cite the enforcing path or drop the claim
 docs/launcher-contract.md	unanchored-claim	It returns `missing` when the device does not exist, and `denied` when the device exists but the open fails.	claim predates the rule; cite the enforcing path or drop the claim
@@ -367,9 +365,7 @@ docs/session-startup-benchmarks.md	unwired-script	scripts/bench/run-startup-benc
 docs/signed-session-audit-records.md	unanchored-claim	If the lock or signer fails, Workcell reports a warning and lets finalization continue.	conditional or instruction to the reader, not an enforcement claim
 docs/signed-session-audit-records.md	unanchored-claim	If the lock remains unavailable, the append operation fails.	conditional or instruction to the reader, not an enforcement claim
 docs/signed-session-audit-records.md	unanchored-claim	If this operation fails, Workcell finalizes the session without a seal.	conditional or instruction to the reader, not an enforcement claim
-docs/signed-session-audit-records.md	unanchored-claim	It rejects duplicate keys and excludes records for another session.	claim predates the rule; cite the enforcing path or drop the claim
 docs/signed-session-audit-records.md	unanchored-claim	It rejects each strictly checked record that contains a duplicate key.	claim predates the rule; cite the enforcing path or drop the claim
-docs/signed-session-audit-records.md	unanchored-claim	Workcell cannot seal those records, and `session verify` fails with a `no signable digest chain` reason.	claim predates the rule; cite the enforcing path or drop the claim
 docs/software-engineering-practices.md	unanchored-claim	Stop when a refactor requires a behavior or support change.	conditional or instruction to the reader, not an enforcement claim
 docs/stability-contract.md	unanchored-claim	- `--allow-arbitrary-command` requires a dated `--ack-arbitrary-command` value.	claim predates the rule; cite the enforcing path or drop the claim
 docs/stability-contract.md	unanchored-claim	- `--allow-control-plane-vcs` requires `--ack-control-plane-vcs`.	claim predates the rule; cite the enforcing path or drop the claim
@@ -379,7 +375,6 @@ docs/stability-contract.md	unanchored-claim	It fails closed.	claim predates the 
 docs/stability-contract.md	unanchored-claim	The value fails closed.	claim predates the rule; cite the enforcing path or drop the claim
 docs/stability-contract.md	unanchored-claim	Workcell rejects each option without its acknowledgement.	claim predates the rule; cite the enforcing path or drop the claim
 docs/stability-contract.md	unanchored-claim	`requires_credentials`	claim predates the rule; cite the enforcing path or drop the claim
-docs/support-tiers.md	unanchored-claim	The `apple-container` target also requires macOS 26, but its matrix row is still preview-only and blocked.	claim predates the rule; cite the enforcing path or drop the claim
 docs/syscall-shim-benchmarks.md	unanchored-claim	The guard refuses a child exec that does not carry exactly the approved preload, `/usr/local/lib/libworkcell_exec_guard.so`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/threat-model.md	unanchored-claim	Workcell blocks the corresponding Linux and Windows operator launches.	claim predates the rule; cite the enforcing path or drop the claim
 docs/unsafe-code-audit-checklist.md	unanchored-claim	`runtime/container/rust/Cargo.toml` sets `undocumented_unsafe_blocks = "deny"`.	claim predates the rule; cite the enforcing path or drop the claim

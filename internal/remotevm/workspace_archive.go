@@ -11,12 +11,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 // The wire format is one header line, the archive bytes, and one ack line:
@@ -36,7 +40,13 @@ const archiveEntryOverhead = 16 << 10
 // writeWorkspaceArchive writes a deterministic tar of the staged workspace at
 // root in manifest order. Each file must still match its manifest digest.
 func writeWorkspaceArchive(w io.Writer, root string, entries []WorkspaceEntry) error {
+	source, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
 	archive := tar.NewWriter(w)
+	remaining := defaultWorkspaceLimits.maxBytes
 	for _, entry := range entries {
 		header := &tar.Header{Name: entry.Path, Mode: int64(entry.Mode.Perm()), ModTime: time.Unix(0, 0)}
 		switch entry.Kind {
@@ -56,42 +66,57 @@ func writeWorkspaceArchive(w io.Writer, root string, entries []WorkspaceEntry) e
 			}
 			continue
 		}
-		if err := writeArchiveFile(archive, header, filepath.Join(root, filepath.FromSlash(entry.Path)), entry.SHA256); err != nil {
+		size, err := writeArchiveFile(archive, header, source, entry.Path, entry.SHA256, min(defaultWorkspaceLimits.maxFileBytes, remaining))
+		if err != nil {
 			return err
 		}
+		remaining -= size
 	}
 	return archive.Close()
 }
 
-func writeArchiveFile(archive *tar.Writer, header *tar.Header, path, wantSHA256 string) error {
-	file, err := os.Open(path)
+// writeArchiveFile writes the staged file rel under source. The root keeps the
+// open inside the staged workspace, O_NONBLOCK keeps a swapped-in FIFO from
+// blocking, and the size cap stops a replacement before its bytes are copied.
+// The digest check catches any other change since the copy.
+func writeArchiveFile(archive *tar.Writer, header *tar.Header, source *os.Root, rel, wantSHA256 string, allowed int64) (int64, error) {
+	file, err := source.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer file.Close()
-	// The digest check below catches a staged file that changed since the
-	// copy, whatever replaced it.
 	info, err := file.Stat()
 	if err != nil {
-		return err
+		return 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("staged workspace file %q is not a regular file", rel)
+	}
+	if info.Size() > allowed {
+		return 0, fmt.Errorf("staged workspace file %q is larger than the workspace caps allow", rel)
 	}
 	header.Size = info.Size()
 	if err := archive.WriteHeader(header); err != nil {
-		return err
+		return 0, err
 	}
 	hash := sha256.New()
 	if _, err := io.CopyN(io.MultiWriter(archive, hash), file, header.Size); err != nil {
-		return err
+		return 0, err
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != wantSHA256 {
-		return fmt.Errorf("staged workspace file %q differs from its manifest", header.Name)
+		return 0, fmt.Errorf("staged workspace file %q differs from its manifest", header.Name)
 	}
-	return nil
+	return header.Size, nil
 }
 
 // sendWorkspaceArchive sends the framed archive and returns the guest
 // workspace path from an ack that names the same digest.
 func sendWorkspaceArchive(conn io.ReadWriter, materializationID string, archive io.Reader, size int64, digest string) (string, error) {
+	// The header is space-separated and newline-terminated, so the receiver
+	// can parse only an ID that is a path segment without those delimiters.
+	if _, err := statePathSegment("materialization id", materializationID); err != nil || strings.ContainsAny(materializationID, " \r\n") {
+		return "", fmt.Errorf("materialization id %q cannot be sent in a workspace archive header", materializationID)
+	}
 	if _, err := fmt.Fprintf(conn, "%s %s %s %d\n", archiveMagic, materializationID, digest, size); err != nil {
 		return "", err
 	}
@@ -164,13 +189,53 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 	if err := os.RemoveAll(materializationRoot); err != nil {
 		return "", "", err
 	}
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
+	// The materialization root is owner-only, so no other guest account can
+	// reach the workspace while it unpacks or after it is acked.
+	if err := os.MkdirAll(filepath.Dir(materializationRoot), 0o700); err != nil {
 		return "", "", err
 	}
-	if err := unpackWorkspaceArchive(spool, workspace, limits); err != nil {
+	if err := os.Mkdir(materializationRoot, 0o700); err != nil {
+		return "", "", err
+	}
+	err = os.Mkdir(workspace, 0o755)
+	if err == nil {
+		err = unpackWorkspaceArchive(spool, workspace, limits)
+	}
+	if err == nil {
+		err = syncMaterialization(root, materializationRoot)
+	}
+	if err != nil {
 		return "", "", errors.Join(err, os.RemoveAll(materializationRoot))
 	}
 	return workspace, digest, nil
+}
+
+// syncMaterialization fsyncs every directory of the unpacked materialization
+// and the directories above it up to root, so the workspace that the receiver
+// acks survives a guest power loss. unpackArchiveFile already synced the files.
+func syncMaterialization(root, materializationRoot string) error {
+	rootParent, cleanedRoot, err := rootio.OpenParentDirectoryNoFollow(root)
+	if err != nil {
+		return err
+	}
+	defer rootParent.Close()
+	rel, err := filepath.Rel(root, materializationRoot)
+	if err != nil {
+		return err
+	}
+	rel = filepath.Join(filepath.Base(cleanedRoot), rel)
+	return filepath.WalkDir(materializationRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || !entry.IsDir() {
+			return err
+		}
+		below, err := filepath.Rel(materializationRoot, path)
+		if err != nil {
+			return err
+		}
+		// SyncDirAt syncs each directory on the way down, so the first call
+		// also syncs root and the materializations directory.
+		return rootio.SyncDirAt(rootParent, filepath.Join(rel, below))
+	})
 }
 
 // unpackWorkspaceArchive applies the host copy rules again on the guest: safe
@@ -253,6 +318,9 @@ func unpackArchiveFile(reader io.Reader, dest string, mode os.FileMode) error {
 		return err
 	}
 	_, err = io.Copy(file, reader)
+	if err == nil {
+		err = file.Sync()
+	}
 	return errors.Join(err, file.Close())
 }
 

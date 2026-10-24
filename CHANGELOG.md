@@ -9,6 +9,13 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Added
 
+- `--target apple-container` selects the preview-only
+  `local_vm/apple-container/per-session-vm` target. On Apple Silicon macOS 27
+  or later, `--dry-run` prints a reviewed plan and `--doctor` prints
+  `doctor_apple_container_host`. On other hosts, the dry-run names the host
+  guard reason and exits with status 2. A live launch exits with status 2, and
+  the matrix row stays `preview-only` and `blocked`
+  (`tests/scenarios/shared/test-apple-container-dry-run.sh`).
 - `--allow-uncertified-agent` runs an adapter whose manifest tier is
   `uncertified`. Without the option, or with a certified adapter, the launch
   fails (`internal/adapters/uncertified_test.go`). The session records
@@ -103,6 +110,18 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Changed
 
+- The `apple-container` host guard now requires Apple Silicon macOS 27 or
+  later. It required macOS 26 before. `RequireMacOS26` is now `RequireMacOS27`
+  (`internal/applecontainer/guard.go`). The matrix row stays `preview-only`
+  and `blocked`.
+- The preview-only `apple-container` target now writes its audit records with
+  the `prev_digest` and `record_digest` chain of the launcher. So the A5
+  signer can seal its sessions, and `session verify` can check them. Workcell
+  signs a session only at launcher finalization, and this target has no launch
+  path, so its sessions stay unsigned. No operator command signs them. The
+  no-chain exception is removed: the signer and `session verify` now fail on a
+  log with no digest chain. Older `apple-container` sessions have no chain and do not
+  verify (`internal/host/auditseal/applecontainer_test.go`).
 - On Linux, Workcell stages host inputs, shadows, and token handoffs under
   `~/.cache/colima`, and keeps session snapshots there. Before, it used
   `~/Library/Caches/colima` on every host. macOS does not change.
@@ -157,6 +176,10 @@ The fixes are below.
   longer than 24 hours plus the one-minute backdate. It checks the period, not
   the host clock, so VM clock skew does not refuse a valid CA
   (`internal/injection/egress_ca.go`).
+- Workcell now creates `.git/workcell-sessions` with mode `0700`, and sets an
+  existing one with a group or other permission bit to `0700`. It refuses one
+  that the user does not own, one with an extended ACL, or a symlink, and never
+  changes a symlink target (#945).
 
 ### Added
 

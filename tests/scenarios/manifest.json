@@ -159,6 +159,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/apple-container-dry-run",
+      "description": "Apple container preview target selection prints a reviewed dry-run plan only on an Apple Silicon macOS 27 host, names the guard reason on other hosts, and keeps live launch blocked",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex"],
+      "persona": "developer",
+      "test_file": "shared/test-apple-container-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/aws-remote-vm-dry-run",
       "description": "AWS remote VM preview target selection keeps the brokered target metadata, support boundary, and certification-only live gate explicit while allowing deterministic dry-run planning",
       "lane": "secretless",

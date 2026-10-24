@@ -20,9 +20,9 @@ import (
 const lightweightVMBootCeiling = 15 * time.Second
 
 func TestProbeAppleContainer(t *testing.T) {
-	// Only run the live backend on a supported host (Apple Silicon + macOS 26); skip otherwise so
-	// the probe never shells out to `container` on macOS<26 / Intel.
-	if err := RequireMacOS26(); err != nil {
+	// Only run the live backend on a supported host (Apple Silicon + macOS 27); skip otherwise so
+	// the probe never shells out to `container` on macOS<27 / Intel.
+	if err := RequireMacOS27(); err != nil {
 		t.Skipf("unsupported host, skipping live apple-container probe: %v", err)
 	}
 	// Not parallel: booting VMs is resource-sensitive.
@@ -70,7 +70,7 @@ func TestProbeAppleContainerSubSecondBoot(t *testing.T) {
 	if os.Getenv("WORKCELL_APPLECONTAINER_STRICT_BOOT") == "" {
 		t.Skip("set WORKCELL_APPLECONTAINER_STRICT_BOOT=1 to assert sub-second boot on an idle host")
 	}
-	if err := RequireMacOS26(); err != nil {
+	if err := RequireMacOS27(); err != nil {
 		t.Skipf("unsupported host, skipping live apple-container probe: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -138,7 +138,7 @@ func TestAppleContainerStatusDetection(t *testing.T) {
 // guard error → FAIL.
 func TestProbeAppleContainerGatesOnGuard(t *testing.T) {
 	t.Parallel()
-	denied := errors.New("host not supported (Apple Silicon + macOS 26 required)")
+	denied := errors.New("host not supported (Apple Silicon + macOS 27 required)")
 	_, err := probeAppleContainer(context.Background(), func() error { return denied })
 	if !errors.Is(err, denied) {
 		t.Fatalf("probe did not fail closed on guard denial: %v", err)

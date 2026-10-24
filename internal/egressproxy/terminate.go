@@ -314,6 +314,13 @@ func (p *Proxy) serveTerminated(client net.Conn, host string, replay []byte) {
 		ReadHeaderTimeout: peekTimeout,
 		ErrorLog:          discardLog,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// TRACE echoes request headers and CONNECT tunnels past the
+			// rewrite, so neither may carry a swapped key.
+			if r.Method == http.MethodTrace || r.Method == http.MethodConnect {
+				p.deny(host, tlsPort, "method_refused")
+				http.Error(w, "method not allowed through the credential broker", http.StatusMethodNotAllowed)
+				return
+			}
 			for _, rule := range rules {
 				prefix, ok := placeholderPrefix(r.Header.Values(rule.Header), rule.Placeholder)
 				if !ok {

@@ -136,14 +136,15 @@ go_tool_bin() {
       rm -f "${tmp}"
       return 1
     fi
-    # Flush the binary data before the rename and the new entry after it, so a
-    # crash cannot leave a non-empty partial binary under the final name.
-    if ! sync; then
+    # Flush the binary data before the rename, so a crash cannot leave a
+    # non-empty partial binary under the final name. fsync only this file: a
+    # global sync waits for every file system on the host. A crash that loses
+    # the rename only costs a rebuild.
+    if ! dd if=/dev/null of="${tmp}" conv=notrunc,fsync 2>/dev/null; then
       rm -f "${tmp}"
       return 1
     fi
     mv -f "${tmp}" "${bin}" || return 1
-    sync || return 1
   fi
   if ! go_tool_bin_trusted "${bin}"; then
     echo "Refusing untrusted cached Go tool: ${bin}" >&2

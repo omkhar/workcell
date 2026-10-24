@@ -24,7 +24,7 @@ import (
 const (
 	sessionHomeRoot = "/state/agent-home"
 	runInjectedRoot = "/state/injected"
-	directMountRoot = "/opt/workcell/host-inputs"
+	directMountRoot = injectionpolicy.HostInputRoot
 )
 
 var (

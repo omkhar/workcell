@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,9 +16,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/workspacelimit"
 )
 
@@ -41,7 +44,15 @@ type WorkspaceManifest struct {
 	ExcludedPaths         []string         `json:"excluded_paths"`
 	Entries               []WorkspaceEntry `json:"entries"`
 	ArchiveSHA256         string           `json:"archive_sha256,omitempty"`
+	// GuestTransfer is GuestTransferUnconfirmed from the time a brokered
+	// target starts the broker until the guest acknowledges the archive.
+	GuestTransfer string `json:"guest_transfer,omitempty"`
 }
+
+// GuestTransferUnconfirmed marks a host manifest whose archive went to the
+// broker without a guest acknowledgment that the host accepted. The guest can
+// hold this workspace, an earlier one with the same ID, or none.
+const GuestTransferUnconfirmed = "unconfirmed"
 
 type BootstrapManifest struct {
 	Version              int    `json:"version"`
@@ -134,10 +145,24 @@ func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeReque
 	return materializeInStateRoot(f.Contract, req)
 }
 
-// materializeInStateRoot copies the source workspace into the host state root
-// and writes its manifest. The fake target stops here; a brokered target then
-// sends this reviewed host copy to the guest.
+// materializeInStateRoot stages the source workspace in the host state root
+// and writes its manifest. The fake target stops here.
 func materializeInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
+	result, err := stageInStateRoot(contract, req)
+	if err != nil {
+		return MaterializeResult{}, err
+	}
+	if err := writeJSON(result.ManifestPath, result.Manifest); err != nil {
+		return MaterializeResult{}, err
+	}
+	return result, nil
+}
+
+// stageInStateRoot copies the source workspace into the host state root and
+// returns its manifest unwritten. It replaces the host copy of an earlier run
+// with the same ID but leaves that run's manifest in place: a brokered target
+// keeps it as the record of the guest copy until it sends this copy.
+func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return MaterializeResult{}, fmt.Errorf("state root is required")
 	}
@@ -160,10 +185,15 @@ func materializeInStateRoot(contract Contract, req MaterializeRequest) (Material
 	materializationRoot := filepath.Join(targetRoot, "materializations", materializationID)
 	workspaceRoot := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.WorkspaceDir)
 	manifestPath := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.ManifestName)
-	if err := os.RemoveAll(materializationRoot); err != nil {
+	if err := removeAllNoFollow(workspaceRoot); err != nil {
 		return MaterializeResult{}, err
 	}
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+	if err := mkdirAllSynced(workspaceRoot); err != nil {
+		return MaterializeResult{}, err
+	}
+	// The copy keeps the source file modes, so the directory above it must
+	// keep other local accounts out. An earlier run can have left it open.
+	if err := restrictToOwner(materializationRoot); err != nil {
 		return MaterializeResult{}, err
 	}
 	entries, err := copyWorkspaceTree(req.SourceWorkspace, workspaceRoot, contract.WorkspaceMaterialization.ExcludedPaths)
@@ -181,9 +211,6 @@ func materializeInStateRoot(contract Contract, req MaterializeRequest) (Material
 		MaterializedWorkspace: workspaceRoot,
 		ExcludedPaths:         append([]string(nil), contract.WorkspaceMaterialization.ExcludedPaths...),
 		Entries:               entries,
-	}
-	if err := writeJSON(manifestPath, manifest); err != nil {
-		return MaterializeResult{}, err
 	}
 	return MaterializeResult{
 		TargetRoot:            targetRoot,
@@ -396,6 +423,11 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 	if err != nil {
 		return nil, err
 	}
+	source, err := os.OpenRoot(sourceRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
 	err = filepath.WalkDir(sourceRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -461,7 +493,7 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 			// The bounded read stops one byte past the remaining budget, so an
 			// oversized or growing file fails without a full read into memory.
 			allowed := min(limits.maxFileBytes, limits.maxBytes-totalBytes)
-			content, err := readWorkspaceFile(path, allowed)
+			content, err := readWorkspaceFile(source, rel, info, allowed)
 			if err != nil {
 				return err
 			}
@@ -521,12 +553,24 @@ func checkWorkspaceSymlink(resolvedRoot, path, rel, target string) error {
 	return nil
 }
 
-func readWorkspaceFile(path string, allowed int64) ([]byte, error) {
-	file, err := os.Open(path)
+// readWorkspaceFile reads rel under source only when it is still the regular
+// file that the walk classified as info. The root keeps the open inside the
+// workspace when a writer swaps a parent or the leaf for a symlink, O_NONBLOCK
+// keeps a swapped-in FIFO from blocking the open, and the SameFile check
+// refuses any other object at rel.
+func readWorkspaceFile(source *os.Root, rel string, info fs.FileInfo, allowed int64) ([]byte, error) {
+	file, err := source.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(opened, info) {
+		return nil, fmt.Errorf("workspace file %q changed during the copy", rel)
+	}
 	return io.ReadAll(io.LimitReader(file, allowed+1))
 }
 
@@ -577,6 +621,68 @@ func (s *workspaceDestinationState) reserve(path string) error {
 	return nil
 }
 
+// removeAllNoFollow removes path and everything below it. It refuses a
+// symlinked parent before it removes anything. A missing path is not an error.
+func removeAllNoFollow(path string) error {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return rootio.RemoveAllAtNoFollow(parent, filepath.Base(cleaned))
+}
+
+// mkdirAllSynced creates dir and its missing ancestors. From the deepest
+// directory that exists, it opens each component without following a symlink
+// and syncs each directory that gains an entry. A manifest that writeJSON
+// then publishes in dir cannot lose a created ancestor in a crash. Each
+// directory that it creates is owner-only.
+func mkdirAllSynced(dir string) error {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	existing := dir
+	for {
+		_, err := os.Lstat(existing)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) || existing == filepath.Dir(existing) {
+			return err
+		}
+		existing = filepath.Dir(existing)
+	}
+	relative, err := filepath.Rel(existing, dir)
+	if err != nil || relative == "." {
+		return err
+	}
+	// The parent of a name in existing is existing, opened without a follow.
+	anchor, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(existing, "entry"))
+	if err != nil {
+		return err
+	}
+	defer anchor.Close()
+	return rootio.MkdirAllSyncedAt(anchor, relative, 0o700)
+}
+
+// restrictToOwner gives dir mode 0700 through a descriptor that no symlink
+// can redirect. It fails for a directory that another account owns.
+func restrictToOwner(dir string) error {
+	handle, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(dir, "entry"))
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	if err := handle.Chmod(0o700); err != nil {
+		return err
+	}
+	return handle.Sync()
+}
+
 func writeJSON(path string, value any) error {
 	content, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -586,13 +692,17 @@ func writeJSON(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, content, 0o600); err != nil {
+	// A manifest is the host record of a transfer, so it is staged, synced and
+	// renamed into place with its parent synced: a crash or a failed write
+	// leaves the old manifest or the new one, never a truncated file. The
+	// staged file gets mode 0600 through its descriptor, so a rewrite never
+	// keeps an older file's permissions.
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
 		return err
 	}
-	// WriteFile's mode only applies at creation; a manifest rewritten over an
-	// existing file (for example a re-bootstrapped target) keeps its old
-	// permissions otherwise.
-	return os.Chmod(path, 0o600)
+	defer parent.Close()
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(cleaned), content, 0o600, ".manifest-")
 }
 
 func appendAuditLine(path, line string) error {

@@ -5,9 +5,11 @@
 Workcell completed the C1 evaluation of Apple `container`. Workcell approved
 the technical evaluation and deferred operator promotion.
 
-The host-support matrix marks the target `preview-only` and `blocked`. The
-Workcell CLI does not expose `apple-container` as a target. Colima remains the
-default target.
+The host-support matrix marks the target `preview-only` and `blocked`.
+`--target apple-container` prints a reviewed `--dry-run` plan and a `--doctor`
+boundary on Apple Silicon macOS 27 or later. A live launch exits with status 2
+(`fail_for_unsupported_launch_target` in `scripts/workcell`). Colima remains
+the default target.
 
 ## Test Environment
 
@@ -20,7 +22,7 @@ Repository tests exercise the local-VM contract and lifecycle. The tests use
 the deterministic `AppleContainerTarget` in
 [`internal/applecontainer`](../internal/applecontainer).
 
-The live probe calls `RequireMacOS26()` before it invokes the Apple CLI. The
+The live probe calls `RequireMacOS27()` before it invokes the Apple CLI. The
 probe measures start time and reads VM isolation properties.
 
 ## Observed Results
@@ -42,11 +44,14 @@ claim for Workcell or operator support.
 The evaluation used one Apple Silicon host. The idle-host measurement used
 three samples. This result does not create a general performance claim.
 
-The evaluation probe uses the macOS 26 guard. The Workcell launcher does not
-use this guard because it has no `apple-container` operator target.
+The evaluation ran under a macOS 26 guard. The guard in
+`internal/applecontainer/guard.go` now requires macOS 27. The launcher runs
+the same guard before an `apple-container` dry-run plan and in `--doctor`
+(`tests/scenarios/shared/test-apple-container-dry-run.sh`).
 
-The deterministic target writes lifecycle audit records without a signed
-digest chain. Session verification fails closed for this target.
+The deterministic target writes lifecycle audit records with the launcher
+digest chain, so the A5 signer can seal them
+(`internal/host/auditseal/applecontainer_test.go`).
 
 ## Workspace Materialization Safety
 
@@ -67,9 +72,9 @@ The manifest reader rejects noncanonical JSON and trailing data.
 The technical evaluation result was `GO`. Workcell deferred operator
 promotion. The target stays `preview-only` and `blocked`.
 
-A promotion change must add CLI selection and update the exact matrix row. It
-must add diagnostics, rollback, tests, and live certification. The change must
-also address audit signatures. It must satisfy the controls in
+A promotion change must add the live launch, connect the egress proxy, and
+update the exact matrix row. It must add rollback and live certification. It
+must satisfy the controls in
 [Invariants](invariants.md).
 
 Use
