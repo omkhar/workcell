@@ -161,6 +161,26 @@ assert_host_tree_contains_no_symlinks() {
   return 0
 }
 
+# A host file bound over a provider binary runs on the image's libraries, not
+# the host's. A host executable such as the runner's /bin/echo links against the
+# runner's glibc and breaks when the runner image moves (ubuntu-26.04 needs
+# GLIBC_2.43, newer than the image has), so only a script, which runs on the
+# image's own interpreter, may stand in for a provider binary.
+require_portable_host_stub() {
+  local stub_path="$1"
+  local stub_magic=""
+
+  if [[ ! -f "${stub_path}" || -L "${stub_path}" ]]; then
+    echo "container-smoke stub must be a regular host file: ${stub_path}" >&2
+    return 1
+  fi
+  stub_magic="$(head -c 2 "${stub_path}")"
+  if [[ "${stub_magic}" != '#!' ]]; then
+    echo "container-smoke stub must be a script that starts with #!, not a host binary: ${stub_path}" >&2
+    return 1
+  fi
+}
+
 align_path_for_mapped_runtime_user() {
   local target_path="$1"
   local file_mode="$2"
@@ -420,6 +440,23 @@ run_self_test_host_path_hardening() {
     echo "bundle clone destination rejection removed data outside the managed tree" >&2
     failed=1
   }
+
+  if [[ -x /bin/true ]]; then
+    if output="$(require_portable_host_stub /bin/true 2>&1)"; then
+      echo "Expected require_portable_host_stub to reject a host binary" >&2
+      failed=1
+    elif [[ "${output}" != *'not a host binary'* ]]; then
+      echo "Expected require_portable_host_stub rejection to name the host binary" >&2
+      printf '%s\n' "${output}" >&2
+      failed=1
+    fi
+  fi
+  printf '#!/bin/sh\nexit 0\n' >"${test_root}/portable-stub.sh"
+  if ! output="$(require_portable_host_stub "${test_root}/portable-stub.sh" 2>&1)"; then
+    echo "Expected require_portable_host_stub to accept a script stub" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
 
   rm -rf "${test_root}"
   [[ "${failed}" == "0" ]] || return 1
@@ -766,6 +803,7 @@ run_entrypoint_with_init_profile() {
 }
 
 run_entrypoint_with_autonomy_and_bind() {
+  require_portable_host_stub "$3"
   smoke_run_reset
   SMOKE_RUN_ENV_ARGS+=(-e WORKCELL_AGENT_AUTONOMY="$2")
   SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS=(-v "$(workcell_docker_host_path "$3"):$4:ro")
@@ -1551,6 +1589,7 @@ chmod 0555 "${COPILOT_PID1_STUB_STAGE}"
 # Publish the executable mode and file contents together for the VM mount: a
 # chmod in place can reach the container after the exec under load (#929).
 mv "${COPILOT_PID1_STUB_STAGE}" "${COPILOT_PID1_STUB}"
+require_portable_host_stub "${COPILOT_PID1_STUB}"
 populate_workspace_import_mounts
 populate_runtime_security_args ephemeral
 docker_cmd run --rm \
@@ -1606,6 +1645,7 @@ COPILOT_STUB
 chmod 0555 "${COPILOT_METADATA_STUB_STAGE}"
 # Publish the executable mode and file contents together for the VM mount.
 mv "${COPILOT_METADATA_STUB_STAGE}" "${COPILOT_METADATA_STUB}"
+require_portable_host_stub "${COPILOT_METADATA_STUB}"
 docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
 docker_cmd run -d \
   --name "${COPILOT_METADATA_CONTAINER}" \
@@ -1934,12 +1974,22 @@ SCRIPT
 
 WORKSPACE_IMPORT_ROOT="${ORIGINAL_WORKSPACE_IMPORT_ROOT}"
 
-if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
+if [[ "$(uname -s)" == "Linux" ]]; then
+  # Echo the argv the entrypoint hands the provider binary. A shell stub runs on
+  # the image's own /bin/sh; binding the runner's /bin/echo ties the check to the
+  # runner's glibc, and an ubuntu-26.04 runner needs GLIBC_2.43, newer than the
+  # image has.
+  cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-argv-echo.sh"
+#!/bin/sh
+printf '%s\n' "$*"
+EOF
+  align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp/workcell-argv-echo.sh" 0755 0755
+
   CODEX_YOLO_ARGS="$(
     run_entrypoint_with_autonomy_and_bind \
       codex \
       yolo \
-      /bin/echo \
+      "${ROOT_DIR}/tmp/workcell-argv-echo.sh" \
       /usr/local/libexec/workcell/real/codex \
       codex --version
   )"
@@ -1958,7 +2008,7 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
     run_entrypoint_with_autonomy_and_bind \
       codex \
       yolo \
-      /bin/echo \
+      "${ROOT_DIR}/tmp/workcell-argv-echo.sh" \
       /usr/local/libexec/workcell/real/codex \
       codex -- --profile breakglass
   )"
@@ -1997,7 +2047,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       codex \
       prompt \
-      /bin/echo \
+      "${ROOT_DIR}/tmp/workcell-argv-echo.sh" \
       /usr/local/libexec/workcell/real/codex \
       codex --version
   )"
@@ -2038,7 +2088,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       claude \
       yolo \
-      /bin/echo \
+      "${ROOT_DIR}/tmp/workcell-argv-echo.sh" \
       /usr/local/libexec/workcell/real/claude \
       claude auth status --text
   )"
@@ -2051,7 +2101,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       claude \
       prompt \
-      /bin/echo \
+      "${ROOT_DIR}/tmp/workcell-argv-echo.sh" \
       /usr/local/libexec/workcell/real/claude \
       claude --version
   )"
@@ -2064,7 +2114,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       gemini \
       yolo \
-      /bin/echo \
+      "${ROOT_DIR}/tmp/workcell-argv-echo.sh" \
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
@@ -2119,7 +2169,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       gemini \
       prompt \
-      /bin/echo \
+      "${ROOT_DIR}/tmp/workcell-argv-echo.sh" \
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
