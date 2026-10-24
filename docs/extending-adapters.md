@@ -215,5 +215,3 @@ Update these sources in the same change:
 - The adapter README.
 - Injection policy and bootstrap status when authentication changes.
 - Operator contract and requirements when the public workflow changes.
-
-Complete the Codex review loop before merge.
