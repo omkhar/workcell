@@ -1934,12 +1934,18 @@ SCRIPT
 
 WORKSPACE_IMPORT_ROOT="${ORIGINAL_WORKSPACE_IMPORT_ROOT}"
 
-if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
+if [[ "$(uname -s)" == "Linux" ]]; then
+  # The stub prints the argv that the entrypoint gives the provider binary. It
+  # is a shell script, so the container runs it with its own /bin/sh. A host
+  # binary such as /bin/echo needs the host C library, which the image can lack.
+  ARGV_ECHO_STUB="$(mktemp "${ROOT_DIR}/tmp/workcell-argv-echo.XXXXXX")"
+  printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$*"' >"${ARGV_ECHO_STUB}"
+  chmod 0755 "${ARGV_ECHO_STUB}"
   CODEX_YOLO_ARGS="$(
     run_entrypoint_with_autonomy_and_bind \
       codex \
       yolo \
-      /bin/echo \
+      "${ARGV_ECHO_STUB}" \
       /usr/local/libexec/workcell/real/codex \
       codex --version
   )"
@@ -1958,7 +1964,7 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
     run_entrypoint_with_autonomy_and_bind \
       codex \
       yolo \
-      /bin/echo \
+      "${ARGV_ECHO_STUB}" \
       /usr/local/libexec/workcell/real/codex \
       codex -- --profile breakglass
   )"
@@ -1997,7 +2003,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       codex \
       prompt \
-      /bin/echo \
+      "${ARGV_ECHO_STUB}" \
       /usr/local/libexec/workcell/real/codex \
       codex --version
   )"
@@ -2038,7 +2044,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       claude \
       yolo \
-      /bin/echo \
+      "${ARGV_ECHO_STUB}" \
       /usr/local/libexec/workcell/real/claude \
       claude auth status --text
   )"
@@ -2051,7 +2057,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       claude \
       prompt \
-      /bin/echo \
+      "${ARGV_ECHO_STUB}" \
       /usr/local/libexec/workcell/real/claude \
       claude --version
   )"
@@ -2064,7 +2070,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       gemini \
       yolo \
-      /bin/echo \
+      "${ARGV_ECHO_STUB}" \
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
@@ -2119,7 +2125,7 @@ EOF
     run_entrypoint_with_autonomy_and_bind \
       gemini \
       prompt \
-      /bin/echo \
+      "${ARGV_ECHO_STUB}" \
       /usr/local/libexec/workcell/real/node \
       gemini --version
   )"
