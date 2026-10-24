@@ -441,19 +441,31 @@ run_self_test_host_path_hardening() {
     failed=1
   }
 
-  if [[ -x /bin/true ]]; then
-    if output="$(require_portable_host_stub /bin/true 2>&1)"; then
-      echo "Expected require_portable_host_stub to reject a host binary" >&2
-      failed=1
-    elif [[ "${output}" != *'not a host binary'* ]]; then
-      echo "Expected require_portable_host_stub rejection to name the host binary" >&2
-      printf '%s\n' "${output}" >&2
-      failed=1
-    fi
+  # Build the fixtures here: the runner's own /bin/true can be a symlink to a
+  # multicall binary, so it would test the runner image, not the guard.
+  printf '\177ELF\002\001\001\000' >"${test_root}/host-binary-stub"
+  chmod 0755 "${test_root}/host-binary-stub"
+  if output="$(require_portable_host_stub "${test_root}/host-binary-stub" 2>&1)"; then
+    echo "Expected require_portable_host_stub to reject a host binary" >&2
+    failed=1
+  elif [[ "${output}" != *'not a host binary'* ]]; then
+    echo "Expected require_portable_host_stub rejection to name the host binary" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
   fi
   printf '#!/bin/sh\nexit 0\n' >"${test_root}/portable-stub.sh"
+  chmod 0755 "${test_root}/portable-stub.sh"
   if ! output="$(require_portable_host_stub "${test_root}/portable-stub.sh" 2>&1)"; then
     echo "Expected require_portable_host_stub to accept a script stub" >&2
+    printf '%s\n' "${output}" >&2
+    failed=1
+  fi
+  ln -s "${test_root}/portable-stub.sh" "${test_root}/portable-stub-link"
+  if output="$(require_portable_host_stub "${test_root}/portable-stub-link" 2>&1)"; then
+    echo "Expected require_portable_host_stub to reject a symlinked stub" >&2
+    failed=1
+  elif [[ "${output}" != *'regular host file'* ]]; then
+    echo "Expected require_portable_host_stub rejection to name the symlinked stub" >&2
     printf '%s\n' "${output}" >&2
     failed=1
   fi
