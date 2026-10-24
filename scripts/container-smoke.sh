@@ -460,6 +460,25 @@ run_self_test_host_path_hardening() {
     printf '%s\n' "${output}" >&2
     failed=1
   fi
+  # The bind helper runs inside $(...), so the refusal must stop it before any
+  # container starts; a stand-in smoke_run_reset marks that point.
+  if output="$(
+    smoke_run_reset() {
+      echo "bind-helper-reached-container-run"
+    }
+    smoke_run_container() {
+      :
+    }
+    run_entrypoint_with_autonomy_and_bind codex yolo "${test_root}/host-binary-stub" \
+      /usr/local/libexec/workcell/real/codex codex --version 2>&1
+  )"; then
+    echo "Expected run_entrypoint_with_autonomy_and_bind to fail on a host binary stub" >&2
+    failed=1
+  fi
+  if [[ "${output}" == *'bind-helper-reached-container-run'* ]]; then
+    echo "run_entrypoint_with_autonomy_and_bind went on to the container run after the stub guard refused" >&2
+    failed=1
+  fi
   ln -s "${test_root}/portable-stub.sh" "${test_root}/portable-stub-link"
   if output="$(require_portable_host_stub "${test_root}/portable-stub-link" 2>&1)"; then
     echo "Expected require_portable_host_stub to reject a symlinked stub" >&2
@@ -815,7 +834,9 @@ run_entrypoint_with_init_profile() {
 }
 
 run_entrypoint_with_autonomy_and_bind() {
-  require_portable_host_stub "$3"
+  # Callers run this in $(...), where errexit does not apply, so return
+  # explicitly when the guard refuses the stub.
+  require_portable_host_stub "$3" || return 1
   smoke_run_reset
   SMOKE_RUN_ENV_ARGS+=(-e WORKCELL_AGENT_AUTONOMY="$2")
   SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS=(-v "$(workcell_docker_host_path "$3"):$4:ro")
