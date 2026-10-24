@@ -271,8 +271,7 @@ Acceptance evidence:
 - Measure duplicate review triggers for unchanged heads.
 
 Keep these reports read-only and non-gating until a reviewed baseline exists.
-Treat unchanged-head and Codex-trigger counts as diagnostic data only. Never
-relax the required current-head Codex review loop.
+Treat unchanged-head and Codex-trigger counts as diagnostic data only.
 
 Do not rank people, agents, or models.
 

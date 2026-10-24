@@ -274,7 +274,6 @@ Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.
 If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.
 The `toolchain` PR always gets the `needs-human-review` label.
-Codex review of a bump PR is advisory.
 
 `publish` posts an audit comment on the tracking issue.
 The comment lists each PR, its commit, the merge decision, the cool-off policy, and the bumped versions.
