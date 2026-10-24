@@ -42,6 +42,8 @@ For a public workflow or contract change, also use
 - Before each publication, run `pr-parity` for the exact head and base.
 - Do not use `--allow-parity-override` for normal publication.
 - Treat missing or mismatched parity evidence as a blocker.
+- A Claude Code cloud session follows the cloud path in `AGENTS.md` instead
+  of `pr-parity`.
 - Use an override only when a repository runbook documents it.
 - Require explicit user authorization and acknowledgement for the override.
 - After you create a signed merge commit to resolve a base conflict, rerun
