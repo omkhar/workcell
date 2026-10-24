@@ -200,8 +200,10 @@ Inspect the target filesystem capacity when disk state affects the observation.
    affects repository-wide behavior, contracts, policies, or validation.
 6. Use focused validators for narrow documentation or configuration changes.
 7. Run Workcell-owned cleanup when validation creates residue.
-8. Run `./scripts/pre-merge.sh --profile pr-parity`.
-9. Publish a draft pull request with `./scripts/repo-publish-pr.sh`.
+8. Run `./scripts/pre-merge.sh --profile pr-parity`. A cloud session runs
+   `go test ./...` on the head merged onto `main` instead.
+9. Publish a draft pull request with `./scripts/repo-publish-pr.sh`. A cloud
+   session uses `gh pr create --draft` instead.
 10. Follow all repository-owned checks.
 11. Complete the Codex review loop.
 12. Fix each check or review failure.
