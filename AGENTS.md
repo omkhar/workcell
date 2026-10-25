@@ -83,7 +83,9 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 ## Mandatory rules
 
 - Sign every commit. Do not create or rewrite commits in this repository
-  without a verified signature from the maintainer identity.
+  without a verified signature from the maintainer identity. A commit from a
+  Claude Code cloud session is also valid when GitHub verifies its signature
+  for the committer `Claude <noreply@anthropic.com>`.
 - When reviewing PR commit signatures, verify the published commits in the
   base-to-head range. Do not require signatures on GitHub-generated merge
   commits or reviewer-created test merges because those transient objects are
@@ -242,6 +244,12 @@ argument again. Do not start another review round to settle them.
   repo-local wrapper `./scripts/repo-publish-pr.sh`. It requires fresh local
   `pr-parity` evidence before delegating to the lower-level
   `./scripts/workcell publish-pr` helper.
+- A Claude Code cloud session has no container runtime, so it cannot run
+  `pr-parity`. It may publish a `main`-based PR with `gh pr create --draft`.
+  Before merge, it runs `go test ./...` on the head merged onto `main`. Every
+  required GitHub Actions check must pass, and the other merge rules still
+  apply. Releases stay on the host, and so does a change that needs live
+  certification.
 - `main` is the only supported PR base by default. Non-`main` base PRs are
   lower-assurance exceptions: keep them draft, do not merge them, and do not
   expect the normal `main`-based repo-owned validation or merge gating for
