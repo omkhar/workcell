@@ -1,5 +1,5 @@
 # Option inventory for the PINNED runtime claude CLI. The stamp must equal the pin.
-# claude-version: 2.1.302
+# claude-version: 2.1.310
 # Regenerate: scripts/check-flag-inventory.sh --write. Classify: adapters/claude/adapter.toml [flags].
 --add-dir
 --agent

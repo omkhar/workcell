@@ -1,5 +1,5 @@
 # Option inventory for the PINNED runtime goose CLI. The stamp must equal the pin.
-# goose-version: 1.55.0
+# goose-version: 1.56.0
 # Regenerate: workcell-citools flag-inventory write with the help from the runtime-uncertified image. Classify: adapters/goose/adapter.toml [flags].
 --check
 --container
