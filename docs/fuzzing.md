@@ -58,7 +58,7 @@ go test ./internal/metadatautil/ -run '^$' \
 Install the pinned tools:
 
 ```sh
-rustup toolchain install nightly-2026-07-02
+rustup toolchain install nightly-2026-10-27
 cargo install cargo-fuzz --version 0.13.2 --locked
 ```
 
@@ -72,8 +72,8 @@ Do not commit that change.
 Then run these commands from `runtime/container/rust/`:
 
 ```sh
-cargo +nightly-2026-07-02 fuzz build
-cargo +nightly-2026-07-02 fuzz run path_classification -- \
+cargo +nightly-2026-10-27 fuzz build
+cargo +nightly-2026-10-27 fuzz run path_classification -- \
   -max_total_time=25
 ```
 
@@ -110,8 +110,8 @@ For a Rust crash:
 
 1. Download the `rust-fuzz-reproducers` artifact.
 2. Put the input in `fuzz/artifacts/TARGET/`.
-3. Replay it with `cargo +nightly-2026-07-02 fuzz run TARGET PATH`.
-4. Minimize it with `cargo +nightly-2026-07-02 fuzz tmin TARGET PATH`.
+3. Replay it with `cargo +nightly-2026-10-27 fuzz run TARGET PATH`.
+4. Minimize it with `cargo +nightly-2026-10-27 fuzz tmin TARGET PATH`.
 5. Fix the classifier or the harness.
 6. Put the minimized input in `fuzz/corpus/TARGET/`.
 7. Run the target again.

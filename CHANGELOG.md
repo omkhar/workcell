@@ -190,6 +190,10 @@ The fixes are below.
 
 ### Fixed
 
+- The scheduled Rust fuzz lane builds again. Its dated nightly
+  (`nightly-2026-07-02`, rustc 1.98) was older than the crate's
+  `rust-version` of 1.99, so cargo refused to build the fuzz targets. The lane
+  now uses `nightly-2026-10-27` (rustc 1.101).
 - The Claude policy now rejects the `upgrade` alias of `update`.
 - The provider policy now rejects more commands and flags of the refreshed
   CLIs. `internal/testkit/flag_inventory_policy_test.go` checks each one.
