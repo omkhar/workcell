@@ -55,10 +55,16 @@ go test ./internal/metadatautil/ -run '^$' \
 
 ### Rust targets
 
-Install the pinned tools:
+The Rust targets build with the crate's pinned stable toolchain from
+`runtime/container/rust/rust-toolchain.toml`. The upstream refresh moves that
+pin and `rust-version` together, so the fuzz build never falls behind the
+crate. `cargo-fuzz` passes `-Z` flags that only nightly accepts, so set
+`RUSTC_BOOTSTRAP=1` for fuzz commands only. Never set it for a release build.
+
+Install the pinned tools from `runtime/container/rust/`:
 
 ```sh
-rustup toolchain install nightly-2026-10-27
+rustup toolchain install
 cargo install cargo-fuzz --version 0.13.2 --locked
 ```
 
@@ -72,8 +78,8 @@ Do not commit that change.
 Then run these commands from `runtime/container/rust/`:
 
 ```sh
-cargo +nightly-2026-10-27 fuzz build
-cargo +nightly-2026-10-27 fuzz run path_classification -- \
+RUSTC_BOOTSTRAP=1 cargo fuzz build
+RUSTC_BOOTSTRAP=1 cargo fuzz run path_classification -- \
   -max_total_time=25
 ```
 
@@ -82,7 +88,7 @@ cargo +nightly-2026-10-27 fuzz run path_classification -- \
 `.github/workflows/fuzz.yml` runs each target each week and on demand.
 
 The Go job uses the pinned validator image. The Rust job installs the pinned
-nightly toolchain and `cargo-fuzz` version.
+stable toolchain and `cargo-fuzz` version.
 
 The workflow is not a pull request gate. The `go test ./...` pull-request lane
 replays the saved Go seed corpus. The scheduled or on-demand Rust job replays
@@ -110,8 +116,8 @@ For a Rust crash:
 
 1. Download the `rust-fuzz-reproducers` artifact.
 2. Put the input in `fuzz/artifacts/TARGET/`.
-3. Replay it with `cargo +nightly-2026-10-27 fuzz run TARGET PATH`.
-4. Minimize it with `cargo +nightly-2026-10-27 fuzz tmin TARGET PATH`.
+3. Replay it with `RUSTC_BOOTSTRAP=1 cargo fuzz run TARGET PATH`.
+4. Minimize it with `RUSTC_BOOTSTRAP=1 cargo fuzz tmin TARGET PATH`.
 5. Fix the classifier or the harness.
 6. Put the minimized input in `fuzz/corpus/TARGET/`.
 7. Run the target again.

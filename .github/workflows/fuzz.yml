@@ -23,12 +23,6 @@ defaults:
 env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
   WORKCELL_BUILDX_VERSION: v0.38.0
-  # Dated nightly so a new upstream nightly cannot silently change or break the
-  # only lane that builds the Rust fuzz targets. Bump deliberately (and refresh
-  # fuzz/Cargo.lock if needed); see docs/fuzzing.md. The nightly must be at
-  # least the `rust-version` in runtime/container/rust/Cargo.toml, which the
-  # toolchain refresh raises with the pinned stable toolchain.
-  WORKCELL_RUST_FUZZ_NIGHTLY: nightly-2026-10-27
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -89,13 +83,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # libFuzzer needs the nightly toolchain (sanitizer + coverage codegen).
-      # rustup ships preinstalled on ubuntu-latest, so no extra pinned action.
-      - name: Install nightly toolchain
-        working-directory: .
+      # Build the fuzz targets with the crate's own pinned stable toolchain
+      # (runtime/container/rust/rust-toolchain.toml), the one the upstream
+      # refresh moves together with `rust-version`, so this lane cannot fall
+      # behind the crate the way a separately dated nightly did. rustup ships
+      # preinstalled on ubuntu-latest, so no extra pinned action.
+      - name: Install the pinned Rust toolchain
         run: |
-          ./scripts/retry.sh rustup toolchain install "${WORKCELL_RUST_FUZZ_NIGHTLY}" --profile minimal --no-self-update
-          rustup run "${WORKCELL_RUST_FUZZ_NIGHTLY}" rustc --version
+          ../../../scripts/retry.sh rustup toolchain install --no-self-update
+          rustc --version
 
       # cargo-fuzz is installed from the crate root (outside runtime/container/
       # rust), so the exec-guard crate's vendored-sources config does not apply
@@ -134,15 +130,20 @@ jobs:
       # fuzz build has no --locked flag, and cargo then uses the committed lock
       # for the build below.)
       - name: Verify the fuzz lockfile is current
-        run: cargo "+${WORKCELL_RUST_FUZZ_NIGHTLY}" metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
+        run: cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
 
       # Each target runs on its checked-in seed corpus, mutated for the budget.
       # A crash makes `cargo fuzz run` exit non-zero and fails the lane.
+      # cargo-fuzz passes `-Z` flags (sanitizer and coverage codegen) that only
+      # nightly accepts; RUSTC_BOOTSTRAP=1 lets the pinned stable rustc take
+      # them for this non-shipping build only. Release builds never set it.
       - name: Run Rust fuzz targets
+        env:
+          RUSTC_BOOTSTRAP: "1"
         run: |
           for target in path_classification env_filtering git_config_parsing; do
             echo "[fuzz] ${target} (${WORKCELL_RUST_FUZZTIME}s)"
-            cargo "+${WORKCELL_RUST_FUZZ_NIGHTLY}" fuzz run "${target}" -- \
+            cargo fuzz run "${target}" -- \
               -max_total_time="${WORKCELL_RUST_FUZZTIME}"
           done
 
