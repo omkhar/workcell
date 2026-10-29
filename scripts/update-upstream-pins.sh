@@ -67,6 +67,7 @@ TOOL_PINS_POLICY_PATH="${ROOT_DIR}/policy/tool-pins.toml"
 
 mode="summary"
 toolchain_only=0
+debian_snapshot_pin=""
 
 cleanup() {
   [[ -z "${workcell_upstream_pins_token_file_created}" || "${workcell_upstream_pins_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_upstream_pins_token_file_created}"
@@ -75,7 +76,7 @@ trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
-Usage: scripts/update-upstream-pins.sh [--apply | --check] [--toolchain-only]
+Usage: scripts/update-upstream-pins.sh [--apply | --check] [--toolchain-only] [--debian-snapshot STAMP]
 
 Modes:
   --apply   Refresh pinned provider versions, Linux base images, toolchains, and
@@ -85,6 +86,10 @@ Modes:
 Options:
   --toolchain-only  Leave provider pins to scripts/update-provider-pins.sh.
                     Pending provider bumps do not count as changes.
+  --debian-snapshot STAMP
+                    Resolve only this Debian snapshot, for example
+                    20261028T000000Z. The stamp must still fall inside the
+                    lookback window. Use it to recreate an earlier candidate.
 
 Without a mode flag, the script prints a human-readable summary.
 EOF
@@ -103,6 +108,14 @@ while [[ $# -gt 0 ]]; do
     --toolchain-only)
       toolchain_only=1
       shift
+      ;;
+    --debian-snapshot)
+      debian_snapshot_pin="${2:-}"
+      if [[ ! "${debian_snapshot_pin}" =~ ^[0-9]{8}T000000Z$ ]]; then
+        echo "--debian-snapshot requires a YYYYMMDDT000000Z value." >&2
+        exit 2
+      fi
+      shift 2
       ;;
     -h | --help)
       usage
@@ -355,6 +368,10 @@ latest_debian_bootstrap_plan() {
   resolution_error_path="$(mktemp "${TMPDIR:-/tmp}/workcell-debian-bootstrap.XXXXXX")"
   for offset in $(seq 0 "${lookback_days}"); do
     stamp="$(date_stamp_for_offset "${offset}")"
+    # A pinned snapshot keeps the age bound but skips every other stamp.
+    if [[ -n "${debian_snapshot_pin:-}" && "${stamp}" != "${debian_snapshot_pin}" ]]; then
+      continue
+    fi
     if curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
       curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
       curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
@@ -366,6 +383,9 @@ latest_debian_bootstrap_plan() {
   done
   resolution_error="$(<"${resolution_error_path}")"
   rm -f "${resolution_error_path}"
+  if [[ -n "${debian_snapshot_pin:-}" ]]; then
+    echo "Unable to resolve pinned Debian snapshot ${debian_snapshot_pin} within ${lookback_days} days" >&2
+  fi
   echo "Unable to resolve a Debian snapshot within ${lookback_days} days for trixie/trixie-updates/trixie-security with HTTPS-fetched and byte-verified bootstrap packages" >&2
   if [[ -n "${resolution_error}" ]]; then
     printf '%s\n' "${resolution_error}" >&2
