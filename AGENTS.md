@@ -253,19 +253,12 @@ argument again. Do not start another review round to settle them.
   - unresolved review threads
   - asynchronous review comments from configured async reviewers listed in
     `policy/reviewer-identities.toml`
-- Every PR must complete the Codex bot loop: post a standalone `@codex review`,
-  sweep its issue comments, inline comments, formal reviews, and trigger
-  reactions; react to and fix or explicitly disposition its findings; resolve
-  its addressed threads; and require a clean marker for the current head before
-  merge. Repeat the loop after every push. When available, use the Codex PR
-  review loop skill for the exact response and SHA checks.
 - Exception: upstream-refresh bump PRs. The upstream-refresh workflow may
   publish these PRs from CI through the upstream-refresh GitHub App, with
-  commits signed by GitHub (web-flow) instead of the maintainer key. Codex
-  review is advisory for these PRs. A provider PR auto-merges after the 48 h
-  cool-off when scope-guard and all required checks pass. A toolchain PR needs
-  human review. All other PRs keep the
-  host-side publication, maintainer signing, and Codex loop rules.
+  commits signed by GitHub (web-flow) instead of the maintainer key. A
+  provider PR auto-merges after the 48 h cool-off when scope-guard and all
+  required checks pass. A toolchain PR needs human review. All other PRs keep
+  the host-side publication and maintainer signing rules.
 - Actionable comments must be addressed or explicitly dispositioned before
   merge.
 - Re-check comments and review threads after CI turns green and immediately
@@ -283,8 +276,7 @@ argument again. Do not start another review round to settle them.
   independent human approval.
 - A single-maintainer admin merge may bypass only a missing independent
   approval. It must never bypass required checks, commit-signature or base
-  policy, the current-head Codex clean marker, comment sweeps, or unresolved
-  threads.
+  policy, comment sweeps, or unresolved threads.
 
 ## Release workflow
 

@@ -95,9 +95,8 @@ After each finding:
 3. Review the new state as required by `AGENTS.md`.
 4. Continue until no actionable finding remains or a concrete blocker exists.
 
-For a pull request, complete the exact-head Codex bot loop after every push.
-Check all comments, inline reviews, unresolved threads, and configured
-asynchronous reviewers.
+For a pull request, after every push, check all comments, inline reviews,
+unresolved threads, and configured asynchronous reviewers.
 
 Do not accept a failed repository check. For a merge task, follow workflows for
 the merged `main` commit until they finish successfully.

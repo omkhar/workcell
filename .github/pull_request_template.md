@@ -18,11 +18,7 @@
 - [ ] I checked inline review comments
 - [ ] I checked unresolved review threads
 - [ ] I addressed or explicitly dispositioned actionable feedback
-- [ ] I posted the standalone `@codex review` request for the current head
-- [ ] I checked the trigger reaction and all Codex response channels
-- [ ] I reacted to each Codex finding
-- [ ] I resolved each addressed Codex review thread
-- [ ] Codex reviewed the exact current head and found no actionable issue
+- [ ] I resolved each addressed review thread
 - [ ] I will re-check comments after CI turns green before merging
 - [ ] I will do one final comment sweep immediately before merging
 

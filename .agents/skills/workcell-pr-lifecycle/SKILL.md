@@ -1,6 +1,6 @@
 ---
 name: workcell-pr-lifecycle
-description: Publish, review, follow, and merge Workcell pull requests through the approved host workflow. Use for signed commits, PR publication, checks, Codex bot review, comments, ready state, merge, or post-merge follow-up.
+description: Publish, review, follow, and merge Workcell pull requests through the approved host workflow. Use for signed commits, PR publication, checks, review comments, ready state, merge, or post-merge follow-up.
 ---
 
 # Workcell Pull Request Lifecycle
@@ -100,63 +100,6 @@ For each pull request, inspect:
 Fix or explicitly disposition each actionable finding. An asynchronous review
 is advisory. It is not an independent approval.
 
-## Codex Review
-
-Use `codex-pr-review-loop` for the Codex bot loop when it is available. It owns
-the trigger, response channels, bounded retry, clean-result interpretation,
-reactions, and thread resolution.
-
-If that skill is unavailable, use this fallback:
-
-1. Record the current UTC time.
-2. Post `@codex review` as a standalone pull request comment.
-3. Filter bot responses by `chatgpt-codex-connector[bot]`.
-4. Inspect later issue comments, inline comments, formal reviews, and trigger
-   reactions.
-5. Inspect all earlier unresolved Codex findings on the pull request.
-6. Classify each finding against the standard dispositions in AGENTS.md
-   `Code Review Rules` before you react. Apply the recorded disposition in
-   one round.
-7. Resolve the cited commit identifier before you act on a finding that
-   cites one. Probe an abbreviated hash as written. A 422 from the commits
-   API proves that the finding has no subject. A finding that cites no
-   object uses its own branch. So does a finding that cites a validly
-   signed object. Both branches are in AGENTS.md `Code Review Rules`.
-8. React with 👍 to each correct finding.
-9. React with 👎 only when direct evidence proves the finding false.
-10. Give a short written reason for each rebuttal or uncertain finding.
-11. Fix or rebut each actionable finding.
-12. Revalidate and push each signed fix before another review round.
-13. Repeat this fallback after every push.
-14. If no response appears in 15 minutes, post one more standalone trigger.
-15. Treat a second silence, usage limit, or connector failure as a blocker.
-16. Require a fresh clean marker for the current head before ready or merge.
-17. Do not spend a review round on a finding that has a recorded
-    disposition. This rule holds for a repeat of that finding. A repeat
-    carries a new object or a "fresh evidence" claim, and that framing does
-    not change the disposition. Codex review capacity is a limited resource.
-    The loop reached its usage limit 41 times during the 2026-09 wave. Three
-    pull requests each burned six or more rounds on one repeated finding.
-18. Resolve each fixed or rebutted thread with GitHub `resolveReviewThread`.
-
-After each push, stabilize the intended head and required local evidence. Then
-run the loop. Use only the selected loop's bounded retry. Do not add manual
-retry triggers after a quota or connector response.
-
-Before ready and merge, inspect the required review surfaces again. Confirm
-that the clean result applies to the current head. Do not treat a `COMMENTED`
-review state as a clean result.
-
-When ready transitions trigger automatic Codex review, record the transition
-time and treat it as the review trigger. Wait for that review's current-head
-result before merge. Apply the existing finding-resolution and clean-result
-rules. Use the selected loop's existing wait and retry limits. Do not add a
-manual trigger unless its retry rule permits one.
-
-When a reviewed commit identifier is available, resolve it in GitHub. Require
-the resolved commit to equal the current head. Report a blocker when required
-review evidence is unavailable or mismatched.
-
 ## Parallel Work
 
 When one operator manages a PR queue, finish the current PR before you publish
@@ -201,18 +144,17 @@ Inspect the target filesystem capacity when disk state affects the observation.
 8. Run `./scripts/pre-merge.sh --profile pr-parity`.
 9. Publish a draft pull request with `./scripts/repo-publish-pr.sh`.
 10. Follow all repository-owned checks.
-11. Complete the Codex review loop.
+11. Inspect the required review surfaces.
 12. Fix each check or review failure.
 13. Repeat each gate that the failure affects.
 14. Mark the pull request ready only when required checks succeed and the
    review surfaces have no actionable finding.
-15. Wait for the ready-state base-policy run.
-16. Complete any automatic ready-triggered Codex review, then recheck the
-    required review surfaces.
-17. Immediately before merge, recheck the required review surfaces.
-18. Merge the pull request.
-19. Follow all workflows for the merged `main` commit.
-20. For release, cleanup, or a task that merges all pull requests, run the
+15. Wait for the ready-state base-policy run, then recheck the required review
+    surfaces.
+16. Immediately before merge, recheck the required review surfaces.
+17. Merge the pull request.
+18. Follow all workflows for the merged `main` commit.
+19. For release, cleanup, or a task that merges all pull requests, run the
    repository readiness check.
 
 Use required-check polling for the merge gate:
@@ -239,7 +181,6 @@ An admin merge can bypass only a missing independent approval. It cannot bypass:
 - A failed or pending required check.
 - The commit-signature gate.
 - Base policy.
-- The resolved current-head Codex reviewed OID.
 - An actionable comment.
 - An unresolved review thread.
 
@@ -269,7 +210,6 @@ Do not report completion while any of these conditions is true:
 - The published pull request omits an intended change.
 - A repository-owned check reports a failure or lacks review.
 - A review surface has an actionable finding.
-- The Codex review loop is incomplete.
 - A merged-`main` workflow for the current merge reports a failure.
 - For release, cleanup, or a task that merges all pull requests, the readiness
   check reports a blocker.

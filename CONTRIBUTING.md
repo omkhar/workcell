@@ -172,13 +172,12 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
      --commit-message "^D Describe the change (validation passes; user-visible documentation)"
    ```
 
-8. Post the standalone PR comment `@codex review`.
+8. Check comments, inline reviews, and review threads.
 9. Fix or disposition each finding.
 10. Resolve each review thread.
-11. Repeat the Codex review after each push.
-12. Require a clean Codex marker for the current head.
-13. Mark the PR ready only after all required checks and reviews pass.
-14. Check comments and review threads again immediately before merge.
+11. Repeat the comment sweep after each push.
+12. Mark the PR ready only after all required checks and reviews pass.
+13. Check comments and review threads again immediately before merge.
 
 The pre-commit hook reports pending pin bumps and does not block the commit.
 CI pin hygiene and the release preflight fail on stale pins. The
