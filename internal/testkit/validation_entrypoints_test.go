@@ -1705,6 +1705,64 @@ func TestPublishUpstreamRefreshPRRejectsUnknownCandidate(t *testing.T) {
 	}
 }
 
+func TestPublishUpstreamRefreshPRReadsCandidateDebianSnapshot(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "publish-upstream-refresh-pr.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := extractShellFunction(t, string(content), "read_candidate_debian_snapshot")
+	root := t.TempDir()
+	manifest := filepath.Join(root, "debian-bootstrap.env")
+	if err := os.WriteFile(manifest, []byte("DEBIAN_SNAPSHOT=20261019T000000Z\nDEBIAN_OPENSSL_AMD64_PATH=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const manifestHunk = `diff --git a/runtime/container/debian-bootstrap.env b/runtime/container/debian-bootstrap.env
+index 1111111..2222222 100644
+--- a/runtime/container/debian-bootstrap.env
++++ b/runtime/container/debian-bootstrap.env
+@@ -1 +1 @@
+-DEBIAN_SNAPSHOT=20261019T000000Z
++DEBIAN_SNAPSHOT=20261028T000000Z
+`
+	// A decoy in another file must not count as the manifest pin.
+	const decoyHunk = `diff --git a/docs/notes.md b/docs/notes.md
+index 3333333..4444444 100644
+--- a/docs/notes.md
++++ b/docs/notes.md
+@@ -1 +1 @@
+-old
++DEBIAN_SNAPSHOT=20991231T000000Z
+`
+	for _, testCase := range []struct {
+		name     string
+		patch    string
+		wantCode int
+		want     string
+	}{
+		{name: "changed manifest", patch: decoyHunk + manifestHunk, want: "20261028T000000Z\n"},
+		{name: "unchanged manifest", patch: decoyHunk, want: "20261019T000000Z\n"},
+		{name: "two pins", patch: manifestHunk + "+DEBIAN_SNAPSHOT=20261029T000000Z\n", wantCode: 2, want: "Unable to read exactly one Debian snapshot from the candidate.\n"},
+		{name: "malformed pin", patch: strings.Replace(manifestHunk, "+DEBIAN_SNAPSHOT=20261028T000000Z", "+DEBIAN_SNAPSHOT=latest", 1), wantCode: 2, want: "Unable to read exactly one Debian snapshot from the candidate.\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			patch := filepath.Join(t.TempDir(), "patch")
+			if err := os.WriteFile(patch, []byte(testCase.patch), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			code, output := runBashProbe(t, "set -euo pipefail\n"+function+"\nread_candidate_debian_snapshot \"${WORKCELL_PATCH}\" \"${WORKCELL_MANIFEST}\"\n", map[string]string{
+				"WORKCELL_PATCH":    patch,
+				"WORKCELL_MANIFEST": manifest,
+			})
+			if code != testCase.wantCode || output != testCase.want {
+				t.Fatalf("code=%d output=%q, want code=%d output=%q", code, output, testCase.wantCode, testCase.want)
+			}
+		})
+	}
+}
+
 func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -1722,6 +1780,8 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 		`if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then`,
 		`gh run download "${RUN_ID}" --repo "${REPO}" --name upstream-refresh-candidate`,
 		`Candidate patch digest mismatch`,
+		`refresh_command=("${worktree_root}/scripts/update-provider-pins.sh" --now "${run_started_at}")`,
+		`refresh_command=("${worktree_root}/scripts/update-upstream-pins.sh" --toolchain-only --debian-snapshot "${candidate_debian_snapshot}")`,
 		`Candidate tree OID mismatch`,
 		`requires a clean worktree`,
 		`Commit, stash, or discard local changes first`,
@@ -1880,6 +1940,62 @@ latest_debian_bootstrap_plan
 	}
 	if !strings.Contains(output, `"snapshot":"20260525T000000Z"`) {
 		t.Fatalf("latest_debian_bootstrap_plan did not fall back: %q", output)
+	}
+}
+
+func TestLatestDebianSnapshotHonorsPinnedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "update-upstream-pins.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	function := extractShellFunction(t, string(content), "latest_debian_bootstrap_plan")
+	probe := func(pin string, maxAgeDays int) (int, string, string) {
+		resolutionLog := filepath.Join(t.TempDir(), "resolution.log")
+		code, output := runBashProbe(t, `set -euo pipefail
+`+function+`
+
+date_stamp_for_offset() {
+  printf '202605%02dT000000Z\n' "$((26 - $1))"
+}
+curl() { return 0; }
+resolve_debian_bootstrap_pins() {
+  printf '%s\n' "$1" >>"${WORKCELL_RESOLUTION_LOG}"
+  printf '{"snapshot":"%s"}\n' "$1"
+}
+
+debian_snapshot_pin=`+pin+`
+DEBIAN_SNAPSHOT_LOOKBACK_DAYS=60
+MAX_DEBIAN_SNAPSHOT_AGE_DAYS=`+strconv.Itoa(maxAgeDays)+`
+latest_debian_bootstrap_plan
+`, map[string]string{"WORKCELL_RESOLUTION_LOG": resolutionLog})
+		logContent, err := os.ReadFile(resolutionLog)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		return code, output, string(logContent)
+	}
+
+	// The newest stamp resolves, so only the pin explains the older result.
+	code, output, log := probe("20260524T000000Z", 60)
+	if code != 0 || output != "{\"snapshot\":\"20260524T000000Z\"}\n" {
+		t.Fatalf("pinned snapshot code=%d output=%q", code, output)
+	}
+	if log != "20260524T000000Z\n" {
+		t.Fatalf("pinned snapshot resolved %q, want only the pinned stamp", log)
+	}
+
+	// A pin older than the maximum age fails closed.
+	code, output, log = probe("20260524T000000Z", 1)
+	const wantStale = "Unable to resolve pinned Debian snapshot 20260524T000000Z within 1 days\n" +
+		"Unable to resolve a Debian snapshot within 1 days for trixie/trixie-updates/trixie-security with HTTPS-fetched and byte-verified bootstrap packages\n"
+	if code != 1 || output != wantStale {
+		t.Fatalf("stale pinned snapshot code=%d output=%q, want exit 1", code, output)
+	}
+	if log != "" {
+		t.Fatalf("stale pinned snapshot resolved %q, want no resolution", log)
 	}
 }
 

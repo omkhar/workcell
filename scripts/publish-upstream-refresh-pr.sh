@@ -72,6 +72,27 @@ compute_patch_sha256() {
   shasum -a 256 "${patch_path}" | awk '{print $1}'
 }
 
+# Print the Debian snapshot that the candidate pins. A candidate that leaves
+# the bootstrap manifest unchanged pins the snapshot of the base tree.
+read_candidate_debian_snapshot() {
+  local patch="$1"
+  local manifest="$2"
+  local stamp=""
+
+  stamp="$(awk '
+    /^diff --git / { in_manifest = ($0 == "diff --git a/runtime/container/debian-bootstrap.env b/runtime/container/debian-bootstrap.env"); next }
+    in_manifest && /^\+DEBIAN_SNAPSHOT=/ { print substr($0, 18) }
+  ' "${patch}")"
+  if [[ -z "${stamp}" ]]; then
+    stamp="$(awk '/^DEBIAN_SNAPSHOT=/ { print substr($0, 17) }' "${manifest}")"
+  fi
+  if [[ ! "${stamp}" =~ ^[0-9]{8}T000000Z$ ]]; then
+    echo "Unable to read exactly one Debian snapshot from the candidate." >&2
+    return 2
+  fi
+  printf '%s\n' "${stamp}"
+}
+
 make_repo_local_temp_dir() {
   local purpose="$1"
   local git_dir=""
@@ -173,6 +194,7 @@ run_head_branch="$(jq -r '.head_branch // ""' <<<"${run_json}")"
 run_head_sha="$(jq -r '.head_sha // ""' <<<"${run_json}")"
 run_html_url="$(jq -r '.html_url // ""' <<<"${run_json}")"
 run_path="$(jq -r '.path // ""' <<<"${run_json}")"
+run_started_at="$(jq -r '.run_started_at // ""' <<<"${run_json}")"
 if [[ "${run_conclusion}" != "success" ]]; then
   echo "Workflow run ${RUN_ID} is not successful: ${run_conclusion:-unknown}." >&2
   exit 2
@@ -183,6 +205,10 @@ if [[ "${run_head_branch}" != "${BASE_BRANCH}" ]]; then
 fi
 if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then
   echo "Workflow run ${RUN_ID} does not come from the reviewed upstream-refresh workflow on ${BASE_BRANCH}." >&2
+  exit 2
+fi
+if [[ ! "${run_started_at}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+  echo "Workflow run ${RUN_ID} has no valid start time: ${run_started_at:-unknown}." >&2
   exit 2
 fi
 
@@ -278,11 +304,14 @@ git -C "${worktree_root}" remote set-url origin "${origin_url}"
 git -C "${worktree_root}" fetch --no-tags origin "${BASE_BRANCH}" >/dev/null
 git -C "${worktree_root}" checkout --detach "${base_sha}" >/dev/null
 
-# Recreate the candidate with the updater that owns its pins.
+# Recreate the candidate with the updater that owns its pins. Pin the
+# date-derived inputs to the CI run, so a later publication on another UTC day
+# or past another cool-off boundary still recreates the same patch.
 if [[ "${CANDIDATE_KIND}" == provider ]]; then
-  refresh_command=("${worktree_root}/scripts/update-provider-pins.sh")
+  refresh_command=("${worktree_root}/scripts/update-provider-pins.sh" --now "${run_started_at}")
 else
-  refresh_command=("${worktree_root}/scripts/update-upstream-pins.sh" --toolchain-only)
+  candidate_debian_snapshot="$(read_candidate_debian_snapshot "${patch_path}" "${worktree_root}/runtime/container/debian-bootstrap.env")" || exit 2
+  refresh_command=("${worktree_root}/scripts/update-upstream-pins.sh" --toolchain-only --debian-snapshot "${candidate_debian_snapshot}")
 fi
 "${refresh_command[@]}" --apply
 if git -C "${worktree_root}" diff --quiet --exit-code; then
