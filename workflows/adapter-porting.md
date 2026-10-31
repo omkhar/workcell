@@ -18,7 +18,7 @@ provider control plane. Do not treat it as the security boundary.
 7. Run live certification for each new support claim.
 8. Update the provider matrix and operator documents.
 9. If host or target support changes, update the host-support matrix.
-10. Complete adversarial and Codex review loops.
+10. Complete the adversarial review loop.
 
 The seed path can use these ordered sources:
 

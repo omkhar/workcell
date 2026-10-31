@@ -521,7 +521,7 @@
       ],
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "scheduled heavy Rust cargo-fuzz sweep of the exec-guard classifiers; needs the nightly libFuzzer toolchain and a time-bounded mutation budget, so it runs on the weekly GitHub cadence rather than the PR path"
+      "github_only_reason": "scheduled heavy Rust cargo-fuzz sweep of the exec-guard classifiers; needs libFuzzer sanitizer builds and a time-bounded mutation budget, so it runs on the weekly GitHub cadence rather than the PR path"
     },
     {
       "id": "hosted-controls.yml/verify-hosted-controls",
