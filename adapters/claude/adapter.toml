@@ -77,4 +77,5 @@ deny = [
   "--plugin-dir", "--plugin-url",
   "--setting-sources", "--settings", "--system-prompt", "--system-prompt-file",
   "--cloud", "--environment", "--remote",
+  "--discard-unpushed", "--force-remove-worktree", "--trust-workspace",
 ]
