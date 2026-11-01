@@ -419,7 +419,10 @@ reject_unsafe_claude_args() {
         workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
       --cloud | --cloud=* | --remote | --remote=* | --environment | --environment=*) workcell_die "Workcell blocked Claude cloud execution: ${arg%%=*}" ;; # cloud sessions leave the sandbox
-      --discard-unpushed | --discard-unpushed=* | --force-remove-worktree | --force-remove-worktree=* | --trust-workspace | --trust-workspace=*) workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}" ;; # deletes unpushed work or skips the workspace trust prompt
+      # These delete unpushed work or skip the workspace trust prompt.
+      --discard-unpushed | --discard-unpushed=* | --force-remove-worktree | --force-remove-worktree=* | --trust-workspace | --trust-workspace=*)
+        workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}"
+        ;;
       --dangerously-skip-permissions=* | --allow-dangerously-skip-permissions=* | --add-dir=* | --allowedTools=* | --allowed-tools=* | --mcp-config=* | --plugin-dir=* | --plugin-url=* | --settings=* | --setting-sources=* | --system-prompt=* | --system-prompt-file=* | --append-system-prompt=* | --append-system-prompt-file=* | --append-subagent-system-prompt=* | --append-subagent-system-prompt-file=* | --agents=* | --permission-prompt-tool=*)
         workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}"
         ;;
