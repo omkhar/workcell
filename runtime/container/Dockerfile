@@ -1,13 +1,13 @@
 # Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315
+ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
 
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.99.1-slim-trixie@sha256:4df2ae8cfdfebdfc13a65da7f253b73d68983dc0339f2719bc17a279c913b13d
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.99.1-slim-trixie@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -190,9 +190,9 @@ RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstra
 
 FROM --platform=$BUILDPLATFORM ${NODE_BASE_IMAGE} AS apt-broker-builder
 
-ARG GO_VERSION=1.27.2
-ARG GO_LINUX_X86_64_SHA256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5
-ARG GO_LINUX_ARM64_SHA256=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8
+ARG GO_VERSION=1.27.3
+ARG GO_LINUX_X86_64_SHA256=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+ARG GO_LINUX_ARM64_SHA256=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49
 ARG BUILDARCH
 ARG TARGETARCH
 ARG SOURCE_DATE_EPOCH
