@@ -3374,7 +3374,7 @@ func TestCheckCopilotUnsafeFlagsRealRepo(t *testing.T) {
 // copilotReleaseVerifyHappyVerifier is a minimal but structurally faithful
 // scripts/verify-upstream-copilot-release.sh: it contains all six help-mode
 // needles (including the escaped whole-flag `grep -Eq` matcher, matched here as
-// a fixed string) and all eleven managed flags.
+// a fixed string) and all nine managed flags.
 const copilotReleaseVerifyHappyVerifier = `#!/usr/bin/env bash
 COPILOT_HELP_MODE="${WORKCELL_COPILOT_RELEASE_HELP_MODE:-auto}"
 COPILOT_NATIVE_HELP_DONE=0
@@ -3397,8 +3397,6 @@ MANAGED_FLAGS=(
   --no-ask-user
   --no-auto-update
   --no-custom-instructions
-  --no-remote
-  --no-remote-export
   --secret-env-vars
 )
 `
@@ -3577,11 +3575,11 @@ func TestCheckCopilotReleaseVerify(t *testing.T) {
 }
 
 // TestCheckCopilotReleaseVerifyCount asserts the check list contains exactly
-// twenty-four invariants, guarding against an accidentally truncated or
+// twenty-two invariants, guarding against an accidentally truncated or
 // duplicated migration of the shell block.
 func TestCheckCopilotReleaseVerifyCount(t *testing.T) {
 	got := len(copilotReleaseVerifyChecks())
-	const want = 24
+	const want = 22
 	if got != want {
 		t.Fatalf("copilotReleaseVerifyChecks() has %d checks, want %d", got, want)
 	}
@@ -3589,7 +3587,7 @@ func TestCheckCopilotReleaseVerifyCount(t *testing.T) {
 
 // TestCheckCopilotReleaseVerifyRealRepo asserts that the real
 // verify-upstream-copilot-release.sh, update-provider-pins.sh, job-validate.sh,
-// and release.yml in this repository satisfy all twenty-four Copilot
+// and release.yml in this repository satisfy all twenty-two Copilot
 // upstream-release verifier invariants.  This is the key guard against a
 // mis-transcribed needle or a wrong target file: if any Go pattern is not a
 // byte-exact substring of the actual file (or the wrong file), this test fails

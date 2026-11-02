@@ -276,8 +276,6 @@ verify_copilot_help_flags_file() {
     --no-ask-user \
     --no-auto-update \
     --no-custom-instructions \
-    --no-remote \
-    --no-remote-export \
     --secret-env-vars; do
     if ! grep -Eq -- "(^|[^[:alnum:]_-])${flag}([^[:alnum:]_-]|$)" "${help_path}"; then
       echo "GitHub Copilot CLI v${COPILOT_VERSION} ${label} help is missing managed safety flag ${flag}" >&2

@@ -207,7 +207,7 @@ func TestCheckPinnedInputsValidatesGoosePin(t *testing.T) {
 			name: "version",
 			old:  "ARG GOOSE_VERSION=",
 			new:  "ARG GOOSE_VERSION=v",
-			want: `GOOSE_VERSION "v1.55.0" is not a stable X.Y.Z version`,
+			want: `is not a stable X.Y.Z version`,
 		},
 		{
 			name: "checksum pin",

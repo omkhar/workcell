@@ -448,8 +448,6 @@ esac
 
 declare -a MANAGED_COPILOT_SAFETY_ARGS=(
   "--no-auto-update"
-  "--no-remote"
-  "--no-remote-export"
   "--disable-builtin-mcps"
   "--no-custom-instructions"
   "--disallow-temp-dir"

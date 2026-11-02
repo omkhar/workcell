@@ -1,5 +1,5 @@
 # Option inventory for the PINNED runtime copilot CLI. The stamp must equal the pin.
-# copilot-version: 1.0.98
+# copilot-version: 1.0.103
 # Regenerate: scripts/check-flag-inventory.sh --write. Classify: adapters/copilot/adapter.toml [flags].
 --acp
 --add-dir
@@ -27,6 +27,7 @@
 --deny-tool
 --deny-url
 --disable-builtin-mcps
+--disable-client-telemetry
 --disable-mcp-server
 --disallow-temp-dir
 --dynamic-retrieval
@@ -38,6 +39,8 @@
 --extension-sdk-path
 --fleet
 --help
+--host-compute-id
+--host-environment
 --interactive
 --log-dir
 --log-level
@@ -56,16 +59,12 @@
 --no-eager-powershell-resolution
 --no-experimental
 --no-mouse
---no-remote
---no-remote-export
 --output-format
 --plain-diff
 --plan
 --plugin-dir
 --prompt
 --reasoning-effort
---remote
---remote-export
 --resume
 --screen-reader
 --secret-env-vars
@@ -74,6 +73,8 @@
 --share-gist
 --silent
 --stream
+--sync-session
+--trust-folder
 --usage-output-file
 --version
 --yolo

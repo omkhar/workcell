@@ -2550,7 +2550,7 @@ func CheckCopilotUnsafeFlags(rootDir string) error {
 	return evaluate(rootDir, copilotUnsafeFlagsChecks())
 }
 
-// copilotReleaseHelpFlags lists the eleven managed Copilot flags the shell's
+// copilotReleaseHelpFlags lists the nine managed Copilot flags the shell's
 // `for copilot_release_help_flag in ...` loop asserted the upstream-release
 // verifier requires.  Order matches the shell verbatim so the generated checks
 // reproduce the shell's first-failure stderr exactly.  Every flag is a fixed
@@ -2564,12 +2564,10 @@ var copilotReleaseHelpFlags = []string{
 	"--no-ask-user",
 	"--no-auto-update",
 	"--no-custom-instructions",
-	"--no-remote",
-	"--no-remote-export",
 	"--secret-env-vars",
 }
 
-// copilotReleaseVerifyChecks returns the twenty-four Copilot upstream-release
+// copilotReleaseVerifyChecks returns the twenty-two Copilot upstream-release
 // verifier invariants in the same order as the former inline block in
 // scripts/verify-invariants.sh (the block between the copilot-unsafe-flags
 // `go_verify_citools` call and the release-workflow native-help-count guard),
@@ -2719,7 +2717,7 @@ func copilotReleaseVerifyChecks() []check {
 	return cs
 }
 
-// CheckCopilotReleaseVerify runs the twenty-four Copilot upstream-release
+// CheckCopilotReleaseVerify runs the twenty-two Copilot upstream-release
 // verifier invariants against the repo rooted at rootDir, in the shell's
 // original order.  It returns nil when every invariant holds (the shell's exit
 // 0), or an error whose message equals the shell's stderr for the first
