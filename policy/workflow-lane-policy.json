@@ -308,6 +308,11 @@
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "publication needs the upstream-refresh environment secrets, the GitHub App token, and GitHub-side commit signing"
+    },
+    "upstream-refresh.yml/report": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the report job reads the refresh job outputs of the GitHub-hosted run"
     }
   }
 }

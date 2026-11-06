@@ -916,6 +916,41 @@ const upstreamRefreshPresenceGate = "steps.secrets.outputs.present == 'true'"
 
 func commandRuns(run, command string) []Invocation { return ShellInvocations(run, command) }
 
+// upstreamRefreshReportIf runs the report job after a failed refresh too, so a
+// failed kind turns the run red while the other kind still publishes.
+const upstreamRefreshReportIf = "always() && github.ref == 'refs/heads/main'"
+
+const upstreamRefreshReportRun = `if [[ -n "${REFRESH_FAILED}" ]]; then
+  echo "::error::Upstream refresh failed for: ${REFRESH_FAILED}. The other kind still publishes."
+  exit 1
+fi`
+
+var upstreamRefreshReportEnv = map[string]string{"REFRESH_FAILED": "${{ needs.refresh.outputs.failed }}"}
+
+// validateUpstreamRefreshReportJob keeps the report job without authority. It
+// holds no token, needs only refresh, and runs only the reviewed step, so it
+// can fail the run but cannot write, publish, or delay a publication.
+func validateUpstreamRefreshReportJob(path string, report workflowJob) error {
+	if len(report.Permissions) != 0 {
+		return fmt.Errorf("%s report job must grant no permissions", path)
+	}
+	if !needsExactly(report.Needs, []string{"refresh"}) {
+		return fmt.Errorf("%s report job must need exactly refresh", path)
+	}
+	if report.If.Kind != yaml.ScalarNode || strings.TrimSpace(report.If.Value) != upstreamRefreshReportIf {
+		return fmt.Errorf("%s report job must run only when %s", path, upstreamRefreshReportIf)
+	}
+	if len(report.Outputs)+len(report.Env) != 0 || report.Defaults.Kind != 0 || len(report.Steps) != 1 {
+		return fmt.Errorf("%s report job must be the reviewed report step alone, with no job env, defaults, or outputs", path)
+	}
+	step := report.Steps[0]
+	if step.Uses != "" || len(step.With) != 0 || step.If.Kind != 0 || step.Shell != "" || step.WorkDir != "" || step.ContinueOnError != nil ||
+		!maps.Equal(step.Env, upstreamRefreshReportEnv) || strings.TrimSpace(step.Run) != upstreamRefreshReportRun {
+		return fmt.Errorf("%s report job must run only the reviewed report step: %q", path, upstreamRefreshReportRun)
+	}
+	return nil
+}
+
 // validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
 // the environment and the GitHub App token. No job token may write contents or
 // pull requests, because the App token does every write.
@@ -925,17 +960,17 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if err != nil {
 		return fmt.Errorf("%s: parse workflow YAML: %w", path, err)
 	}
-	if len(document.Jobs) != 3 {
-		return fmt.Errorf("%s must define exactly the refresh, scope-guard, and publish jobs", path)
+	if len(document.Jobs) != 4 {
+		return fmt.Errorf("%s must define exactly the refresh, scope-guard, publish, and report jobs", path)
 	}
 	// validateManualPrivilegedWorkflowRef pins the refresh job condition.
 	const onCandidate = "github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'"
-	for _, name := range []string{"refresh", "scope-guard", "publish"} {
+	for _, name := range []string{"refresh", "scope-guard", "publish", "report"} {
 		job, ok := document.Jobs[name]
 		if !ok {
 			return fmt.Errorf("%s must define the %s job", path, name)
 		}
-		if name != "refresh" && (job.If.Kind != yaml.ScalarNode || strings.TrimSpace(job.If.Value) != onCandidate) {
+		if name != "refresh" && name != "report" && (job.If.Kind != yaml.ScalarNode || strings.TrimSpace(job.If.Value) != onCandidate) {
 			return fmt.Errorf("%s %s job must run only when %s", path, name, onCandidate)
 		}
 		for _, step := range job.Steps {
@@ -1013,6 +1048,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		if count[key] != 1 {
 			return fmt.Errorf("%s refresh job must run each updater --apply and --check once and build the provider and toolchain candidates once each", path)
 		}
+	}
+	if err := validateUpstreamRefreshReportJob(path, document.Jobs["report"]); err != nil {
+		return err
 	}
 	guard := document.Jobs["scope-guard"]
 	if !maps.Equal(guard.Permissions, map[string]string{"contents": "read"}) {

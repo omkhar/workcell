@@ -1011,6 +1011,20 @@
       "github_only_reason": "upstream refresh candidate generation depends on GitHub-hosted scheduling, artifacts, and issue publication"
     },
     {
+      "id": "upstream-refresh.yml/report",
+      "workflow_path": ".github/workflows/upstream-refresh.yml",
+      "workflow_name": "Upstream refresh",
+      "job_id": "report",
+      "job_name": "Report refresh errors",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the report job reads the refresh job outputs of the GitHub-hosted run"
+    },
+    {
       "id": "upstream-refresh.yml/scope-guard",
       "workflow_path": ".github/workflows/upstream-refresh.yml",
       "workflow_name": "Upstream refresh",

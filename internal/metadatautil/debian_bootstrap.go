@@ -104,7 +104,7 @@ func ResolveDebianBootstrapPins(ctx context.Context, client *http.Client, archiv
 		return zero, err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 120 * time.Second}
+		client = &http.Client{Transport: newUpstreamRetryTransport(newUpstreamHTTPTransport()), Timeout: 120 * time.Second}
 	}
 	archiveBaseURL = strings.TrimRight(archiveBaseURL, "/")
 	if err := validateHTTPBaseURL(archiveBaseURL); err != nil {
@@ -165,12 +165,14 @@ func validateHTTPBaseURL(raw string) error {
 	return nil
 }
 
+var errDebianRedirectRefused = errors.New("refuse Debian archive redirect outside reviewed HTTPS origin")
+
 func restrictDebianRedirects(client *http.Client, baseURL *url.URL) *http.Client {
 	restricted := *client
 	original := restricted.CheckRedirect
 	restricted.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, baseURL.Host) || req.URL.User != nil {
-			return fmt.Errorf("refuse Debian archive redirect outside reviewed HTTPS origin: %s", req.URL.Redacted())
+			return fmt.Errorf("%w: %s", errDebianRedirectRefused, req.URL.Redacted())
 		}
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 Debian archive redirects")
@@ -239,10 +241,18 @@ func fetchBounded(ctx context.Context, client *http.Client, rawURL string, maxBy
 	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := client.Do(req)
 	if err != nil {
+		// A refused redirect or a failed TLS check is a policy result, not an
+		// outage, so only other transport errors read as unavailable.
+		if !errors.Is(err, errDebianRedirectRefused) && upstreamTransportErrorIsTransient(err) {
+			return nil, fmt.Errorf("GET %s: %w: %w", rawURL, ErrUpstreamUnavailable, err)
+		}
 		return nil, fmt.Errorf("GET %s: %w", rawURL, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
+		if UpstreamStatusIsTransient(resp) {
+			return nil, fmt.Errorf("GET %s: %w: unexpected status %s", rawURL, ErrUpstreamUnavailable, resp.Status)
+		}
 		return nil, fmt.Errorf("GET %s: unexpected status %s", rawURL, resp.Status)
 	}
 	if resp.ContentLength > maxBytes {
