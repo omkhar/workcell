@@ -979,14 +979,14 @@ func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
 		{
 			name:         "package-json",
 			relativePath: "tools/markdownlint/package.json",
-			old:          `"markdownlint-cli": "0.49.1"`,
+			old:          `"markdownlint-cli": "0.50.0"`,
 			new:          `"markdownlint-cli": "0.48.0"`,
 			want:         "markdownlint-cli version must match",
 		},
 		{
 			name:         "package-lock-dependency",
 			relativePath: "tools/markdownlint/package-lock.json",
-			old:          `"markdownlint-cli": "0.49.1"`,
+			old:          `"markdownlint-cli": "0.50.0"`,
 			new:          `"markdownlint-cli": "0.48.0"`,
 			want:         "markdownlint-cli version must match",
 		},
@@ -994,7 +994,7 @@ func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
 			name:         "package-lock-entry",
 			relativePath: "tools/markdownlint/package-lock.json",
 			old: `"node_modules/markdownlint-cli": {
-      "version": "0.49.1"`,
+      "version": "0.50.0"`,
 			new: `"node_modules/markdownlint-cli": {
       "version": "0.48.0"`,
 			want: "locked markdownlint-cli package version",
@@ -1016,9 +1016,11 @@ func TestCheckPinnedInputsRejectsMarkdownlintAdvisoryFloorRegression(t *testing.
 
 	for _, tc := range []struct{ name, old, new string }{
 		{"brace-expansion", `"version": "5.0.12"`, `"version": "5.0.9"`},
-		{"markdown-it", `"version": "14.3.2"`, `"version": "14.3.0"`},
-		{"smol-toml", `"version": "1.9.0"`, `"version": "1.8.0"`},
-		{"js-yaml", `"version": "5.4.1"`, `"version": "5.2.2"`},
+		{"markdown-it", `"version": "15.0.3"`, `"version": "15.0.2"`},
+		{"minimatch", `"version": "11.0.5"`, `"version": "10.2.6"`},
+		{"re2js", `"version": "2.8.8"`, `"version": "2.8.6"`},
+		{"smol-toml", `"version": "1.9.1"`, `"version": "1.8.0"`},
+		{"js-yaml", `"version": "5.5.0"`, `"version": "5.2.2"`},
 		{"katex", `"version": "0.18.2"`, `"version": "0.18.1"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
