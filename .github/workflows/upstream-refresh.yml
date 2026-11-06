@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       candidate: ${{ steps.candidate.outputs.dir != '' }}
+      failed: ${{ steps.candidate.outputs.failed }}
     permissions:
       contents: read # Read the reviewed tree to compute the candidate bundle.
       issues: write # Update the rolling tracking issue with the latest candidate status.
@@ -46,8 +47,7 @@ jobs:
         run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
       # Each kind refreshes on its own, so a failure in one kind does not
-      # discard the other kind's candidate. "Report refresh errors" decides
-      # whether the run fails.
+      # discard the other kind's candidate. The report job fails the run.
       - id: provider_summary
         name: Summarize provider bumps
         continue-on-error: true
@@ -98,6 +98,9 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # --check reuses the Debian plan of --apply, so a snapshot.debian.org
+          # state change between the two runs cannot fail the check.
+          WORKCELL_DEBIAN_PLAN_RECORD: ${{ runner.temp }}/upstream-refresh-debian-plan.json
         run: |
           # A failed provider refresh can leave its edits in the tree.
           git reset -q --hard HEAD
@@ -252,22 +255,9 @@ jobs:
           fi
           gh issue edit "${issue_number}" --title "${tracking_title}" --body-file "${issue_body}" --add-label "${tracking_label}" >/dev/null
 
-      # A failed kind with no candidate to publish fails the run now. When the
-      # other kind has a candidate, the run stays green so that candidate
-      # publishes, and the error shows as an annotation and in the tracking
-      # issue. The next run then has an open PR for that kind and no candidate,
-      # so a failure that repeats turns the run red.
-      - name: Report refresh errors
-        if: steps.candidate.outputs.failed != '' && steps.candidate.outputs.dir == ''
-        env:
-          REFRESH_FAILED: ${{ steps.candidate.outputs.failed }}
-        run: |
-          echo "::error::Upstream refresh failed for: ${REFRESH_FAILED}"
-          exit 1
-
   scope-guard:
     name: Check bump scope
-    needs: refresh
+    needs: [refresh]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
     timeout-minutes: 5
@@ -353,3 +343,22 @@ jobs:
           issue_number="$(gh issue list --state all --label upstream-refresh-candidate --limit 1 --json number --jq '.[0].number // empty')"
           [[ -n "${issue_number}" ]] || exit 0
           gh issue comment "${issue_number}" --body-file "${RUNNER_TEMP}/audit.md"
+
+  # A failed kind turns the run red. This job needs only refresh, so the
+  # candidate of the other kind still goes through scope-guard and publish.
+  report:
+    name: Report refresh errors
+    needs: [refresh]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail when a refresh kind failed
+        env:
+          REFRESH_FAILED: ${{ needs.refresh.outputs.failed }}
+        run: |
+          if [[ -n "${REFRESH_FAILED}" ]]; then
+            echo "::error::Upstream refresh failed for: ${REFRESH_FAILED}. The other kind still publishes."
+            exit 1
+          fi

@@ -4,9 +4,11 @@
 package metadatautil
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -19,6 +21,11 @@ const (
 	upstreamRetryBaseDelay = 2 * time.Second
 	upstreamRetryMaxDelay  = 30 * time.Second
 	upstreamRetryDrainMax  = 64 << 10
+	// upstreamRetryBufferMax is above every caller's body limit, so the whole
+	// body of a response that a caller accepts is read before it is returned,
+	// and a connection that breaks mid-body is retried. A longer body streams
+	// past this prefix and its caller's own limit refuses it.
+	upstreamRetryBufferMax = 256 << 20
 )
 
 // ErrUpstreamUnavailable marks a refusal because an upstream endpoint did not
@@ -28,13 +35,15 @@ const (
 var ErrUpstreamUnavailable = errors.New("upstream unavailable")
 
 // upstreamRetryTransport retries one idempotent request with no body when the
-// upstream is unavailable. The client timeout puts a deadline on the request
-// context, so that deadline also bounds every retry and every wait.
+// upstream is unavailable, also when the connection breaks while it reads a
+// 200 body. The client timeout puts a deadline on the request context, so that
+// deadline also bounds every retry and every wait.
 type upstreamRetryTransport struct {
 	base      http.RoundTripper
 	attempts  int
 	baseDelay time.Duration
 	maxDelay  time.Duration
+	bufferMax int64
 }
 
 func newUpstreamRetryTransport(base http.RoundTripper) *upstreamRetryTransport {
@@ -43,6 +52,7 @@ func newUpstreamRetryTransport(base http.RoundTripper) *upstreamRetryTransport {
 		attempts:  upstreamRetryAttempts,
 		baseDelay: upstreamRetryBaseDelay,
 		maxDelay:  upstreamRetryMaxDelay,
+		bufferMax: upstreamRetryBufferMax,
 	}
 }
 
@@ -53,6 +63,9 @@ func (t *upstreamRetryTransport) RoundTrip(req *http.Request) (*http.Response, e
 	attempts := max(t.attempts, 1)
 	for attempt := 1; ; attempt++ {
 		resp, err := t.base.RoundTrip(req)
+		if err == nil {
+			resp, err = bufferUpstreamBody(resp, t.bufferMax)
+		}
 		if attempt >= attempts || !upstreamResultIsTransient(resp, err) {
 			return resp, err
 		}
@@ -65,6 +78,38 @@ func (t *upstreamRetryTransport) RoundTrip(req *http.Request) (*http.Response, e
 			return nil, waitErr
 		}
 	}
+}
+
+// bufferUpstreamBody reads a 200 body of at most limit bytes before RoundTrip
+// returns it. A read error closes the response and returns
+// the error as a transport error, so the retry loop can try again. A body with
+// a larger Content-Length is returned unread.
+func bufferUpstreamBody(resp *http.Response, limit int64) (*http.Response, error) {
+	if limit <= 0 || resp.StatusCode != http.StatusOK || resp.Body == nil || resp.Body == http.NoBody || resp.ContentLength > limit {
+		return resp, nil
+	}
+	var prefix bytes.Buffer
+	if resp.ContentLength > 0 {
+		prefix.Grow(int(resp.ContentLength))
+	}
+	if _, err := io.Copy(&prefix, io.LimitReader(resp.Body, limit)); err != nil {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("read upstream response body: %w", err)
+	}
+	if int64(prefix.Len()) < limit {
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(prefix.Bytes()))
+		resp.ContentLength = int64(prefix.Len())
+		return resp, nil
+	}
+	// An unknown length reached the cap: keep the prefix and stream the rest.
+	resp.Body = upstreamPrefixedBody{Reader: io.MultiReader(bytes.NewReader(prefix.Bytes()), resp.Body), Closer: resp.Body}
+	return resp, nil
+}
+
+type upstreamPrefixedBody struct {
+	io.Reader
+	io.Closer
 }
 
 func upstreamRequestIsRetryable(req *http.Request) bool {

@@ -229,23 +229,29 @@ Both candidates can change `runtime/container/Dockerfile`, but they do not chang
 | `refresh` | none | `contents: read`, `issues: write`, `pull-requests: read` | Builds the candidates and updates the tracking issue. |
 | `scope-guard` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-scope-guard.sh` on the `provider` patch. |
 | `publish` | `upstream-refresh` | GitHub App token | Opens the PRs with `scripts/ci/upstream-refresh-publish.sh`. |
+| `report` | none | none | Fails the run when a kind failed. |
 
 `scripts/ci/upstream-refresh-candidate.sh` writes each candidate and then resets the tree to `HEAD`.
 An open refresh PR of one kind stops a new candidate of that kind only.
 
 Each kind refreshes in its own step of `.github/workflows/upstream-refresh.yml`.
 If one kind fails, the job removes the candidate of that kind and keeps the other candidate.
-If no candidate remains, the "Report refresh errors" step of `.github/workflows/upstream-refresh.yml` fails the run.
+If a kind fails, the `report` job of `.github/workflows/upstream-refresh.yml` fails the run.
+The `publish` job does not need the `report` job, so the other candidate still opens its PR.
 The tracking issue and an error annotation name the kind that failed.
 
 The updaters retry a failed upstream request at most three times, with a backoff of 2 to 30 seconds.
 They retry a transport error, a 429 status, and a 500, 502, 503, or 504 status.
 They do not retry a TLS verification failure, a refused redirect, or a spent GitHub API quota.
+`internal/metadatautil/upstream_retry.go` reads a response body of at most 256 MiB before it returns the response, so a body that breaks partway is retried too.
 
 If `snapshot.debian.org` is not available, `scripts/update-upstream-pins.sh` holds the current Debian snapshot pin.
 The job output and the tracking issue show the hold.
 The updater holds the pin only while the pin is at most 7 days old (`WORKCELL_DEBIAN_SNAPSHOT_HOLD_MAX_AGE_DAYS`). Then the run fails.
 The updater does not move the snapshot pin to an older date.
+
+The `--apply` run records its Debian snapshot plan in `WORKCELL_DEBIAN_PLAN_RECORD`, and the `--check` run of `scripts/update-upstream-pins.sh` reuses that plan.
+So `snapshot.debian.org` can come back or fail between the two runs, and the check still sees the same plan.
 
 The `refresh` job uploads one artifact, `upstream-refresh-candidate`.
 It contains a `provider` directory and a `toolchain` directory. Each directory contains `patch`, `diffstat`, and `metadata.json`. The `candidate` field in `metadata.json` names the kind.

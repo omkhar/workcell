@@ -26,7 +26,7 @@ func (b retryFixtureBody) Close() error {
 }
 
 func newRetryFixtureTransport(base http.RoundTripper, attempts int) *upstreamRetryTransport {
-	return &upstreamRetryTransport{base: base, attempts: attempts, baseDelay: time.Millisecond, maxDelay: 5 * time.Millisecond}
+	return &upstreamRetryTransport{base: base, attempts: attempts, baseDelay: time.Millisecond, maxDelay: 5 * time.Millisecond, bufferMax: 1 << 10}
 }
 
 func retryFixtureStatus(status int, closed *int) *http.Response {
@@ -54,7 +54,7 @@ func TestUpstreamRetryTransportRetriesTransientResults(t *testing.T) {
 				func(c *int) (*http.Response, error) { return retryFixtureStatus(http.StatusServiceUnavailable, c), nil },
 				func(c *int) (*http.Response, error) { return retryFixtureStatus(http.StatusOK, c), nil },
 			},
-			wantCalls: 2, wantCode: http.StatusOK, wantClose: 1,
+			wantCalls: 2, wantCode: http.StatusOK, wantClose: 2,
 		},
 		{
 			name: "transport error then 200",
@@ -62,7 +62,7 @@ func TestUpstreamRetryTransportRetriesTransientResults(t *testing.T) {
 				func(*int) (*http.Response, error) { return nil, errors.New("connection reset by peer") },
 				func(c *int) (*http.Response, error) { return retryFixtureStatus(http.StatusOK, c), nil },
 			},
-			wantCalls: 2, wantCode: http.StatusOK,
+			wantCalls: 2, wantCode: http.StatusOK, wantClose: 1,
 		},
 		{
 			name: "429 with quota left then 200",
@@ -70,7 +70,7 @@ func TestUpstreamRetryTransportRetriesTransientResults(t *testing.T) {
 				func(c *int) (*http.Response, error) { return retryFixtureStatus(http.StatusTooManyRequests, c), nil },
 				func(c *int) (*http.Response, error) { return retryFixtureStatus(http.StatusOK, c), nil },
 			},
-			wantCalls: 2, wantCode: http.StatusOK, wantClose: 1,
+			wantCalls: 2, wantCode: http.StatusOK, wantClose: 2,
 		},
 		{
 			name: "attempts run out on 502",
@@ -138,7 +138,7 @@ func TestUpstreamRetryTransportRetriesTransientResults(t *testing.T) {
 				t.Fatalf("RoundTrip = %v, %v; want status %d", resp, err, tc.wantCode)
 			}
 			if closed != tc.wantClose {
-				t.Fatalf("closed %d discarded bodies, want %d", closed, tc.wantClose)
+				t.Fatalf("closed %d bodies, want %d (each discarded body and the buffered 200 body)", closed, tc.wantClose)
 			}
 		})
 	}
@@ -250,6 +250,108 @@ func TestFetchBoundedMarksUpstreamOutages(t *testing.T) {
 			}
 			if got := errors.Is(err, ErrUpstreamUnavailable); got != tc.unavailable {
 				t.Fatalf("errors.Is(%v, ErrUpstreamUnavailable) = %v, want %v", err, got, tc.unavailable)
+			}
+		})
+	}
+}
+
+// retryFixtureBreakingBody returns its content and then a connection error.
+type retryFixtureBreakingBody struct {
+	reader io.Reader
+	closed *int
+}
+
+func (b *retryFixtureBreakingBody) Read(p []byte) (int, error) {
+	n, err := b.reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		return n, errors.New("connection reset by peer")
+	}
+	return n, err
+}
+
+func (b *retryFixtureBreakingBody) Close() error {
+	*b.closed++
+	return nil
+}
+
+func TestUpstreamRetryTransportRetriesBodyThatBreaks(t *testing.T) {
+	calls, closed := 0, 0
+	transport := newRetryFixtureTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		resp := retryFixtureStatus(http.StatusOK, &closed)
+		resp.ContentLength = 8
+		if calls == 1 {
+			resp.Body = &retryFixtureBreakingBody{reader: strings.NewReader("part"), closed: &closed}
+		} else {
+			resp.Body = retryFixtureBody{Reader: strings.NewReader("complete"), closed: &closed}
+		}
+		return resp, nil
+	}), 3)
+	req, err := http.NewRequest(http.MethodGet, "https://upstream.test/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || string(body) != "complete" || resp.ContentLength != 8 {
+		t.Fatalf("body = %q, %v, length %d; want the second, complete body", body, err, resp.ContentLength)
+	}
+	if calls != 2 || closed != 2 {
+		t.Fatalf("calls = %d, closed = %d; want 2 and 2", calls, closed)
+	}
+}
+
+func TestUpstreamRetryTransportReportsBodyThatKeepsBreaking(t *testing.T) {
+	calls, closed := 0, 0
+	transport := newRetryFixtureTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		resp := retryFixtureStatus(http.StatusOK, &closed)
+		resp.Body = &retryFixtureBreakingBody{reader: strings.NewReader("part"), closed: &closed}
+		return resp, nil
+	}), 3)
+	req, err := http.NewRequest(http.MethodGet, "https://upstream.test/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := transport.RoundTrip(req); err == nil || resp != nil || !upstreamTransportErrorIsTransient(err) {
+		t.Fatalf("RoundTrip = %v, %v; want a transient read error", resp, err)
+	}
+	if calls != 3 || closed != 3 {
+		t.Fatalf("calls = %d, closed = %d; want 3 and 3", calls, closed)
+	}
+}
+
+func TestUpstreamRetryTransportStreamsBodiesPastTheBuffer(t *testing.T) {
+	long := strings.Repeat("x", 3<<10)
+	for name, length := range map[string]int64{"known length": int64(len(long)), "unknown length": -1} {
+		t.Run(name, func(t *testing.T) {
+			closed := 0
+			transport := newRetryFixtureTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+				resp := retryFixtureStatus(http.StatusOK, &closed)
+				resp.Body = retryFixtureBody{Reader: strings.NewReader(long), closed: &closed}
+				resp.ContentLength = length
+				return resp, nil
+			}), 3)
+			req, err := http.NewRequest(http.MethodGet, "https://upstream.test/x", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := transport.RoundTrip(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closed != 0 {
+				t.Fatal("RoundTrip closed a body that the caller still reads")
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || string(body) != long {
+				t.Fatalf("streamed body = %d bytes, %v; want %d bytes", len(body), err, len(long))
+			}
+			if err := resp.Body.Close(); err != nil || closed != 1 {
+				t.Fatalf("Close = %v, closed = %d; want the original body closed", err, closed)
 			}
 		})
 	}

@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -449,6 +450,79 @@ func TestUpdateUpstreamPinsDebianArchiveOutage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUpdateUpstreamPinsCheckReusesRecordedDebianPlan runs --apply and then
+// --check on one tree, as the workflow does. The archive state changes between
+// the two runs, and the check compares the tree with the plan that --apply
+// recorded instead of a new plan.
+func TestUpdateUpstreamPinsCheckReusesRecordedDebianPlan(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	plan := updaterTargetDebianPlan()
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	run := func(fixtureRoot, mode string, env ...string) updaterFixtureRun {
+		options := defaultUpdaterFixtureOptions()
+		options.ExtraEnv = env
+		return runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, plan, mode, options)
+	}
+	outage := "WORKCELL_FIXTURE_DEBIAN_RELEASE_HTTP_CODE=503"
+
+	t.Run("archive-recovers-after-hold", func(t *testing.T) {
+		t.Parallel()
+		record := filepath.Join(t.TempDir(), "debian-plan.json")
+		fixtureRoot := writeUpdaterFixture(t, updaterDriftedManifest(t, plan.Snapshot), 0o640)
+		if apply := run(fixtureRoot, "--apply", outage, "WORKCELL_DEBIAN_PLAN_RECORD="+record); apply.Code != 0 {
+			t.Fatalf("--apply exit code = %d, want 0\n%s", apply.Code, apply.Output)
+		}
+		recorded, err := os.ReadFile(record)
+		if err != nil || !json.Valid(recorded) || !bytes.Contains(recorded, []byte(`"keep_current":true`)) {
+			t.Fatalf("recorded plan = %q, %v; want the hold", recorded, err)
+		}
+		check := run(fixtureRoot, "--check", "WORKCELL_DEBIAN_PLAN_RECORD="+record)
+		if check.Code != 0 || strings.Contains(check.ResolutionLog, "release ") || strings.Contains(check.ResolutionLog, "resolve ") {
+			t.Fatalf("--check with the recorded hold exit code = %d, want 0 with no archive request\n%s\n%s", check.Code, check.Output, check.ResolutionLog)
+		}
+		// Without the record, the recovered archive reports the drift.
+		if check := run(fixtureRoot, "--check"); check.Code != 1 {
+			t.Fatalf("--check without the record exit code = %d, want 1\n%s", check.Code, check.Output)
+		}
+	})
+
+	t.Run("archive-fails-after-refresh", func(t *testing.T) {
+		t.Parallel()
+		record := filepath.Join(t.TempDir(), "debian-plan.json")
+		fixtureRoot := writeUpdaterFixture(t, updaterDriftedManifest(t, plan.Snapshot), 0o640)
+		if apply := run(fixtureRoot, "--apply", "WORKCELL_DEBIAN_PLAN_RECORD="+record); apply.Code != 0 {
+			t.Fatalf("--apply exit code = %d, want 0\n%s", apply.Code, apply.Output)
+		}
+		check := run(fixtureRoot, "--check", outage, "WORKCELL_DEBIAN_PLAN_RECORD="+record)
+		if check.Code != 0 || strings.Contains(check.ResolutionLog, "release ") {
+			t.Fatalf("--check with the recorded plan exit code = %d, want 0 with no archive request\n%s\n%s", check.Code, check.Output, check.ResolutionLog)
+		}
+	})
+
+	t.Run("bad-record-fails", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		notPlan := filepath.Join(dir, "not-plan.json")
+		if err := os.WriteFile(notPlan, []byte(`{"snapshot":"latest"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(dir, "link.json")
+		if err := os.Symlink(notPlan, link); err != nil {
+			t.Fatal(err)
+		}
+		fixtureRoot := writeUpdaterFixture(t, updaterManifestFromPlan(plan), 0o640)
+		for _, record := range []string{notPlan, link, filepath.Join(dir, "missing.json"), "relative.json"} {
+			if check := run(fixtureRoot, "--check", "WORKCELL_DEBIAN_PLAN_RECORD="+record); check.Code != 2 {
+				t.Fatalf("--check with record %s exit code = %d, want 2\n%s", record, check.Code, check.Output)
+			}
+		}
+	})
 }
 
 func TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments(t *testing.T) {

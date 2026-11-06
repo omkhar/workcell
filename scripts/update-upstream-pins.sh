@@ -709,7 +709,34 @@ else
   target_cargo_rust_version="${current_cargo_rust_version}"
   target_runtime_rust_toolchain_image="${current_runtime_rust_toolchain_image}"
 fi
-target_debian_bootstrap_plan="$(latest_debian_bootstrap_plan)"
+# --apply records its Debian plan, and a --check in the same job reuses it.
+# Thus snapshot.debian.org can recover or fail between the two runs, and the
+# check still compares the tree with the plan that --apply wrote.
+debian_plan_record="${WORKCELL_DEBIAN_PLAN_RECORD:-}"
+if [[ -n "${debian_plan_record}" && "${debian_plan_record}" != /* ]]; then
+  echo "WORKCELL_DEBIAN_PLAN_RECORD must be an absolute path" >&2
+  exit 2
+fi
+if [[ "${mode}" == "check" && -n "${debian_plan_record}" ]]; then
+  if [[ -L "${debian_plan_record}" || ! -f "${debian_plan_record}" ]] || (($(wc -c <"${debian_plan_record}") > 65536)); then
+    echo "WORKCELL_DEBIAN_PLAN_RECORD ${debian_plan_record} is not a plan that --apply recorded" >&2
+    exit 2
+  fi
+  target_debian_bootstrap_plan="$(<"${debian_plan_record}")"
+  if ! jq -e '(type == "object") and ((.keep_current == true) or ((.snapshot | type == "string") and (.snapshot | test("^[0-9]{8}T000000Z$"))))' <<<"${target_debian_bootstrap_plan}" >/dev/null 2>&1; then
+    echo "WORKCELL_DEBIAN_PLAN_RECORD ${debian_plan_record} does not hold a Debian bootstrap plan" >&2
+    exit 2
+  fi
+else
+  # Remove an older record first, so a failed plan cannot leave one for --check.
+  if [[ "${mode}" == "apply" && -n "${debian_plan_record}" ]]; then
+    rm -f "${debian_plan_record}"
+  fi
+  target_debian_bootstrap_plan="$(latest_debian_bootstrap_plan)"
+  if [[ "${mode}" == "apply" && -n "${debian_plan_record}" ]]; then
+    (umask 077 && printf '%s\n' "${target_debian_bootstrap_plan}" >"${debian_plan_record}")
+  fi
+fi
 held_debian_snapshot=""
 if jq -e '.keep_current == true' <<<"${target_debian_bootstrap_plan}" >/dev/null; then
   held_debian_snapshot="$(jq -r '.held // ""' <<<"${target_debian_bootstrap_plan}")"
