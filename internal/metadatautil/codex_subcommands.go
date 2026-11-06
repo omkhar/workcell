@@ -53,7 +53,7 @@ func PrepareCodexSubcommandFixture(version, fixturePath, outputPath string) erro
 		return fmt.Errorf("Codex fixture version must be an exact stable version, got %q", version)
 	}
 	sourceURL := fmt.Sprintf(defaultCodexCLISourceAPIURLFormat, version)
-	return prepareCodexSubcommandFixture(version, fixturePath, outputPath, sourceURL, &http.Client{Timeout: providerBumpHTTPTimeout})
+	return prepareCodexSubcommandFixture(version, fixturePath, outputPath, sourceURL, newProviderBumpHTTPClient())
 }
 
 func prepareCodexSubcommandFixture(version, fixturePath, outputPath, sourceURL string, client *http.Client) error {

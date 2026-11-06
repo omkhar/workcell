@@ -111,6 +111,7 @@ type updaterFixtureOptions struct {
 	ProviderPlan      string
 	ProviderPlanCode  int
 	ExtraArgs         []string
+	ExtraEnv          []string
 }
 
 func defaultUpdaterFixtureOptions() updaterFixtureOptions {
@@ -388,6 +389,68 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 	}
 }
 
+// A snapshot.debian.org outage on Nov 4 and Nov 6 2026 failed the refresh: the
+// probes got 503 and 504, and the updater walked back toward older snapshots.
+// An outage now keeps a fresh current pin, reports the hold, and never picks
+// an older snapshot. A stale pin, a TLS failure or a curl usage error still
+// fails the refresh.
+func TestUpdateUpstreamPinsDebianArchiveOutage(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	plan := updaterTargetDebianPlan()
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	staleManifest := updaterDriftedManifest(t, plan.Snapshot)
+	staleManifest.Snapshot = updaterFixtureStampDaysBefore(t, plan.Snapshot, 8)
+	futureManifest := updaterManifestFromPlan(plan)
+	futureManifest.Snapshot = updaterFixtureStampDaysBefore(t, plan.Snapshot, -1)
+	const held = "debian-snapshot-candidate: upstream-unavailable snapshot.debian.org unavailable at "
+	for _, tc := range []struct {
+		name       string
+		manifest   updaterFixtureManifest
+		env        []string
+		wantCode   int
+		wantText   string
+		wantNoText string
+		wantProbe  bool
+	}{
+		{name: "http-503-holds", manifest: updaterDriftedManifest(t, plan.Snapshot), env: []string{"WORKCELL_FIXTURE_DEBIAN_RELEASE_HTTP_CODE=503"}, wantCode: 0, wantText: held + plan.Snapshot, wantProbe: true},
+		{name: "http-429-holds", manifest: updaterDriftedManifest(t, plan.Snapshot), env: []string{"WORKCELL_FIXTURE_DEBIAN_RELEASE_HTTP_CODE=429"}, wantCode: 0, wantText: held + plan.Snapshot, wantProbe: true},
+		{name: "connect-failure-holds", manifest: updaterDriftedManifest(t, plan.Snapshot), env: []string{"WORKCELL_FIXTURE_DEBIAN_RELEASE_CURL_STATUS=7"}, wantCode: 0, wantText: held + plan.Snapshot, wantProbe: true},
+		{name: "stale-pin-fails", manifest: staleManifest, env: []string{"WORKCELL_FIXTURE_DEBIAN_RELEASE_HTTP_CODE=503"}, wantCode: 1, wantText: "older than 7 days or pinned; refusing to keep it", wantNoText: held, wantProbe: true},
+		{name: "tls-failure-fails", manifest: updaterDriftedManifest(t, plan.Snapshot), env: []string{"WORKCELL_FIXTURE_DEBIAN_RELEASE_CURL_STATUS=60"}, wantCode: 1, wantText: "Debian Release probe failed", wantNoText: held, wantProbe: true},
+		{name: "unexpected-status-fails", manifest: updaterDriftedManifest(t, plan.Snapshot), env: []string{"WORKCELL_FIXTURE_DEBIAN_RELEASE_HTTP_CODE=403"}, wantCode: 1, wantText: "unexpected HTTP 403", wantNoText: held, wantProbe: true},
+		{name: "newer-pin-is-kept", manifest: futureManifest, wantCode: 0, wantText: "No pinned upstream updates found.", wantNoText: held, wantProbe: false},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fixtureRoot := writeUpdaterFixture(t, tc.manifest, 0o640)
+			before := snapshotUpdaterFixtureTree(t, fixtureRoot)
+			options := defaultUpdaterFixtureOptions()
+			options.ExtraEnv = tc.env
+			run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, plan, "--apply", options)
+			if run.Code != tc.wantCode || !strings.Contains(run.Output, tc.wantText) {
+				t.Fatalf("--apply exit code = %d, want %d and text %q\n%s", run.Code, tc.wantCode, tc.wantText, run.Output)
+			}
+			if tc.wantNoText != "" && strings.Contains(run.Output, tc.wantNoText) {
+				t.Fatalf("--apply output has %q\n%s", tc.wantNoText, run.Output)
+			}
+			if strings.Contains(run.ResolutionLog, "resolve ") {
+				t.Fatalf("--apply resolved a snapshot through an outage or past the current pin\n%s", run.ResolutionLog)
+			}
+			if got := strings.Contains(run.ResolutionLog, "release "); got != tc.wantProbe {
+				t.Fatalf("Release probe ran = %v, want %v\n%s", got, tc.wantProbe, run.ResolutionLog)
+			}
+			if after := snapshotUpdaterFixtureTree(t, fixtureRoot); !reflect.DeepEqual(after, before) {
+				t.Fatalf("--apply changed the fixture tree through a Debian outage\nbefore: %#v\nafter:  %#v", before, after)
+			}
+		})
+	}
+}
+
 func TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments(t *testing.T) {
 	t.Parallel()
 
@@ -410,11 +473,12 @@ func TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments(t *testing.T) 
 			name string
 			args string
 		}{
-			{name: "missing-curlrc-disable", args: "-fsSI --max-time 120 --connect-timeout 15"},
-			{name: "late-curlrc-disable", args: "-fsSI -q --max-time 120 --connect-timeout 15"},
-			{name: "wrong-method", args: "-q -fsSL --max-time 120 --connect-timeout 15"},
-			{name: "stale-size-bound", args: "-q -fsSI --max-time 120 --connect-timeout 15 --max-filesize 209715200"},
-			{name: "extra-arguments", args: "-q -fsSI --max-time 120 --connect-timeout 15 --retry 1"},
+			{name: "missing-curlrc-disable", args: "-sSI --max-time 30 --connect-timeout 15 --retry 3 --retry-max-time 90 -o /dev/null -w %{http_code}"},
+			{name: "late-curlrc-disable", args: "-sSI -q --max-time 30 --connect-timeout 15 --retry 3 --retry-max-time 90 -o /dev/null -w %{http_code}"},
+			{name: "wrong-method", args: "-q -sSL --max-time 30 --connect-timeout 15 --retry 3 --retry-max-time 90 -o /dev/null -w %{http_code}"},
+			{name: "stale-size-bound", args: "-q -sSI --max-time 30 --connect-timeout 15 --retry 3 --retry-max-time 90 -o /dev/null -w %{http_code} --max-filesize 209715200"},
+			{name: "extra-arguments", args: "-q -sSI --max-time 30 --connect-timeout 15 --retry 3 --retry-max-time 90 -o /dev/null -w %{http_code} --retry-all-errors"},
+			{name: "stale-fail-flag", args: "-q -fsSI --max-time 120 --connect-timeout 15"},
 		} {
 			malformed := malformed
 			t.Run(endpoint.name+"/"+malformed.name, func(t *testing.T) {
@@ -466,6 +530,16 @@ func updaterDriftedManifest(t *testing.T, targetSnapshot string) updaterFixtureM
 		CACertificatesPath:   "pool/main/c/ca-certificates/ca-certificates_20000101_all.deb",
 		CACertificatesSHA256: strings.Repeat("f", 64),
 	}
+}
+
+func updaterFixtureStampDaysBefore(t *testing.T, snapshot string, days int) string {
+	t.Helper()
+
+	stamp, err := time.Parse("20060102T150405Z", snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stamp.AddDate(0, 0, -days).Format("20060102T150405Z")
 }
 
 func updaterManifestFromPlan(plan updaterFixtureDebianPlan) updaterFixtureManifest {
@@ -770,6 +844,8 @@ func runUpdaterFixtureWithOptions(t *testing.T, fixtureRoot, scratchRoot, citool
 	if tokenFile != "" {
 		cmd.Env = append(cmd.Env, "WORKCELL_GITHUB_API_TOKEN_FILE="+tokenFile)
 	}
+	cmd.Env = append(cmd.Env, "WORKCELL_FIXTURE_HOLD_CUTOFF_STAMP="+updaterFixtureStampDaysBefore(t, plan.Snapshot, 7))
+	cmd.Env = append(cmd.Env, options.ExtraEnv...)
 	output, runErr := cmd.CombinedOutput()
 	curlConfig, err := os.ReadFile(filepath.Join(hostileHome, ".curlrc"))
 	if err != nil {
@@ -1175,6 +1251,11 @@ date() {
     printf '%s\n' "${WORKCELL_FIXTURE_DEBIAN_SNAPSHOT}"
     return 0
   fi
+  # The Debian outage hold compares the current pin with the stamp 7 days ago.
+  if [[ "$#" -eq 4 && "$1" == "-u" && "$2" == "-d" && "$3" == "-7 day" && "$4" == "+%Y%m%dT000000Z" ]]; then
+    printf '%s\n' "${WORKCELL_FIXTURE_HOLD_CUTOFF_STAMP}"
+    return 0
+  fi
   unexpected_fixture date "$*"
 }
 
@@ -1233,8 +1314,12 @@ curl() {
     https://snapshot.debian.org/archive/debian/*/dists/trixie/Release|\
     https://snapshot.debian.org/archive/debian/*/dists/trixie-updates/Release|\
     https://snapshot.debian.org/archive/debian-security/*/dists/trixie-security/Release)
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSI --max-time 120 --connect-timeout 15 "${url}" || return
+      expect_fixture_curl_argv "${url}" "$@" -- -q -sSI --max-time 30 --connect-timeout 15 --retry 3 --retry-max-time 90 -o /dev/null -w '%{http_code}' "${url}" || return
       printf 'release %s\n' "${url}" >>"${WORKCELL_FIXTURE_RESOLUTION_LOG}"
+      if [[ "${WORKCELL_FIXTURE_DEBIAN_RELEASE_CURL_STATUS:-0}" != "0" ]]; then
+        return "${WORKCELL_FIXTURE_DEBIAN_RELEASE_CURL_STATUS}"
+      fi
+      printf '%s' "${WORKCELL_FIXTURE_DEBIAN_RELEASE_HTTP_CODE:-200}"
       ;;
     *)
       unexpected_fixture curl "${url:-<missing-url>}"
