@@ -3204,7 +3204,7 @@ if ! printf '%s\n' "${RUN_IN_VM_BLOCK}" | awk '
   /initialize_host_tools/ && !host_init { host_init = NR }
   /colima_home="\$\{COLIMA_HOME/ && !capture_home { capture_home = NR }
   /initialize_vm_tools/ && !vm_init { vm_init = NR }
-  /set -euo pipefail/ && !vm_exec { vm_exec = NR }
+  /guest_script_stdin/ && !vm_exec { vm_exec = NR }
   END { exit !(host_init && capture_home && vm_init && vm_exec && host_init < capture_home && vm_init < vm_exec) }
 '; then
   echo "Expected run_in_vm to initialize host tools before the capture branch derives colima_home, and VM tools before real VM execution" >&2
@@ -3233,6 +3233,15 @@ fi
 # shellcheck disable=SC2016
 if ! grep -Fq 'IPV6_RULES+="-A WORKCELL_EGRESS6 -p tcp -d ${host:1:${#host}-2} --dport ${port} -j ACCEPT"' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
   echo "Expected captured dual-stack apply script to preserve IPv6 literal allowlist handling" >&2
+  exit 1
+fi
+# A remote_vm broker runs the guest-script output, so it must be the exact
+# input of the Colima VM shell for the same endpoints.
+printf 'set -euo pipefail\n' >"${RUN_IN_VM_CAPTURE_DIR}/apply-default.stdin"
+cat "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script" >>"${RUN_IN_VM_CAPTURE_DIR}/apply-default.stdin"
+if ! "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" guest-script '127.0.0.1:443 [::1]:443' >"${RUN_IN_VM_CAPTURE_DIR}/guest-script.out" 2>/dev/null ||
+  ! cmp -s "${RUN_IN_VM_CAPTURE_DIR}/apply-default.stdin" "${RUN_IN_VM_CAPTURE_DIR}/guest-script.out"; then
+  echo "Expected guest-script to print the same apply plan the Colima VM shell runs" >&2
   exit 1
 fi
 if ! grep -q "COLIMA_HOME=${REAL_HOME}/.colima" "${RUN_IN_VM_CAPTURE_DIR}/apply-default.env"; then
