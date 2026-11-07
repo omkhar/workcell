@@ -190,6 +190,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/ci/cost-report.sh"
   "${ROOT_DIR}/scripts/ci/flaky-report.sh"
   "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
+  "${ROOT_DIR}/scripts/ci/job-codex-review.sh"
   "${ROOT_DIR}/scripts/ci/job-docs.sh"
   "${ROOT_DIR}/scripts/ci/job-fuzz.sh"
   "${ROOT_DIR}/scripts/ci/job-mutation.sh"

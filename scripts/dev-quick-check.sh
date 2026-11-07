@@ -46,6 +46,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/uninstall.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/ci/build-validator-image.sh"
+  "${ROOT_DIR}/scripts/ci/job-codex-review.sh"
   "${ROOT_DIR}/scripts/ci/job-docs.sh"
   "${ROOT_DIR}/scripts/ci/job-pin-hygiene.sh"
   "${ROOT_DIR}/scripts/ci/job-pr-shape.sh"
