@@ -197,6 +197,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/ci/job-pr-shape.sh"
   "${ROOT_DIR}/scripts/ci/job-release-asset-acl.sh"
   "${ROOT_DIR}/scripts/ci/job-validate.sh"
+  "${ROOT_DIR}/scripts/ci/load-tool-pins.sh"
   "${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh"
   "${ROOT_DIR}/scripts/ci/run-codespell.sh"
   "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh"
