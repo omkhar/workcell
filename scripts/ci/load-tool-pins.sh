@@ -3,10 +3,9 @@
 #
 # Usage: load-tool-pins.sh [POLICY_PATH]
 #
-# The file records the reviewed tool pins that the workflows use. A workflow
-# job is to run this script as its `pins` step and bind each value with
-# `${{ steps.pins.outputs.<key> }}`. Until the workflows move to that step,
-# they hold inline copies that check-pinned-inputs compares with the file.
+# The file is the single source of the tool pins that the workflows use. A
+# workflow job runs this script as its `pins` step and binds each value with
+# `${{ steps.pins.outputs.<key> }}`, so a pin bump changes only the policy file.
 #
 # The parse fails closed. The file may hold only blank lines, `#` comment lines,
 # one `[tool_pins]` header and `key = "value"` lines. Each key must come from the

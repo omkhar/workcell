@@ -20,10 +20,6 @@ defaults:
   run:
     shell: bash --noprofile --norc -euo pipefail {0}
 
-env:
-  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
-  WORKCELL_BUILDX_VERSION: v0.38.1
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -40,16 +36,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - id: pins
+        name: Load tool pins
+        run: ./scripts/ci/load-tool-pins.sh
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: ${{ env.WORKCELL_BUILDX_VERSION }}
-          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
+          version: ${{ steps.pins.outputs.buildx }}
+          driver-opts: image=${{ steps.pins.outputs.buildkit }}
 
       # Run the fuzz targets inside the validator image so they use the reviewed
       # pinned Go toolchain rather than the runner's ambient Go.
       - name: Run Go fuzz targets
         env:
+          WORKCELL_BUILDKIT_IMAGE: ${{ steps.pins.outputs.buildkit }}
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: validator-main
         run: ./scripts/ci/job-fuzz.sh

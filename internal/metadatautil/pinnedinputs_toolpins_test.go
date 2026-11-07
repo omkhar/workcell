@@ -160,3 +160,24 @@ func TestCheckPinnedInputsRejectsValidatorBuildkitFallbackFromAnotherRepository(
 	})
 	requirePinnedInputsErrorContains(t, cfg, "BuildKit image")
 }
+
+// TestCheckPinnedInputsBindsOrasPinsToTheSignerContract proves an ORAS pin
+// change in policy/tool-pins.toml alone fails the reviewed signer contract.
+func TestCheckPinnedInputsBindsOrasPinsToTheSignerContract(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ key, value string }{
+		{"oras_version", "9.9.9"},
+		{"oras_linux_amd64_sha256", strings.Repeat("0", 64)},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			cfg := writePinnedInputsFixture(t)
+			current := fixtureToolPin(t, cfg, tc.key)
+			rewriteFile(t, toolPinsFixturePath(cfg), func(content string) string {
+				return strings.Replace(content, tc.key+` = "`+current+`"`, tc.key+` = "`+tc.value+`"`, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "sign-release must match the exact privileged step contract")
+		})
+	}
+}
