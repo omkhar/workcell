@@ -17,7 +17,9 @@ import (
 // when a new advisory lands; the lockfile must not fall below it.
 var markdownlintAdvisoryFloors = []struct{ name, minimum string }{
 	{"brace-expansion", "5.0.12"},
-	{"markdown-it", "14.3.2"},
+	{"markdown-it", "15.0.3"},
+	{"minimatch", "11.0.1"},
+	{"re2js", "2.8.7"},
 	{"smol-toml", "1.9.0"},
 	{"js-yaml", "5.4.1"},
 	{"katex", "0.18.2"},

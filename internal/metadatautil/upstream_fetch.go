@@ -111,7 +111,7 @@ func githubRateLimitError(resp *http.Response) error {
 
 func newGitHubAPIClient() *http.Client {
 	return &http.Client{
-		Transport: newUpstreamHTTPTransport(),
+		Transport: newUpstreamRetryTransport(newUpstreamHTTPTransport()),
 		Timeout:   upstreamHTTPTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -239,7 +239,7 @@ func fixedUpstreamFetchRequest(rawURL, redirectHost string, maxBytes int64, time
 
 func newUpstreamFetchClient(request upstreamFetchRequest) *http.Client {
 	return &http.Client{
-		Transport: newUpstreamHTTPTransport(),
+		Transport: newUpstreamRetryTransport(newUpstreamHTTPTransport()),
 		Timeout:   request.timeout,
 		CheckRedirect: func(next *http.Request, via []*http.Request) error {
 			if len(via) >= 3 {

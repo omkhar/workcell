@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       candidate: ${{ steps.candidate.outputs.dir != '' }}
+      failed: ${{ steps.candidate.outputs.failed }}
     permissions:
       contents: read # Read the reviewed tree to compute the candidate bundle.
       issues: write # Update the rolling tracking issue with the latest candidate status.
@@ -45,7 +46,11 @@ jobs:
       - name: Expose cosign in trusted system path
         run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
 
-      - name: Summarize provider bumps
+      # Each kind refreshes on its own, so a failure in one kind does not
+      # discard the other kind's candidate. The report job fails the run.
+      - id: provider_summary
+        name: Summarize provider bumps
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -71,8 +76,10 @@ jobs:
 
       # The provider candidate holds only provider pins, so the scope guard can
       # pass it. The toolchain candidate holds every other pin.
-      - name: Refresh provider pins
+      - id: provider_refresh
+        name: Refresh provider pins
         if: steps.existing_pr.outputs.provider == ''
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -85,11 +92,19 @@ jobs:
           ./scripts/check-pinned-inputs.sh
           ./scripts/ci/upstream-refresh-candidate.sh provider "${RUNNER_TEMP}/upstream-refresh-candidate"
 
-      - name: Refresh toolchain pins
+      - id: toolchain_refresh
+        name: Refresh toolchain pins
         if: steps.existing_pr.outputs.toolchain == ''
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # --check reuses the Debian plan of --apply, so a snapshot.debian.org
+          # state change between the two runs cannot fail the check.
+          WORKCELL_DEBIAN_PLAN_RECORD: ${{ runner.temp }}/upstream-refresh-debian-plan.json
         run: |
+          # A failed provider refresh can leave its edits in the tree.
+          git reset -q --hard HEAD
+          git clean -fdq
           token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
@@ -101,8 +116,26 @@ jobs:
 
       - id: candidate
         name: Collect candidates
+        env:
+          PROVIDER_SUMMARY_OUTCOME: ${{ steps.provider_summary.outcome }}
+          PROVIDER_OUTCOME: ${{ steps.provider_refresh.outcome }}
+          TOOLCHAIN_OUTCOME: ${{ steps.toolchain_refresh.outcome }}
         run: |
           candidate_dir="${RUNNER_TEMP}/upstream-refresh-candidate"
+          # A skipped step is an open PR of that kind, not an error.
+          failed=()
+          if [[ "${PROVIDER_SUMMARY_OUTCOME}" == "failure" || "${PROVIDER_OUTCOME}" == "failure" ]]; then
+            failed+=(provider)
+          fi
+          if [[ "${TOOLCHAIN_OUTCOME}" == "failure" ]]; then
+            failed+=(toolchain)
+          fi
+          for kind in "${failed[@]}"; do
+            # A failed kind publishes nothing, not even a partial candidate.
+            rm -rf "${candidate_dir:?}/${kind}"
+            echo "::error::The ${kind} refresh failed. Its candidate is not published."
+          done
+          echo "failed=${failed[*]}" >> "${GITHUB_OUTPUT}"
           if compgen -G "${candidate_dir}/*/metadata.json" >/dev/null; then
             echo "dir=${candidate_dir}" >> "${GITHUB_OUTPUT}"
           fi
@@ -125,6 +158,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REFRESH_PROVIDER_PR: ${{ steps.existing_pr.outputs.provider }}
           REFRESH_TOOLCHAIN_PR: ${{ steps.existing_pr.outputs.toolchain }}
+          REFRESH_FAILED: ${{ steps.candidate.outputs.failed }}
           CANDIDATE_DIR: ${{ runner.temp }}/upstream-refresh-candidate
         run: |
           tracking_label="upstream-refresh-candidate"
@@ -156,6 +190,10 @@ jobs:
                 echo "Skipped, because a ${kind} refresh PR is already open: ${!existing_pr_var}"
                 continue
               fi
+              if [[ " ${REFRESH_FAILED} " == *" ${kind} "* ]]; then
+                echo "The ${kind} refresh failed. See the run log. The next run tries again."
+                continue
+              fi
               if [[ ! -f "${metadata_path}" ]]; then
                 echo "No ${kind} refresh changes were detected."
                 continue
@@ -183,11 +221,11 @@ jobs:
           } > "${issue_body}"
 
           # Held releases show in every result, not only the no-change one.
-          held_lines="$(cat "${RUNNER_TEMP}"/upstream-refresh-*apply.log 2>/dev/null | grep 'unclassified-cli-surface' | sed 's/^ */- /' | sort -u || true)"
+          held_lines="$(cat "${RUNNER_TEMP}"/upstream-refresh-*apply.log 2>/dev/null | grep -E 'unclassified-cli-surface|upstream-unavailable' | sed 's/^ */- /' | sort -u || true)"
           if [[ -n "${held_lines}" ]]; then
             {
               echo
-              echo "## Held for manual classification"
+              echo "## Held releases"
               echo
               echo "${held_lines}"
             } >>"${issue_body}"
@@ -219,7 +257,7 @@ jobs:
 
   scope-guard:
     name: Check bump scope
-    needs: refresh
+    needs: [refresh]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
     timeout-minutes: 5
@@ -305,3 +343,22 @@ jobs:
           issue_number="$(gh issue list --state all --label upstream-refresh-candidate --limit 1 --json number --jq '.[0].number // empty')"
           [[ -n "${issue_number}" ]] || exit 0
           gh issue comment "${issue_number}" --body-file "${RUNNER_TEMP}/audit.md"
+
+  # A failed kind turns the run red. This job needs only refresh, so the
+  # candidate of the other kind still goes through scope-guard and publish.
+  report:
+    name: Report refresh errors
+    needs: [refresh]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail when a refresh kind failed
+        env:
+          REFRESH_FAILED: ${{ needs.refresh.outputs.failed }}
+        run: |
+          if [[ -n "${REFRESH_FAILED}" ]]; then
+            echo "::error::Upstream refresh failed for: ${REFRESH_FAILED}. The other kind still publishes."
+            exit 1
+          fi
