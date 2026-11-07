@@ -79,6 +79,8 @@ type markdownlintPackageLockEntry struct {
 // The GitHub Actions workflow format — uses-scan types, extractWorkflowUses,
 // toolPins/loadToolPins/parseToolPins, loadAllowedActions, and the
 // pull_request_target and YAML helpers — lives in pinnedinputs_workflows.go.
+// The checks that scripts/ci/load-tool-pins.sh reads policy/tool-pins.toml as
+// the Go parser does live in pinnedinputs_toolpins.go.
 
 func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	check := newPinnedInputsCheck(cfg)
@@ -91,6 +93,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		check.validateRustupVersion,
 		check.validateRustupDigests,
 		check.validateProviderLock,
+		check.validateToolPinLoaderAgreement,
 		check.validateBuildxPins,
 		check.validateQEMUPins,
 		check.validateBuildkitPins,

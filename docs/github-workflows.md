@@ -208,7 +208,7 @@ The workflow makes two candidates. Each candidate starts from the same `main` co
 | Candidate | Updater | Contents | Result |
 | --- | --- | --- | --- |
 | `provider` | `update-provider-pins.sh --apply` | Provider pins only | Scope guard, then auto-merge |
-| `toolchain` | `update-upstream-pins.sh --apply --toolchain-only` | All other pins | PR for human review |
+| `toolchain` | `update-upstream-pins.sh --apply --toolchain-only` | All other pins | Held for host publication |
 
 The `provider` candidate contains only these changes:
 
@@ -269,6 +269,8 @@ The job output `result` is `passed` only when the guard step exits 0.
 
 The App has no Workflows permission, and it must not get one.
 `publish` does not publish a candidate that changes `.github/workflows/`.
+`publish` does not publish the `toolchain` candidate either, because no scope guard reviews it yet.
+`scripts/ci/upstream-refresh-publish.sh` stops before any GitHub call for that kind.
 The tracking issue and the audit comment then show the host command for that candidate:
 
 ```bash
@@ -299,7 +301,7 @@ Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](
 
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.
 If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.
-The `toolchain` PR always gets the `needs-human-review` label.
+A `toolchain` PR, which a person publishes from a host, always gets the `needs-human-review` label.
 
 `publish` posts an audit comment on the tracking issue.
 The comment lists each PR, its commit, the merge decision, the cool-off policy, and the bumped versions.
@@ -356,6 +358,11 @@ A new publisher requires a reviewed policy change.
 [`policy/tool-pins.toml`](../policy/tool-pins.toml) records the reviewed CI and release tools.
 `check-pinned-inputs` compares each workflow copy with that policy.
 `scripts/update-upstream-pins.sh` updates the workflow and policy copies together.
+`check-pinned-inputs` runs these policy checks from `internal/metadatautil/pinnedinputs_toolpins.go`:
+
+- It requires the output of the tool pin loader to equal its own parse of the policy file.
+- It requires each value to match the format of its key, with no leading zero in a version part.
+- It requires the BuildKit image to name `moby/buildkit` and the QEMU image to name `tonistiigi/binfmt`, with no registry host, as `scripts/ci/build-validator-image.sh` also requires.
 
 ## Validator identity
 

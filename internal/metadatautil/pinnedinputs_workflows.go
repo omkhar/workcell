@@ -75,17 +75,20 @@ func extractWorkflowUses(workflowText string) ([]string, error) {
 }
 
 // toolPins is the reviewed canonical set of CI/release tool pins that are
-// otherwise duplicated inline across workflows.
+// otherwise duplicated inline across workflows. scripts/ci/load-tool-pins.sh
+// reads the same policy file (see pinnedinputs_toolpins.go).
 type toolPins struct {
-	Cosign            string
-	Buildx            string
-	Buildkit          string
-	QEMU              string
-	Syft              string
-	ActionlintVersion string
-	ActionlintSHA256  string
-	ZizmorVersion     string
-	ZizmorSHA256      string
+	Cosign               string
+	Buildx               string
+	Buildkit             string
+	QEMU                 string
+	Syft                 string
+	ActionlintVersion    string
+	ActionlintSHA256     string
+	ZizmorVersion        string
+	ZizmorSHA256         string
+	OrasVersion          string
+	OrasLinuxAMD64SHA256 string
 }
 
 // loadToolPins reads policy/tool-pins.toml and requires every pin to be present.
@@ -97,39 +100,35 @@ func loadToolPins(path string) (toolPins, error) {
 	return parseToolPins(text, path)
 }
 
-// parseToolPins parses the [tool_pins] table out of already-read TOML text and
-// requires every pin to be present. Split from loadToolPins so the parse path
-// (which handles attacker-influenceable policy text) can be fuzzed directly.
+// parseToolPins parses the [tool_pins] table out of already-read TOML text,
+// requires every key of the fixed table, and requires each value to match its
+// key's format. Split from loadToolPins so the parse path (which handles
+// attacker-influenceable policy text) can be fuzzed directly.
 func parseToolPins(text, path string) (toolPins, error) {
 	root, err := tomlsubset.Parse(text, path)
 	if err != nil {
 		return toolPins{}, err
+	}
+	for key := range root {
+		if key != "tool_pins" {
+			return toolPins{}, fmt.Errorf("%s must define only the [tool_pins] table, found %q", path, key)
+		}
 	}
 	table, ok := root["tool_pins"].(map[string]any)
 	if !ok {
 		return toolPins{}, fmt.Errorf("%s must define a [tool_pins] table", path)
 	}
 	var pins toolPins
-	fields := []struct {
-		key string
-		dst *string
-	}{
-		{"cosign", &pins.Cosign},
-		{"buildx", &pins.Buildx},
-		{"buildkit", &pins.Buildkit},
-		{"qemu", &pins.QEMU},
-		{"syft", &pins.Syft},
-		{"actionlint_version", &pins.ActionlintVersion},
-		{"actionlint_sha256", &pins.ActionlintSHA256},
-		{"zizmor_version", &pins.ZizmorVersion},
-		{"zizmor_sha256", &pins.ZizmorSHA256},
-	}
+	fields := pins.fields()
 	known := make(map[string]bool, len(fields))
 	for _, field := range fields {
 		known[field.key] = true
 		value, ok := MustString(table[field.key])
 		if !ok || strings.TrimSpace(value) == "" {
 			return toolPins{}, fmt.Errorf("%s [tool_pins] must set a non-empty %s", path, field.key)
+		}
+		if !field.format.MatchString(value) {
+			return toolPins{}, fmt.Errorf("%s [tool_pins] %s must match %s, found %q", path, field.key, field.format, value)
 		}
 		*field.dst = value
 	}

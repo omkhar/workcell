@@ -84,6 +84,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/ci/build-validator-image.sh",
 		"scripts/ci/lib/local-docker-parity.sh",
+		"scripts/ci/load-tool-pins.sh",
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
 		"scripts/install-dev-tools.sh",
@@ -802,8 +803,9 @@ func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
 func TestCheckPinnedInputsRejectsToolPinPolicyDrift(t *testing.T) {
 	t.Parallel()
 
-	// Cover a plain version pin, an image pin (special chars), and a
-	// regex-extracted pin. The mutation is derived from whatever value the
+	// Cover a release-tag pin, an image pin (special chars), and a digest pin.
+	// The policy file is the single source, so a malformed value is caught by
+	// its format check. The mutation is derived from whatever value the
 	// fixture holds, so a routine pin bump does not require editing this test.
 	for _, key := range []string{"cosign", "buildkit", "zizmor_sha256"} {
 		key := key
@@ -820,8 +822,8 @@ func TestCheckPinnedInputsRejectsToolPinPolicyDrift(t *testing.T) {
 				return updated
 			})
 			err := metadatautil.CheckPinnedInputs(cfg)
-			if err == nil || !strings.Contains(err.Error(), "does not match policy/tool-pins.toml") {
-				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want tool-pin policy drift rejection", err)
+			if err == nil || !strings.Contains(err.Error(), "[tool_pins] "+key+" must match") {
+				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want tool-pin format rejection", err)
 			}
 		})
 	}
@@ -833,7 +835,7 @@ func TestCheckPinnedInputsRejectsUnknownToolPinKey(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	toolPinsPath := filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "tool-pins.toml")
 	rewriteFile(t, toolPinsPath, func(content string) string {
-		return strings.Replace(content, "[tool_pins]", "[tool_pins]\nbogus = \"x\"", 1)
+		return strings.Replace(content, "\n[tool_pins]\n", "\n[tool_pins]\nbogus = \"x\"\n", 1)
 	})
 	err := metadatautil.CheckPinnedInputs(cfg)
 	if err == nil || !strings.Contains(err.Error(), "unknown key") {

@@ -41,6 +41,11 @@ internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unrevie
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
 internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherRepository	30d03cdc	a test builds the expected error text from the repository it mutates in the fixture policy file
+internal/metadatautil	TestCheckPinnedInputsRequiresToolPinLoaderAgreement	d308b9e3	a test precondition on the fixture text that the test itself rewrites
+internal/metadatautil	TestToolPinLoaderAcceptsExactlyTheGoFormats	5c86da12,f7ed5bd5	a test skips candidate values one key = "value" line cannot hold and checks the Go format on the value it wrote
+internal/metadatautil	fixtureToolPin	740c4107,abc18589,b91a13db	a test reads one key = "value" line of the fixture policy file it is about to mutate
+internal/metadatautil	parseToolPins	81e0f0b1	the pattern checks a decoded policy/tool-pins.toml value against its key format
 internal/metadatautil	shellGrepIsQuiet	1541affc,a2afbe0b,d97760a1	the checks read the option words of one grep stage that shellQuietGrepStages cut at a pipe; they parse the grep options, not free text
 internal/metadatautil	shellQuietGrepStages	ff1b798d	the search cuts each later pipeline stage at the next shell operator in the comment-free command text
 internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
@@ -93,6 +98,7 @@ internal/metadatautil	afterDeclaration	8e5f5463	unreviewed debt: review the subj
 internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewrite the goose ARG pins, and the result must read back through gooseDockerfilePin as the target pin
 internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
 internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
+internal/metadatautil	toolPinImagePattern	34674b86,bcbe3cfe	builds the anchored per-repository image format from a fixed repository constant
 internal/metadatautil	validateGooseInstall	20131f69	the search picks the RUN instruction that names the goose release URL among whole instructions; validateGooseInstallRun then reads its commands, and a second RUN with the URL fails
 internal/metadatautil	readGoosePinInstructions	39ba5691	the pattern checks a stable X.Y.Z version on the value of the one ARG instruction
 internal/metadatautil	applyPlanText	429ed54b,9666434d	unreviewed debt: review the subject, then port or justify
@@ -328,6 +334,7 @@ internal/metadatautil	workflowLanePathPattern	12b057e2,80c898e9	unreviewed debt:
 internal/metadatautil	workflowLaneRequiredLabels	af99a851	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowRefHits	67df4185,a8f1f86a,b5a33b9b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	wrappedCommand	3e44657e,53923640,6a96b240,6c88352a,8949f85e,b0f0a35b,c83453df,cd42118c,ce48222a,e200d8a8	unreviewed debt: review the subject, then port or justify
+internal/testkit	TestToolPinImageConsumersRejectOtherRepositories	55750ef1	a test assertion on the refusal text that the script under test prints
 internal/testkit	TestUninstallRefusesSymlinkedScript	d2735c1b	the search checks the output of an uninstall run through a symlink, not script text
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
 internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
@@ -453,7 +460,7 @@ internal/testkit	TestUpstreamRefreshIncludesRuntimeGoPins	7c2d45f6	unreviewed de
 internal/testkit	TestUpstreamRefreshOverlapStep	30ee2c4a,ef7903e0	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshPublishLocalChecks	4fbe5eab,bdc0220f,bdc0220f,fd7decae	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshScopeGuard	5d2dcbca	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,356845cb,4561edc6,809ad8df,84d882d1,84d882d1,875c2600,b8f34d1a,f1d02810	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,356845cb,4561edc6,809ad8df,84d882d1,b12cdf05,b8f34d1a,b8f34d1a,f1d02810,fbdcbbb8	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoExecutesPublicContractHistoryGate	4e0b3a69	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoRejectsStaleMarkdownlintInstall	bef5cf72,e6974c0f	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoUsesLockedMarkdownlint	06f3db68,56939475,cccd41de	unreviewed debt in a test: review the subject, then port or justify
