@@ -88,7 +88,11 @@ fi
   exit 2
 }
 
-if [[ "$(git -C "${ROOT_DIR}" rev-parse HEAD)" != "${HEAD_SHA}" ]]; then
+if ! checked_out_head="$(git -C "${ROOT_DIR}" rev-parse HEAD)"; then
+  echo "Unable to resolve the checked-out head." >&2
+  exit 1
+fi
+if [[ "${checked_out_head}" != "${HEAD_SHA}" ]]; then
   echo "The checkout is not at the pull request head ${HEAD_SHA}." >&2
   exit 1
 fi
