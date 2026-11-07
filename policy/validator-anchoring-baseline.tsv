@@ -42,13 +42,12 @@ internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: re
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
 internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherRepository	30d03cdc	a test builds the expected error text from the repository it mutates in the fixture policy file
+internal/metadatautil	TestCheckPinnedInputsRejectsWorkflowToolPinBypass	a687f1b3	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPinnedInputsRequiresToolPinLoaderAgreement	d308b9e3	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestToolPinLoaderAcceptsExactlyTheGoFormats	5c86da12,f7ed5bd5	a test skips candidate values one key = "value" line cannot hold and checks the Go format on the value it wrote
-internal/metadatautil	TestToolPinBindingChecksRejectBypasses	0db23ad6	a test precondition on the test workflow text that the test itself rewrites; TEMPORARY, removed with the tool-pin bridge
 internal/metadatautil	containsToolPinValue	e7172b96	the index finds a policy/tool-pins.toml value inside a decoded workflow YAML scalar; it only denies, so text a comment holds cannot satisfy it
 internal/metadatautil	fixtureToolPin	740c4107,abc18589,b91a13db	a test reads one key = "value" line of the fixture policy file it is about to mutate
 internal/metadatautil	parseToolPins	81e0f0b1	the pattern checks a decoded policy/tool-pins.toml value against its key format
-internal/metadatautil	pinnedInputsCheck.toolPinBridgeInline	4c97e72f,de7641ae,fa7872f6	TEMPORARY tool-pin bridge: a match on raw workflow text only ends the bridge, which turns the stricter binding checks on; it never relaxes a check
 internal/metadatautil	rejectInlineToolPins	ce23d36a	the substring finds a tool-pin image repository inside a decoded workflow YAML scalar; it only denies
 internal/metadatautil	rejectToolPinLoaderEnv	6d4747d3,7b56a4cb,d91244a9,dc54a3fe	the prefixes check a decoded workflow or job env key name; they only deny
 internal/metadatautil	replaceInReleaseJob	4ac3aaf4,9d4ac0c7	a test locates the job it mutates in the release workflow fixture
@@ -197,13 +196,11 @@ internal/metadatautil	parseOperatorWorkflow	1cac3ece	unreviewed debt: review the
 internal/metadatautil	parseBuildStampedVersion	c1d7340c,f0c4e7f3	the pattern and the cut check one npm version string, not file content
 internal/metadatautil	parseStableVersion	dabcc20c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.loadCIReproBuildJob	d666d2a3,eb3871b0	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	pinnedInputsCheck.validateBuildxPins	48c8524d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCIReproEntriesAndTail	9d3f0df3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCIReproStrategy	7e8452b9,c6a9cfca,ccbc910c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCargoRustVersion	be820749	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCodeownersAndHostedPolicy	59e723e9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCosignReleaseBindings	a893555f	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	pinnedInputsCheck.validateCosignVersions	32b3e304	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseArtifactFlows	c3bf63ff	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseManifestAndRuntimeSources	584f0f40,fc9ae287	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleasePublishingInputs	145c5d36	unreviewed debt: review the subject, then port or justify
@@ -243,8 +240,6 @@ internal/metadatautil	requireTOMLString	13dcfc02,30abd784,31804416	unreviewed de
 internal/metadatautil	requireTextCount	e9ad5856	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireTextRequirements	f61fa3cc	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireToolchainDirective	50b138d9	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	requireUniformWorkflowEnv	1bd24a7f,7dc2b398,baa9c486,cc424436,d22b541c	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	requireYAMLKey	26888f8a,99b8adc7,fc925d12	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	resolveRequirementPath	77876af9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	restampFlagFixture	75b05b87	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	reviewedLibrarySource	8a4712f0	unreviewed debt: review the subject, then port or justify
@@ -324,7 +319,6 @@ internal/metadatautil	validateGitHubAPIURL	c8f348a5	unreviewed debt: review the 
 internal/metadatautil	validateJobToolPinSteps	4fdab752	the prefix checks a decoded step uses: value
 internal/metadatautil	validateNodeMarkdownlintPinnedInputs	1b747f1f,217884f9,361c845f,4058be84,a00a3081,a342f88f,abf9a4c5,ac86cfb2,bbeacf0e,bed3f7cf,c6e103b2,da153a0e,ec9a6cd1,f4061ed6	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateNodeProviderLock	aa25bc5b,aa25bc5b	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	validateOptionalWorkflowPin	37a42590,810c07df,b33c10f8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateProviderChecksumUpdate	eafad8d7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateReleaseAttestationSteps	31c493c3,31c493c3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateReleaseAttestationVerifier	ec30c192	unreviewed debt: review the subject, then port or justify
