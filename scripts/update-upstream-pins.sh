@@ -53,16 +53,8 @@ DEBIAN_BOOTSTRAP_MANIFEST_PATH="${ROOT_DIR}/runtime/container/debian-bootstrap.e
 GO_MOD_PATH="${ROOT_DIR}/go.mod"
 RUST_TOOLCHAIN_PATH="${ROOT_DIR}/runtime/container/rust/rust-toolchain.toml"
 CARGO_MANIFEST_PATH="${ROOT_DIR}/runtime/container/rust/Cargo.toml"
-CI_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/ci.yml"
-DOCS_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/docs.yml"
-FUZZ_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/fuzz.yml"
-MUTATION_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/mutation.yml"
 VALIDATOR_IMAGE_SCRIPT_PATH="${ROOT_DIR}/scripts/ci/build-validator-image.sh"
 CHECK_DEAD_CODE_SCRIPT_PATH="${ROOT_DIR}/scripts/check-dead-code.sh"
-PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
-RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
-SECURITY_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/security.yml"
-UPSTREAM_REFRESH_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/upstream-refresh.yml"
 TOOL_PINS_POLICY_PATH="${ROOT_DIR}/policy/tool-pins.toml"
 
 mode="summary"
@@ -217,36 +209,23 @@ extract_dockerfile_arg() {
   )
 }
 
-extract_yaml_scalar() {
-  local file="$1"
-  local key="$2"
-  awk -v key="${key}" '$1 == key ":" { print $2; exit }' "${file}"
-}
-
-extract_workflow_env_value() {
-  local file="$1"
-  local key="$2"
-  awk -v key="${key}:" '
-    $1 == key {
-      if (count == 0) {
-        value = $2
-      } else if ($2 != value) {
-        printf "%s must use one reviewed value in %s; found both %s and %s\n", key, FILENAME, value, $2 > "/dev/stderr"
-        failed = 1
-        exit 4
-      }
-      count++
+# extract_tool_pin prints one value from policy/tool-pins.toml, the single
+# source of the CI and release tool pins. No workflow holds a copy, so a tool
+# pin bump rewrites only that file.
+extract_tool_pin() {
+  local key="$1"
+  awk -F'"' -v prefix="${key} = " '
+    index($0, prefix) == 1 && NF == 3 {
+      print $2
+      found = 1
+      exit
     }
     END {
-      if (failed) {
-        exit 4
-      }
-      if (count == 0) {
+      if (!found) {
         exit 3
       }
-      print value
     }
-  ' "${file}"
+  ' "${TOOL_PINS_POLICY_PATH}"
 }
 
 file_mode_octal() {
@@ -293,33 +272,6 @@ replace_line_with_prefix() {
   ' "${file}" >"${tmp}"; then
     rm -f "${tmp}"
     echo "Unable to replace ${prefix} in ${file}" >&2
-    exit 1
-  fi
-  replace_tmp_over_file "${tmp}" "${file}"
-}
-
-replace_all_lines_with_prefix() {
-  local file="$1"
-  local prefix="$2"
-  local newline="$3"
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh.XXXXXX")"
-  if ! awk -v prefix="${prefix}" -v newline="${newline}" '
-    BEGIN { replaced = 0 }
-    index($0, prefix) == 1 {
-      print newline
-      replaced++
-      next
-    }
-    { print }
-    END {
-      if (replaced == 0) {
-        exit 3
-      }
-    }
-  ' "${file}" >"${tmp}"; then
-    rm -f "${tmp}"
-    echo "Failed to update ${prefix} in ${file}" >&2
     exit 1
   fi
   replace_tmp_over_file "${tmp}" "${file}"
@@ -658,8 +610,8 @@ current_rustup_sha_arm64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}
 current_hadolint_version="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" HADOLINT_VERSION)"
 current_hadolint_sha_amd64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" HADOLINT_LINUX_X86_64_SHA256)"
 current_hadolint_sha_arm64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" HADOLINT_LINUX_ARM64_SHA256)"
-current_buildkit_image="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
-current_buildx_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
+current_buildkit_image="$(extract_tool_pin buildkit)"
+current_buildx_version="$(extract_tool_pin buildx)"
 target_buildx_version="$({
   cd "${ROOT_DIR}" || exit
   printf '%s' "${buildx_install_catalog_response}" |
@@ -669,12 +621,6 @@ unavailable_buildx_version=""
 if [[ "${target_buildx_version}" != "${candidate_buildx_version}" ]]; then
   unavailable_buildx_version="${candidate_buildx_version}"
 fi
-current_docs_buildkit_image="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
-current_docs_buildx_version="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
-current_mutation_buildkit_image="$(extract_yaml_scalar "${MUTATION_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
-current_mutation_buildx_version="$(extract_yaml_scalar "${MUTATION_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
-current_fuzz_buildkit_image="$(extract_yaml_scalar "${FUZZ_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
-current_fuzz_buildx_version="$(extract_yaml_scalar "${FUZZ_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
 current_validator_image_buildkit_fallback="$(awk -v prefix="BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-" '
   index($0, prefix) == 1 {
     value = substr($0, length(prefix) + 1)
@@ -682,16 +628,13 @@ current_validator_image_buildkit_fallback="$(awk -v prefix="BUILDKIT_IMAGE=\"\${
     print value
     exit
   }' "${VALIDATOR_IMAGE_SCRIPT_PATH}")"
-current_cosign_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_COSIGN_VERSION)"
-current_upstream_refresh_cosign_version="$(extract_yaml_scalar "${UPSTREAM_REFRESH_WORKFLOW_PATH}" WORKCELL_COSIGN_VERSION)"
-current_qemu_image="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_QEMU_IMAGE)"
-current_syft_version="$(extract_yaml_scalar "${RELEASE_WORKFLOW_PATH}" WORKCELL_SYFT_VERSION)"
-current_actionlint_version="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PATH}" ACTIONLINT_VERSION)"
-current_actionlint_sha="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PATH}" ACTIONLINT_SHA256)"
-current_zizmor_version="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PATH}" ZIZMOR_VERSION)"
-current_zizmor_sha="$(extract_workflow_env_value "${SECURITY_WORKFLOW_PATH}" ZIZMOR_SHA256)"
-current_release_zizmor_version="$(extract_workflow_env_value "${RELEASE_WORKFLOW_PATH}" ZIZMOR_VERSION)"
-current_release_zizmor_sha="$(extract_workflow_env_value "${RELEASE_WORKFLOW_PATH}" ZIZMOR_SHA256)"
+current_cosign_version="$(extract_tool_pin cosign)"
+current_qemu_image="$(extract_tool_pin qemu)"
+current_syft_version="$(extract_tool_pin syft)"
+current_actionlint_version="$(extract_tool_pin actionlint_version)"
+current_actionlint_sha="$(extract_tool_pin actionlint_sha256)"
+current_zizmor_version="$(extract_tool_pin zizmor_version)"
+current_zizmor_sha="$(extract_tool_pin zizmor_sha256)"
 
 runtime_base_track="${current_runtime_base%@*}"
 validator_base_track="${current_validator_base%@*}"
@@ -826,23 +769,14 @@ for current_target_pair in \
   "${current_hadolint_sha_arm64}|${target_hadolint_sha_arm64}" \
   "${current_buildkit_image}|${target_buildkit_image}" \
   "${current_buildx_version}|${target_buildx_version}" \
-  "${current_docs_buildkit_image}|${target_buildkit_image}" \
-  "${current_docs_buildx_version}|${target_buildx_version}" \
-  "${current_mutation_buildkit_image}|${target_buildkit_image}" \
-  "${current_mutation_buildx_version}|${target_buildx_version}" \
-  "${current_fuzz_buildkit_image}|${target_buildkit_image}" \
-  "${current_fuzz_buildx_version}|${target_buildx_version}" \
   "${current_validator_image_buildkit_fallback}|${target_buildkit_image}" \
   "${current_cosign_version}|${target_cosign_version}" \
-  "${current_upstream_refresh_cosign_version}|${target_cosign_version}" \
   "${current_qemu_image}|${target_qemu_image}" \
   "${current_syft_version}|${target_syft_version}" \
   "${current_actionlint_version}|${target_actionlint_version}" \
   "${current_actionlint_sha}|${target_actionlint_sha}" \
   "${current_zizmor_version}|${target_zizmor_version}" \
-  "${current_zizmor_sha}|${target_zizmor_sha}" \
-  "${current_release_zizmor_version}|${target_zizmor_version}" \
-  "${current_release_zizmor_sha}|${target_zizmor_sha}"; do
+  "${current_zizmor_sha}|${target_zizmor_sha}"; do
   current_value="${current_target_pair%%|*}"
   target_value="${current_target_pair#*|}"
   if [[ "${current_value}" != "${target_value}" ]]; then
@@ -900,13 +834,10 @@ print_summary() {
     printf '  buildx-candidate: %s (waiting for setup-buildx-action install catalog)\n' "${unavailable_buildx_version}"
   fi
   print_summary_line "cosign-version" "${current_cosign_version}" "${target_cosign_version}"
-  print_summary_line "upstream-refresh-cosign-version" "${current_upstream_refresh_cosign_version}" "${target_cosign_version}"
   print_summary_line "qemu-image" "${current_qemu_image}" "${target_qemu_image}"
   print_summary_line "syft-version" "${current_syft_version}" "${target_syft_version}"
   print_summary_line "actionlint-version" "${current_actionlint_version}" "${target_actionlint_version}"
   print_summary_line "zizmor-version" "${current_zizmor_version}" "${target_zizmor_version}"
-  print_summary_line "release-zizmor-version" "${current_release_zizmor_version}" "${target_zizmor_version}"
-  print_summary_line "release-zizmor-sha" "${current_release_zizmor_sha}" "${target_zizmor_sha}"
   printf '%s\n' "${provider_summary}"
 }
 
@@ -969,38 +900,11 @@ replace_line_with_prefix "${CHECK_DEAD_CODE_SCRIPT_PATH}" 'readonly DEADCODE_VER
 replace_line_with_prefix "${RUST_TOOLCHAIN_PATH}" 'channel = ' "channel = \"${target_rust_version}\""
 replace_line_with_prefix "${CARGO_MANIFEST_PATH}" 'rust-version = ' "rust-version = \"${target_cargo_rust_version}\""
 
-replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
-replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
-replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
-replace_line_with_prefix "${CI_WORKFLOW_PATH}" '  WORKCELL_QEMU_IMAGE:' "  WORKCELL_QEMU_IMAGE: ${target_qemu_image}"
-
-replace_line_with_prefix "${DOCS_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
-replace_line_with_prefix "${DOCS_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
-replace_line_with_prefix "${MUTATION_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
-replace_line_with_prefix "${MUTATION_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
-replace_line_with_prefix "${FUZZ_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
-replace_line_with_prefix "${FUZZ_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
 replace_line_with_prefix "${VALIDATOR_IMAGE_SCRIPT_PATH}" "BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-" "BUILDKIT_IMAGE=\"\${WORKCELL_BUILDKIT_IMAGE:-${target_buildkit_image}}\""
 
-replace_line_with_prefix "${PIN_HYGIENE_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
-replace_line_with_prefix "${UPSTREAM_REFRESH_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_BUILDKIT_IMAGE:' "  WORKCELL_BUILDKIT_IMAGE: ${target_buildkit_image}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_BUILDX_VERSION:' "  WORKCELL_BUILDX_VERSION: ${target_buildx_version}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_COSIGN_VERSION:' "  WORKCELL_COSIGN_VERSION: ${target_cosign_version}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_QEMU_IMAGE:' "  WORKCELL_QEMU_IMAGE: ${target_qemu_image}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '  WORKCELL_SYFT_VERSION:' "  WORKCELL_SYFT_VERSION: ${target_syft_version}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ACTIONLINT_SHA256:' "          ACTIONLINT_SHA256: ${target_actionlint_sha}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ACTIONLINT_VERSION:' "          ACTIONLINT_VERSION: ${target_actionlint_version}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ZIZMOR_SHA256:' "          ZIZMOR_SHA256: ${target_zizmor_sha}"
-replace_line_with_prefix "${RELEASE_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' "          ZIZMOR_VERSION: ${target_zizmor_version}"
-
-replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_SHA256:' "          ACTIONLINT_SHA256: ${target_actionlint_sha}"
-replace_line_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ACTIONLINT_VERSION:' "          ACTIONLINT_VERSION: ${target_actionlint_version}"
-replace_all_lines_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_SHA256:' "          ZIZMOR_SHA256: ${target_zizmor_sha}"
-replace_all_lines_with_prefix "${SECURITY_WORKFLOW_PATH}" '          ZIZMOR_VERSION:' "          ZIZMOR_VERSION: ${target_zizmor_version}"
-
-# Keep the reviewed canonical pin policy in lockstep with the workflow edits,
-# before check-pinned-inputs (below) asserts the two agree.
+# policy/tool-pins.toml is the single source of the CI and release tool pins:
+# the workflows read it at run time, so a tool pin bump changes no workflow
+# file. check-pinned-inputs (below) validates the new values.
 replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'cosign = ' "cosign = \"${target_cosign_version}\""
 replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'buildx = ' "buildx = \"${target_buildx_version}\""
 replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'buildkit = ' "buildkit = \"${target_buildkit_image}\""

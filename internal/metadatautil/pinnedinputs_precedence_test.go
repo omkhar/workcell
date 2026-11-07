@@ -64,14 +64,13 @@ func TestCheckPinnedInputsPreservesCompoundValidationFailurePrecedence(t *testin
 		{
 			name: "actionlint version before digest",
 			mutate: func(tb testing.TB, cfg metadatautil.PinnedInputsConfig) {
-				securityPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
-				rewriteFile(tb, securityPath, func(content string) string {
-					content = replaceAllMatches(tb, content, regexp.MustCompile(`ACTIONLINT_VERSION: [0-9]+\.[0-9]+\.[0-9]+`), "ACTIONLINT_VERSION: 0.0.0")
-					return replaceAllMatches(tb, content, regexp.MustCompile(`ACTIONLINT_SHA256: [0-9a-f]{64}`), "ACTIONLINT_SHA256: deadbeef")
+				rewriteFile(tb, toolPinsFixturePath(cfg), func(content string) string {
+					content = replaceFirstMatch(tb, content, regexp.MustCompile(`(?m)^actionlint_version = ".*"$`), `actionlint_version = "v0.0.0"`)
+					return replaceFirstMatch(tb, content, regexp.MustCompile(`(?m)^actionlint_sha256 = ".*"$`), `actionlint_sha256 = "deadbeef"`)
 				})
 			},
-			want: func(metadatautil.PinnedInputsConfig) string {
-				return "ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml"
+			want: func(cfg metadatautil.PinnedInputsConfig) string {
+				return fmt.Sprintf("%s [tool_pins] actionlint_version must match ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$, found %q", toolPinsFixturePath(cfg), "v0.0.0")
 			},
 		},
 		{

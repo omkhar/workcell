@@ -59,12 +59,11 @@ case "${kind}" in
   *) die "unknown candidate kind" ;;
 esac
 
-# Hold: the App does not publish a toolchain candidate. Once the tool pins
-# leave the workflows, a tool pin bump changes only policy/tool-pins.toml, and
-# the .github/workflows/ rule below no longer holds one back. No scope guard
-# reviews the toolchain candidate yet, so a person publishes it from a host
-# until that guard exists. This hold comes before any GitHub call. The
-# toolchain branches below stay for that guard.
+# Hold: the App does not publish a toolchain candidate. A tool pin bump changes
+# only policy/tool-pins.toml, so the .github/workflows/ rule below no longer
+# holds one back, and no scope guard reviews the toolchain candidate yet. A
+# person publishes it from a host until that guard exists. This hold comes
+# before any GitHub call. The toolchain branches below stay for that guard.
 if [[ "${kind}" == toolchain ]]; then
   echo "- toolchain: not published by the App, it waits for the toolchain scope guard. Publish it from a host: \`./scripts/publish-upstream-refresh-pr.sh --run-id ${GITHUB_RUN_ID} --candidate toolchain\`" >>"${audit_file}"
   echo "::notice::The toolchain candidate waits for the toolchain scope guard and is not published by the App. Publish it from a host."
