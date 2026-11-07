@@ -44,8 +44,14 @@ internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,
 internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherRepository	30d03cdc	a test builds the expected error text from the repository it mutates in the fixture policy file
 internal/metadatautil	TestCheckPinnedInputsRequiresToolPinLoaderAgreement	d308b9e3	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestToolPinLoaderAcceptsExactlyTheGoFormats	5c86da12,f7ed5bd5	a test skips candidate values one key = "value" line cannot hold and checks the Go format on the value it wrote
+internal/metadatautil	TestToolPinBindingChecksRejectBypasses	0db23ad6	a test precondition on the test workflow text that the test itself rewrites; TEMPORARY, removed with the tool-pin bridge
+internal/metadatautil	TestToolPinBridgeEndsWhenAnyWorkflowUsesThePinsStep	00301a00	a test precondition on the fixture text that the test itself rewrites; TEMPORARY, removed with the tool-pin bridge
+internal/metadatautil	containsToolPinValue	e7172b96	the index finds a policy/tool-pins.toml value inside a decoded workflow YAML scalar; it only denies, so text a comment holds cannot satisfy it
 internal/metadatautil	fixtureToolPin	740c4107,abc18589,b91a13db	a test reads one key = "value" line of the fixture policy file it is about to mutate
 internal/metadatautil	parseToolPins	81e0f0b1	the pattern checks a decoded policy/tool-pins.toml value against its key format
+internal/metadatautil	pinnedInputsCheck.toolPinBridgeInline	4c97e72f,de7641ae,fa7872f6	TEMPORARY tool-pin bridge: a match on raw workflow text only ends the bridge, which turns the stricter binding checks on; it never relaxes a check
+internal/metadatautil	rejectInlineToolPins	ce23d36a	the substring finds a tool-pin image repository inside a decoded workflow YAML scalar; it only denies
+internal/metadatautil	rejectToolPinLoaderEnv	6d4747d3,7b56a4cb,d91244a9,dc54a3fe	the prefixes check a decoded workflow or job env key name; they only deny
 internal/metadatautil	shellGrepIsQuiet	1541affc,a2afbe0b,d97760a1	the checks read the option words of one grep stage that shellQuietGrepStages cut at a pipe; they parse the grep options, not free text
 internal/metadatautil	shellQuietGrepStages	ff1b798d	the search cuts each later pipeline stage at the next shell operator in the comment-free command text
 internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
@@ -99,6 +105,7 @@ internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewr
 internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
 internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
 internal/metadatautil	toolPinImagePattern	34674b86,bcbe3cfe	builds the anchored per-repository image format from a fixed repository constant
+internal/metadatautil	toolPinRefs	42addc7b,b4bf0af4	the patterns read pins step references in a decoded workflow YAML scalar, and a loose pattern that sees more references than the strict one fails the step
 internal/metadatautil	validateGooseInstall	20131f69	the search picks the RUN instruction that names the goose release URL among whole instructions; validateGooseInstallRun then reads its commands, and a second RUN with the URL fails
 internal/metadatautil	readGoosePinInstructions	39ba5691	the pattern checks a stable X.Y.Z version on the value of the one ARG instruction
 internal/metadatautil	applyPlanText	429ed54b,9666434d	unreviewed debt: review the subject, then port or justify
@@ -315,6 +322,7 @@ internal/metadatautil	validateDebianBootstrapPins	6ec441c7,9b91d8f0	unreviewed d
 internal/metadatautil	validateDebianSnapshot	709a350f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateDiscoverabilitySurface	32233c0f,3701cf9c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateGitHubAPIURL	c8f348a5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateJobToolPinSteps	4fdab752	the prefix checks a decoded step uses: value
 internal/metadatautil	validateNodeMarkdownlintPinnedInputs	1b747f1f,217884f9,361c845f,4058be84,a00a3081,a342f88f,abf9a4c5,ac86cfb2,bbeacf0e,bed3f7cf,c6e103b2,da153a0e,ec9a6cd1,f4061ed6	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateNodeProviderLock	aa25bc5b,aa25bc5b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateOptionalWorkflowPin	37a42590,810c07df,b33c10f8	unreviewed debt: review the subject, then port or justify
@@ -322,6 +330,8 @@ internal/metadatautil	validateProviderChecksumUpdate	eafad8d7	unreviewed debt: r
 internal/metadatautil	validateReleaseAttestationSteps	31c493c3,31c493c3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateReleaseAttestationVerifier	ec30c192	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateRuntimeBuildPreload	eca9d606	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateStepToolPinBindings	99105ea2	the pattern checks a decoded step if: expression for a status function that would run it after a failed pins step
+internal/metadatautil	validateToolPinActionInputs	5de4bec7	the prefix checks a decoded step uses: value
 internal/metadatautil	validateUpstreamRefreshJobs	4a1377ab,832859f5,832859f5,96779f0c,ab5bf77a,f2aad5bd	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateValidatorImageIdentityScript	8a9c5859	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateWorkflowAction	985e2c77,ecc9ee9b	unreviewed debt: review the subject, then port or justify
