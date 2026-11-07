@@ -6,15 +6,9 @@ package metadatautil
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
-
-type workflowPinSpec struct {
-	name, expected, expectedPath string
-	require                      func(string, string) error
-}
 
 func (check *pinnedInputsCheck) validateFoundationalPins() error {
 	if err := validateDockerPinnedInputs(
@@ -127,106 +121,6 @@ func (check *pinnedInputsCheck) validateProviderLock() error {
 			return validateNodeProviderLock("runtime/container/providers-uncertified/package-lock.json", check.uncertifiedPackageJSON, check.uncertifiedPackageLock)
 		},
 	)
-}
-
-func (check *pinnedInputsCheck) validateBuildxPins() error {
-	var ciValue, releaseValue string
-	if err := loadPinnedStrings(requireYAMLKey, []pinnedStringInput{
-		{&ciValue, check.ciWorkflow, "WORKCELL_BUILDX_VERSION", ".github/workflows/ci.yml"},
-		{&releaseValue, check.releaseWorkflow, "WORKCELL_BUILDX_VERSION", ".github/workflows/release.yml"},
-	}); err != nil {
-		return err
-	}
-	if ciValue != releaseValue {
-		return errors.New("WORKCELL_BUILDX_VERSION must match between .github/workflows/ci.yml and .github/workflows/release.yml")
-	}
-	if !pinnedReleaseTagPattern.MatchString(ciValue) {
-		return fmt.Errorf("WORKCELL_BUILDX_VERSION must be an exact pinned release (for example v0.32.1), found %q", ciValue)
-	}
-	check.toolPins.buildx = ciValue
-	return nil
-}
-
-func (check *pinnedInputsCheck) validateQEMUPins() error {
-	var ciValue, releaseValue string
-	if err := loadPinnedStrings(requireYAMLKey, []pinnedStringInput{
-		{&ciValue, check.ciWorkflow, "WORKCELL_QEMU_IMAGE", ".github/workflows/ci.yml"},
-		{&releaseValue, check.releaseWorkflow, "WORKCELL_QEMU_IMAGE", ".github/workflows/release.yml"},
-	}); err != nil {
-		return err
-	}
-	if ciValue != releaseValue {
-		return errors.New("WORKCELL_QEMU_IMAGE must match between .github/workflows/ci.yml and .github/workflows/release.yml")
-	}
-	if err := requirePinnedBaseImage(ciValue, "WORKCELL_QEMU_IMAGE", ".github/workflows/ci.yml"); err != nil {
-		return err
-	}
-	check.toolPins.qemu = ciValue
-	return nil
-}
-
-func (check *pinnedInputsCheck) validateBuildkitPins() error {
-	var ciValue, releaseValue string
-	if err := loadPinnedStrings(requireYAMLKey, []pinnedStringInput{
-		{&ciValue, check.ciWorkflow, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"},
-		{&releaseValue, check.releaseWorkflow, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/release.yml"},
-	}); err != nil {
-		return err
-	}
-	if ciValue != releaseValue {
-		return errors.New("WORKCELL_BUILDKIT_IMAGE must match between .github/workflows/ci.yml and .github/workflows/release.yml")
-	}
-	if err := requirePinnedBaseImage(ciValue, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"); err != nil {
-		return err
-	}
-	check.toolPins.buildkit = ciValue
-	return nil
-}
-
-func (check *pinnedInputsCheck) validateWorkflowBuilderPins() error {
-	specs := []workflowPinSpec{
-		{
-			name: "WORKCELL_BUILDX_VERSION", expected: check.toolPins.buildx, expectedPath: ".github/workflows/ci.yml",
-			require: func(string, string) error { return nil },
-		},
-		{
-			name: "WORKCELL_BUILDKIT_IMAGE", expected: check.toolPins.buildkit, expectedPath: ".github/workflows/ci.yml",
-			require: func(text, path string) error {
-				return requireTextRequirements(textRequirement{
-					text: text, needle: "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}",
-					err: fmt.Errorf("%s must pin the BuildKit daemon image used by setup-buildx-action", path),
-				})
-			},
-		},
-	}
-	for _, workflowPath := range workflowYAMLFiles(check.cfg.WorkflowsDir) {
-		text, err := readText(workflowPath)
-		if err != nil {
-			return err
-		}
-		path := ".github/workflows/" + filepath.Base(workflowPath)
-		for _, spec := range specs {
-			if err := validateOptionalWorkflowPin(text, path, spec); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func validateOptionalWorkflowPin(text, path string, spec workflowPinSpec) error {
-	present := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(spec.name) + `:`).MatchString(text)
-	if !present {
-		return nil
-	}
-	value, err := requireYAMLKey(text, spec.name, path)
-	if err != nil {
-		return err
-	}
-	if err := requireEqual(spec.name, spec.expected, spec.expectedPath, value, path); err != nil {
-		return err
-	}
-	return spec.require(text, path)
 }
 
 func (check *pinnedInputsCheck) validateValidatorBuildkit() error {
