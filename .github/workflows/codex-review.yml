@@ -39,10 +39,8 @@ jobs:
     environment:
       name: codex-review
     permissions:
-      # The checkout reads the pull request head.
-      contents: read
-      # The job posts the one review comment.
-      pull-requests: write
+      contents: read # Check out the pull request head.
+      pull-requests: write # Post the one review comment.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
