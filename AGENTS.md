@@ -259,6 +259,11 @@ argument again. Do not start another review round to settle them.
   provider PR auto-merges after the 48 h cool-off when scope-guard and all
   required checks pass. A toolchain PR needs human review. All other PRs keep
   the host-side publication and maintainer signing rules.
+- The `Codex review` lane posts one comment for each reviewed head. Its marker
+  names the head and the number of findings. Before merge, require the newest
+  marker for the exact current head. Fix each finding, or reply with the
+  disposition and resolve it. After three rounds on one PR, file the open
+  findings as issues and merge after a trial.
 - Actionable comments must be addressed or explicitly dispositioned before
   merge.
 - Re-check comments and review threads after CI turns green and immediately

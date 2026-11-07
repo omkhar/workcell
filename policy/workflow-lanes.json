@@ -416,6 +416,19 @@
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
     },
     {
+      "id": "codex-review.yml/codex-review",
+      "workflow_path": ".github/workflows/codex-review.yml",
+      "workflow_name": "Codex review",
+      "job_id": "codex-review",
+      "job_name": "Codex review",
+      "workflow_events": [
+        "pull_request"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "independent review lane; it runs the pinned Codex CLI against the pull request head with the OPENAI_API_KEY secret of the codex-review environment and posts the findings as the review marker, so it depends on a repository secret and a PR comment and has no local mirror"
+    },
+    {
       "id": "docs.yml/spelling-and-manpage",
       "workflow_path": ".github/workflows/docs.yml",
       "workflow_name": "Docs",

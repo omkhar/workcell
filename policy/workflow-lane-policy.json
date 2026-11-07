@@ -118,6 +118,11 @@
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
     },
+    "codex-review.yml/codex-review": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "independent review lane; it runs the pinned Codex CLI against the pull request head with the OPENAI_API_KEY secret of the codex-review environment and posts the findings as the review marker, so it depends on a repository secret and a PR comment and has no local mirror"
+    },
     "docs.yml/spelling-and-manpage": {
       "profiles": ["pr-parity", "release-preflight"],
       "authority": "pr-parity",
