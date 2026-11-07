@@ -24,37 +24,34 @@ const (
 )
 
 type updaterFixturePins struct {
-	RuntimeBase                  string
-	ValidatorBase                string
-	GoToolchain                  string
-	GoLanguage                   string
-	GoAMD64SHA                   string
-	GoARM64SHA                   string
-	RuntimeGoVersion             string
-	RuntimeGoAMD64SHA            string
-	RuntimeGoARM64SHA            string
-	DeadcodeVersion              string
-	RustVersion                  string
-	RuntimeRustImage             string
-	RustupVersion                string
-	RustupAMD64SHA               string
-	RustupARM64SHA               string
-	HadolintVersion              string
-	HadolintAMD64SHA             string
-	HadolintARM64SHA             string
-	HadolintChecksums            string
-	BuildkitImage                string
-	BuildxVersion                string
-	CosignVersion                string
-	UpstreamRefreshCosignVersion string
-	QEMUImage                    string
-	SyftVersion                  string
-	ActionlintVersion            string
-	ActionlintSHA                string
-	ZizmorVersion                string
-	ZizmorSHA                    string
-	ReleaseZizmorVersion         string
-	ReleaseZizmorSHA             string
+	RuntimeBase       string
+	ValidatorBase     string
+	GoToolchain       string
+	GoLanguage        string
+	GoAMD64SHA        string
+	GoARM64SHA        string
+	RuntimeGoVersion  string
+	RuntimeGoAMD64SHA string
+	RuntimeGoARM64SHA string
+	DeadcodeVersion   string
+	RustVersion       string
+	RuntimeRustImage  string
+	RustupVersion     string
+	RustupAMD64SHA    string
+	RustupARM64SHA    string
+	HadolintVersion   string
+	HadolintAMD64SHA  string
+	HadolintARM64SHA  string
+	HadolintChecksums string
+	BuildkitImage     string
+	BuildxVersion     string
+	CosignVersion     string
+	QEMUImage         string
+	SyftVersion       string
+	ActionlintVersion string
+	ActionlintSHA     string
+	ZizmorVersion     string
+	ZizmorSHA         string
 }
 
 type updaterFixtureDebianPackage struct {
@@ -299,6 +296,82 @@ func TestUpdateUpstreamPinsToolchainOnlyLeavesProviderPins(t *testing.T) {
 		t.Fatalf("provider updater command log = %q, want %q (no apply)", run.ProviderLog, want)
 	}
 	assertOnlyUpdaterManifestChanged(t, before, snapshotUpdaterFixtureFiles(t, driftedRoot))
+}
+
+// TestUpdateUpstreamPinsToolPinBumpChangesNoWorkflow simulates new upstream
+// cosign and Syft releases and proves the refresh writes them to
+// policy/tool-pins.toml alone: the workflows read that file at run time, so no
+// file under .github/workflows/ changes.
+func TestUpdateUpstreamPinsToolPinBumpChangesNoWorkflow(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	plan := updaterTargetDebianPlan()
+	manifest := updaterManifestFromPlan(plan)
+	served := pins
+	served.CosignVersion = "v9.9.9"
+	served.SyftVersion = "v9.9.1"
+	if served.CosignVersion == pins.CosignVersion || served.SyftVersion == pins.SyftVersion {
+		t.Fatal("simulated releases must differ from the current pins")
+	}
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	fixtureRoot := writeUpdaterFixture(t, manifest, 0o640)
+
+	checkRun := runUpdaterFixture(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, served, plan, "--check")
+	if checkRun.Code != 1 {
+		t.Fatalf("--check with new cosign and Syft releases exit code = %d, want 1\n%s", checkRun.Code, checkRun.Output)
+	}
+	for _, want := range []string{
+		"  cosign-version: " + pins.CosignVersion + " -> " + served.CosignVersion + "\n",
+		"  syft-version: " + pins.SyftVersion + " -> " + served.SyftVersion + "\n",
+	} {
+		if !strings.Contains(checkRun.Output, want) {
+			t.Fatalf("--check summary is missing %q\n%s", want, checkRun.Output)
+		}
+	}
+
+	before := snapshotUpdaterFixtureFiles(t, fixtureRoot)
+	applyRun := runUpdaterFixture(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, served, plan, "--apply")
+	if applyRun.Code != 0 {
+		t.Fatalf("--apply with new cosign and Syft releases exit code = %d, want 0\n%s", applyRun.Code, applyRun.Output)
+	}
+	assertUpdaterCommandCounts(t, applyRun.CIToolsLog, map[string]int{"check-pinned-inputs": 1})
+	after := snapshotUpdaterFixtureFiles(t, fixtureRoot)
+	const toolPinsPath = "policy/tool-pins.toml"
+	if len(before) != len(after) {
+		t.Fatalf("tool pin bump changed fixture file count: before=%d after=%d", len(before), len(after))
+	}
+	for path, beforeEntry := range before {
+		afterEntry, ok := after[path]
+		if !ok {
+			t.Fatalf("tool pin bump removed fixture file %s", path)
+		}
+		if path == toolPinsPath {
+			if beforeEntry.Digest == afterEntry.Digest {
+				t.Fatalf("tool pin bump did not change %s", toolPinsPath)
+			}
+			continue
+		}
+		if beforeEntry != afterEntry {
+			t.Fatalf("tool pin bump changed %s; only %s may change", path, toolPinsPath)
+		}
+	}
+	content, err := os.ReadFile(filepath.Join(fixtureRoot, filepath.FromSlash(toolPinsPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"cosign":   served.CosignVersion,
+		"syft":     served.SyftVersion,
+		"buildx":   pins.BuildxVersion,
+		"buildkit": pins.BuildkitImage,
+	} {
+		if got := updaterFixtureToolPin(t, string(content), key); got != want {
+			t.Fatalf("applied %s %s = %q, want %q", toolPinsPath, key, got, want)
+		}
+	}
 }
 
 func TestUpdateUpstreamPinsCredentialedRequestsKeepTokensOffArgv(t *testing.T) {
@@ -1184,13 +1257,10 @@ func updaterFixtureSummary(pins updaterFixturePins, current, target updaterFixtu
 	writeUpdaterFixtureSummaryLine(&output, "buildkit-image", pins.BuildkitImage, pins.BuildkitImage)
 	writeUpdaterFixtureSummaryLine(&output, "buildx-version", pins.BuildxVersion, pins.BuildxVersion)
 	writeUpdaterFixtureSummaryLine(&output, "cosign-version", pins.CosignVersion, pins.CosignVersion)
-	writeUpdaterFixtureSummaryLine(&output, "upstream-refresh-cosign-version", pins.UpstreamRefreshCosignVersion, pins.CosignVersion)
 	writeUpdaterFixtureSummaryLine(&output, "qemu-image", pins.QEMUImage, pins.QEMUImage)
 	writeUpdaterFixtureSummaryLine(&output, "syft-version", pins.SyftVersion, pins.SyftVersion)
 	writeUpdaterFixtureSummaryLine(&output, "actionlint-version", pins.ActionlintVersion, pins.ActionlintVersion)
 	writeUpdaterFixtureSummaryLine(&output, "zizmor-version", pins.ZizmorVersion, pins.ZizmorVersion)
-	writeUpdaterFixtureSummaryLine(&output, "release-zizmor-version", pins.ReleaseZizmorVersion, pins.ZizmorVersion)
-	writeUpdaterFixtureSummaryLine(&output, "release-zizmor-sha", pins.ReleaseZizmorSHA, pins.ZizmorSHA)
 	output.WriteString("Provider pin refresh summary: fixture (up to date)\n")
 	return output.String()
 }
@@ -1210,10 +1280,7 @@ func readUpdaterFixturePins(t *testing.T) updaterFixturePins {
 	runtimeDockerfile := readUpdaterFixtureSource(t, filepath.Join(root, "runtime", "container", "Dockerfile"))
 	validatorDockerfile := readUpdaterFixtureSource(t, filepath.Join(root, "tools", "validator", "Dockerfile"))
 	goMod := readUpdaterFixtureSource(t, filepath.Join(root, "go.mod"))
-	ciWorkflow := readUpdaterFixtureSource(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	releaseWorkflow := readUpdaterFixtureSource(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	securityWorkflow := readUpdaterFixtureSource(t, filepath.Join(root, ".github", "workflows", "security.yml"))
-	upstreamWorkflow := readUpdaterFixtureSource(t, filepath.Join(root, ".github", "workflows", "upstream-refresh.yml"))
+	toolPins := readUpdaterFixtureSource(t, filepath.Join(root, "policy", "tool-pins.toml"))
 	hadolintAMD64SHA := updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_LINUX_X86_64_SHA256=")
 	hadolintARM64SHA := updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_LINUX_ARM64_SHA256=")
 
@@ -1241,18 +1308,15 @@ func readUpdaterFixturePins(t *testing.T) updaterFixturePins {
 			hadolintAMD64SHA,
 			hadolintARM64SHA,
 		),
-		BuildkitImage:                updaterFixtureUniqueValue(t, ciWorkflow, "  WORKCELL_BUILDKIT_IMAGE: "),
-		BuildxVersion:                updaterFixtureUniqueValue(t, ciWorkflow, "  WORKCELL_BUILDX_VERSION: "),
-		CosignVersion:                updaterFixtureUniqueValue(t, ciWorkflow, "  WORKCELL_COSIGN_VERSION: "),
-		UpstreamRefreshCosignVersion: updaterFixtureUniqueValue(t, upstreamWorkflow, "  WORKCELL_COSIGN_VERSION: "),
-		QEMUImage:                    updaterFixtureUniqueValue(t, ciWorkflow, "  WORKCELL_QEMU_IMAGE: "),
-		SyftVersion:                  updaterFixtureUniqueValue(t, releaseWorkflow, "  WORKCELL_SYFT_VERSION: "),
-		ActionlintVersion:            updaterFixtureUniformValue(t, securityWorkflow, "          ACTIONLINT_VERSION: "),
-		ActionlintSHA:                updaterFixtureUniformValue(t, securityWorkflow, "          ACTIONLINT_SHA256: "),
-		ZizmorVersion:                updaterFixtureUniformValue(t, securityWorkflow, "          ZIZMOR_VERSION: "),
-		ZizmorSHA:                    updaterFixtureUniformValue(t, securityWorkflow, "          ZIZMOR_SHA256: "),
-		ReleaseZizmorVersion:         updaterFixtureUniformValue(t, releaseWorkflow, "          ZIZMOR_VERSION: "),
-		ReleaseZizmorSHA:             updaterFixtureUniformValue(t, releaseWorkflow, "          ZIZMOR_SHA256: "),
+		BuildkitImage:     updaterFixtureToolPin(t, toolPins, "buildkit"),
+		BuildxVersion:     updaterFixtureToolPin(t, toolPins, "buildx"),
+		CosignVersion:     updaterFixtureToolPin(t, toolPins, "cosign"),
+		QEMUImage:         updaterFixtureToolPin(t, toolPins, "qemu"),
+		SyftVersion:       updaterFixtureToolPin(t, toolPins, "syft"),
+		ActionlintVersion: updaterFixtureToolPin(t, toolPins, "actionlint_version"),
+		ActionlintSHA:     updaterFixtureToolPin(t, toolPins, "actionlint_sha256"),
+		ZizmorVersion:     updaterFixtureToolPin(t, toolPins, "zizmor_version"),
+		ZizmorSHA:         updaterFixtureToolPin(t, toolPins, "zizmor_sha256"),
 	}
 }
 
@@ -1276,19 +1340,21 @@ func updaterFixtureUniqueValue(t *testing.T, content, prefix string) string {
 	return values[0]
 }
 
-func updaterFixtureUniformValue(t *testing.T, content, prefix string) string {
+// updaterFixtureToolPin reads one `key = "value"` line of policy/tool-pins.toml,
+// the single source of the CI and release tool pins.
+func updaterFixtureToolPin(t *testing.T, content, key string) string {
 	t.Helper()
 
-	values := updaterFixtureValues(content, prefix)
-	if len(values) == 0 {
-		t.Fatalf("fixture prefix %q matched no lines", prefix)
+	value := updaterFixtureUniqueValue(t, content, key+" = ")
+	unquoted, ok := strings.CutPrefix(value, `"`)
+	if !ok {
+		t.Fatalf("tool pin %s is not quoted: %q", key, value)
 	}
-	for _, value := range values[1:] {
-		if value != values[0] {
-			t.Fatalf("fixture prefix %q has non-uniform values %q", prefix, values)
-		}
+	unquoted, ok = strings.CutSuffix(unquoted, `"`)
+	if !ok || unquoted == "" || strings.Contains(unquoted, `"`) {
+		t.Fatalf("tool pin %s is not a quoted value: %q", key, value)
 	}
-	return values[0]
+	return unquoted
 }
 
 func updaterFixtureValues(content, prefix string) []string {

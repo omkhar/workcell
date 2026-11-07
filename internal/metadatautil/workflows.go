@@ -99,11 +99,14 @@ func stepRuns(step workflowStep) string {
 	return step.Run
 }
 
-// This digest covers the complete parsed sign-release job plus the workflow-level
-// ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
-// rejects unknown fields, reordered steps, changed commands, changed action inputs,
-// a swapped publisher, a redirected registry, and a weakened shell default.
-const releaseSignerContractSHA256 = "cbde08a93b9d15e6294978c770ce9fb0b93aa544e54f80ad185df77a0dea33ee"
+// This digest covers the complete parsed sign-release job, including its pins
+// step and the publisher's tool-pin bindings, plus the registry it publishes to,
+// the shell its run steps inherit, and the ORAS version and digest from
+// policy/tool-pins.toml. It rejects unknown fields, reordered steps, changed
+// commands, changed action inputs, a rebound publisher, a redirected registry,
+// a weakened shell default, and an ORAS pin change that this digest does not
+// record.
+const releaseSignerContractSHA256 = "b37d2515740d56d848bc5bec827a4c98111b9fd1e86557eeb7605ac706c8d64b"
 
 // CollectWorkflowJobNames lists every job's check name. It reads job names
 // only, so it decodes openly: a valid key such as run-name or a reusable job's
@@ -321,7 +324,24 @@ func assignsWord(word, name string) bool {
 	return strings.HasPrefix(strings.TrimLeft(word, `'"`), name+"=")
 }
 
-func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
+// ReleaseSignerPins are the policy/tool-pins.toml values the signer installs
+// its OCI publisher from. The signer contract digest covers them, so a change
+// to either needs a reviewed change to releaseSignerContractSHA256.
+type ReleaseSignerPins struct {
+	OrasVersion          string
+	OrasLinuxAMD64SHA256 string
+}
+
+// LoadReleaseSignerPins reads the signer's pins from a tool pin policy file.
+func LoadReleaseSignerPins(policyPath string) (ReleaseSignerPins, error) {
+	pins, err := loadToolPins(policyPath)
+	if err != nil {
+		return ReleaseSignerPins{}, err
+	}
+	return ReleaseSignerPins{OrasVersion: pins.OrasVersion, OrasLinuxAMD64SHA256: pins.OrasLinuxAMD64SHA256}, nil
+}
+
+func ValidateReleaseWorkflowAuthoritySplit(workflowText string, signerPins ReleaseSignerPins) error {
 	document, err := decodeWorkflow([]byte(workflowText))
 	if err != nil {
 		return fmt.Errorf("parse release authority split: %w", err)
@@ -335,7 +355,7 @@ func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
 	if err := validateReleaseAssembly(document); err != nil {
 		return err
 	}
-	return validateReleaseSignerContract(workflowText)
+	return validateReleaseSignerContract(workflowText, signerPins)
 }
 
 // validateReleaseAssembly reads the parsed release job so that a comment or an
@@ -410,7 +430,7 @@ func validateReleaseSignerInputs(signer workflowJob) error {
 	return nil
 }
 
-func validateReleaseSignerContract(workflowText string) error {
+func validateReleaseSignerContract(workflowText string, signerPins ReleaseSignerPins) error {
 	var document workflowNodeDocument
 	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
 		return err
@@ -419,21 +439,25 @@ func validateReleaseSignerContract(workflowText string) error {
 	if !ok {
 		return errors.New("release workflow must define sign-release")
 	}
-	// The signer installs its publisher from the workflow-level ORAS pins and
-	// publishes to the workflow-level IMAGE_NAME, so the contract covers those
-	// too. Swapping the publisher or the registry destination for one the
-	// maintainer did not review must break this digest. Privileged run steps also
-	// inherit the workflow shell, so dropping -e there must break it too.
+	// The signer publishes to the workflow-level IMAGE_NAME, so the contract
+	// covers it too. Swapping the registry destination for one the maintainer
+	// did not review must break this digest. Privileged run steps also inherit
+	// the workflow shell, so dropping -e there must break it too. The signer
+	// installs its publisher from the ORAS pins in policy/tool-pins.toml. The
+	// job's pins step and its bindings are part of the signer node, and the
+	// pin values themselves are hashed here, so a new ORAS version or digest
+	// needs a reviewed change to releaseSignerContractSHA256 as well as to
+	// the policy file.
 	content, err := yaml.Marshal(struct {
 		Signer       yaml.Node `yaml:"sign-release"`
-		OrasPins     []string  `yaml:"oras-pins"`
 		RegistryName string    `yaml:"image-name"`
 		ShellDefault string    `yaml:"shell-default"`
+		OrasPins     []string  `yaml:"oras-pins"`
 	}{
 		Signer:       signer,
-		OrasPins:     []string{document.Env["WORKCELL_ORAS_VERSION"], document.Env["WORKCELL_ORAS_LINUX_AMD64_SHA256"]},
 		RegistryName: document.Env["IMAGE_NAME"],
 		ShellDefault: document.Defaults.Run.Shell,
+		OrasPins:     []string{signerPins.OrasVersion, signerPins.OrasLinuxAMD64SHA256},
 	})
 	if err != nil {
 		return err
@@ -849,9 +873,8 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 		"contents: read",
 		"issues: write",
 		"pull-requests: read",
-		"WORKCELL_COSIGN_VERSION:",
 		"sigstore/cosign-installer@",
-		"cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}",
+		"cosign-release: ${{ steps.pins.outputs.cosign }}",
 		`sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign`,
 	} {
 		if !strings.Contains(workflowText, needle) {
@@ -1079,8 +1102,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
 		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
 	}
-	if len(publish.Env)+len(guard.Env) != 0 || publish.Defaults.Kind+guard.Defaults.Kind != 0 || document.Def.Run["working-directory"] != "" || len(document.Env) != 1 || !regexp.MustCompile(`^v[0-9.]+$`).MatchString(document.Env["WORKCELL_COSIGN_VERSION"]) {
-		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env other than WORKCELL_COSIGN_VERSION, job defaults, or a default working-directory (NODE_OPTIONS, BASH_ENV, or a moved directory would reach the guard or the App token)", path)
+	if len(publish.Env)+len(guard.Env) != 0 || publish.Defaults.Kind+guard.Defaults.Kind != 0 || document.Def.Run["working-directory"] != "" || len(document.Env) != 0 {
+		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env, job defaults, or a default working-directory (NODE_OPTIONS, BASH_ENV, or a moved directory would reach the guard or the App token)", path)
 	}
 	appTokenSteps := 0
 	publishRuns := 0

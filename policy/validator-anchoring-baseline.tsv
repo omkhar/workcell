@@ -45,13 +45,13 @@ internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherReposit
 internal/metadatautil	TestCheckPinnedInputsRequiresToolPinLoaderAgreement	d308b9e3	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestToolPinLoaderAcceptsExactlyTheGoFormats	5c86da12,f7ed5bd5	a test skips candidate values one key = "value" line cannot hold and checks the Go format on the value it wrote
 internal/metadatautil	TestToolPinBindingChecksRejectBypasses	0db23ad6	a test precondition on the test workflow text that the test itself rewrites; TEMPORARY, removed with the tool-pin bridge
-internal/metadatautil	TestToolPinBridgeEndsWhenAnyWorkflowUsesThePinsStep	00301a00	a test precondition on the fixture text that the test itself rewrites; TEMPORARY, removed with the tool-pin bridge
 internal/metadatautil	containsToolPinValue	e7172b96	the index finds a policy/tool-pins.toml value inside a decoded workflow YAML scalar; it only denies, so text a comment holds cannot satisfy it
 internal/metadatautil	fixtureToolPin	740c4107,abc18589,b91a13db	a test reads one key = "value" line of the fixture policy file it is about to mutate
 internal/metadatautil	parseToolPins	81e0f0b1	the pattern checks a decoded policy/tool-pins.toml value against its key format
 internal/metadatautil	pinnedInputsCheck.toolPinBridgeInline	4c97e72f,de7641ae,fa7872f6	TEMPORARY tool-pin bridge: a match on raw workflow text only ends the bridge, which turns the stricter binding checks on; it never relaxes a check
 internal/metadatautil	rejectInlineToolPins	ce23d36a	the substring finds a tool-pin image repository inside a decoded workflow YAML scalar; it only denies
 internal/metadatautil	rejectToolPinLoaderEnv	6d4747d3,7b56a4cb,d91244a9,dc54a3fe	the prefixes check a decoded workflow or job env key name; they only deny
+internal/metadatautil	replaceInReleaseJob	4ac3aaf4,9d4ac0c7	a test locates the job it mutates in the release workflow fixture
 internal/metadatautil	shellGrepIsQuiet	1541affc,a2afbe0b,d97760a1	the checks read the option words of one grep stage that shellQuietGrepStages cut at a pipe; they parse the grep options, not free text
 internal/metadatautil	shellQuietGrepStages	ff1b798d	the search cuts each later pipeline stage at the next shell operator in the comment-free command text
 internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
@@ -202,10 +202,9 @@ internal/metadatautil	pinnedInputsCheck.validateCIReproEntriesAndTail	9d3f0df3	u
 internal/metadatautil	pinnedInputsCheck.validateCIReproStrategy	7e8452b9,c6a9cfca,ccbc910c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCargoRustVersion	be820749	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCodeownersAndHostedPolicy	59e723e9	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	pinnedInputsCheck.validateCosignReleaseBindings	9bbe138a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCosignReleaseBindings	a893555f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCosignVersions	32b3e304	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseArtifactFlows	c3bf63ff	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	pinnedInputsCheck.validateReleaseBuildAndSyft	fd5547f7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseManifestAndRuntimeSources	584f0f40,fc9ae287	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleasePublishingInputs	145c5d36	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseRequiredSteps	fdbfa4fa	unreviewed debt: review the subject, then port or justify
@@ -332,7 +331,7 @@ internal/metadatautil	validateReleaseAttestationVerifier	ec30c192	unreviewed deb
 internal/metadatautil	validateRuntimeBuildPreload	eca9d606	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateStepToolPinBindings	99105ea2	the pattern checks a decoded step if: expression for a status function that would run it after a failed pins step
 internal/metadatautil	validateToolPinActionInputs	5de4bec7	the prefix checks a decoded step uses: value
-internal/metadatautil	validateUpstreamRefreshJobs	4a1377ab,832859f5,832859f5,96779f0c,ab5bf77a,f2aad5bd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateUpstreamRefreshJobs	4a1377ab,832859f5,832859f5,96779f0c,ab5bf77a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateValidatorImageIdentityScript	8a9c5859	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateWorkflowAction	985e2c77,ecc9ee9b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validatedCodexRoutingInstructions	c5b42920	unreviewed debt: review the subject, then port or justify
@@ -464,6 +463,7 @@ internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePubl
 internal/testkit	TestUpdateUpstreamPinsCheckReusesRecordedDebianPlan	565a5a3f,e7267aca,e7267aca,f1211436	the search checks the output of an updater fixture run that reuses a recorded plan, not script text
 internal/testkit	TestUpdateUpstreamPinsDebianArchiveOutage	15d9b107,3d7d78ab,e59f2b53,edf34290	the search checks the output and the resolution log of an updater fixture run, not script text
 internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateUpstreamPinsToolPinBumpChangesNoWorkflow	8ac3433b	a test assertion on the summary output that the updater under test produces
 internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	edeb6dc4	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshIncludesRuntimeGoPins	7c2d45f6	unreviewed debt in a test: review the subject, then port or justify
@@ -562,6 +562,7 @@ internal/testkit	splitEdit	79c6f592,9bbfdcfa,e6fee40c	unreviewed debt in a test:
 internal/testkit	stableProgramLiteral	0b32dcde	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	stagedCanonicalEntrypoint	2d175265	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	unreachedDelegation	17772321,25250625	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	updaterFixtureToolPin	605afb33	a test reads one key = "value" line of the policy file the updater fixture copies
 internal/testkit	updaterFixtureValues	172af3bd	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	validateContainerSmokeHarness	162d2ca4,1e51ce8c,56b17ac3,76e18943,8643818c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	validateControlScriptModes	66e29302,f159c56a	unreviewed debt in a test: review the subject, then port or justify

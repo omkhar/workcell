@@ -270,6 +270,7 @@ The job output `result` is `passed` only when the guard step exits 0.
 The App has no Workflows permission, and it must not get one.
 `publish` does not publish a candidate that changes `.github/workflows/`.
 `publish` does not publish the `toolchain` candidate either, because no scope guard reviews it yet.
+A tool pin bump changes only `policy/tool-pins.toml`, so the workflow rule alone no longer holds it back.
 `scripts/ci/upstream-refresh-publish.sh` stops before any GitHub call for that kind.
 The tracking issue and the audit comment then show the host command for that candidate:
 
@@ -355,17 +356,27 @@ A full commit SHA fixes the selected action version.
 The allowlist limits the action publishers.
 A new publisher requires a reviewed policy change.
 
-[`policy/tool-pins.toml`](../policy/tool-pins.toml) records the reviewed CI and release tools.
-`check-pinned-inputs` compares each workflow copy with that policy.
-`scripts/update-upstream-pins.sh` updates the workflow and policy copies together.
-`check-pinned-inputs` runs these policy checks from `internal/metadatautil/pinnedinputs_toolpins.go`:
+[`policy/tool-pins.toml`](../policy/tool-pins.toml) is the only copy of the reviewed CI and release tool pins.
+No workflow holds a tool pin value.
+Each job that uses a tool pin runs `scripts/ci/load-tool-pins.sh` as a step with `id: pins`.
+That step runs right after the checkout, as the second step of the job, so no earlier step can change its environment.
+The loader reads the policy file of the checked-out commit, and it stops on any line, key, or value that it does not expect.
 
-- It requires the output of the tool pin loader to equal its own parse of the policy file.
-- It requires each value to match the format of its key, with no leading zero in a version part.
-- It requires the BuildKit image to name `moby/buildkit` and the QEMU image to name `tonistiigi/binfmt`, with no registry host, as `scripts/ci/build-validator-image.sh` also requires.
+A step binds each pin as `${{ steps.pins.outputs.<key> }}`, and only in its `with:` or `env:` keys.
+A `run:` script reads a pin from its environment, never from an expression.
+`check-pinned-inputs` runs these checks from `internal/metadatautil/pinnedinputs_toolpins.go` on every workflow:
 
-`internal/metadatautil/pinnedinputs_toolpins.go` also holds the checks for a workflow that binds its pins from a `pins` step.
-They apply once any workflow runs or names that step, and the inline-value checks then stop.
+- It rejects a tool pin value or a tool image name written inline in a workflow.
+- It rejects a pins step that does not run exactly `scripts/ci/load-tool-pins.sh`, or that sets `if:` or `continue-on-error:`.
+- It rejects `BASH_ENV`, `ENV`, `BASH_FUNC_` and `LD_` names, `PATH`, and `GITHUB_` or `RUNNER_` names in the workflow or job env of a pins job.
+- It rejects a YAML merge key (`<<`) in any workflow, job, or step env, and an env given as a YAML alias or an expression.
+- It rejects a binding to an unknown key, and a pin variable bound to the wrong key.
+- It rejects a step that binds a pin and runs with `always()`, `cancelled()`, `failure()`, or a negated `success()`.
+- It requires the BuildKit image to name `moby/buildkit` and the QEMU image to name `tonistiigi/binfmt`, with no registry host, as `scripts/ci/load-tool-pins.sh` does.
+- It requires the loader output to equal its own parse of the policy file.
+
+`scripts/update-upstream-pins.sh` writes a tool pin bump to `policy/tool-pins.toml` only.
+A tool pin bump does not change a file under `.github/workflows/`.
 
 ## Validator identity
 

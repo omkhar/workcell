@@ -1,11 +1,11 @@
-# Reviewed chokepoint for the CI/release tool pins. The pin values also live
-# inline in the workflows; `check-pinned-inputs` asserts every workflow copy
-# equals the value here, and `scripts/update-upstream-pins.sh` rewrites the
-# workflows and this file together on a bump. `check-pinned-inputs` also checks
-# each value's format and requires scripts/ci/load-tool-pins.sh to read this
-# file exactly as the Go parser does. The ORAS pins are recorded here for the
-# release signer; until the release workflow reads them from here, the release
-# workflow env holds the copy that the signer contract covers.
+# The single source of the CI and release tool pins. No workflow holds a copy:
+# each job that uses a pin runs scripts/ci/load-tool-pins.sh as its `pins` step,
+# which reads this file at run time and fails closed on any line it does not
+# expect, and binds the value with `${{ steps.pins.outputs.<key> }}`. A pin bump
+# (`scripts/update-upstream-pins.sh`) therefore changes this file and never a
+# file under .github/workflows/. `check-pinned-inputs` validates every value,
+# requires the loader and the Go parser to read the same pins, and rejects any
+# inline tool-pin value in a workflow.
 #
 # Keep the format strict: blank lines, `#` comments, the [tool_pins] header and
 # `key = "value"` lines only. Versions are stored exactly as the consumers use
