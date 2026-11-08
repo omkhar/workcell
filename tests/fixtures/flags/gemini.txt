@@ -13,6 +13,7 @@
 --help
 --include-directories
 --list-extensions
+--list-models
 --list-sessions
 --model
 --output-format

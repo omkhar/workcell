@@ -39,8 +39,6 @@
 --extension-sdk-path
 --fleet
 --help
---host-compute-id
---host-environment
 --interactive
 --log-dir
 --log-level
