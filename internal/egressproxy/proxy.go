@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -77,7 +78,7 @@ func blockedAddr(a netip.Addr) bool {
 }
 
 // Proxy admits allowlisted connections and logs each denial as one JSONL line.
-// Overload refusals are best-effort and are dropped if the log writer stalls.
+// Overload refusals past the log queue are counted and logged as one port-0 line.
 type Proxy struct {
 	allow  *Allowlist
 	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
@@ -92,6 +93,7 @@ type Proxy struct {
 
 	slots chan struct{} // one token per live connection
 	shed  chan uint16   // ports of shed connections awaiting a deny line
+	lost  atomic.Uint64 // shed connections that found the queue full
 
 	mu      sync.Mutex
 	denyLog io.Writer
@@ -124,6 +126,9 @@ func New(allow *Allowlist, denyLog io.Writer) *Proxy {
 	go func() {
 		for port := range p.shed {
 			p.deny("", port, "overloaded")
+			if n := p.lost.Swap(0); n > 0 {
+				p.denyN("", 0, "overloaded", n)
+			}
 		}
 	}()
 	return p
@@ -150,10 +155,10 @@ func (p *Proxy) Serve(ln net.Listener, port uint16) error {
 		default:
 			_ = conn.Close() // at the limit: shed load instead of exhausting descriptors
 			// The deny line goes through a queue so a blocked log cannot stall accept.
-			// ponytail: a flood past the queue depth goes unlogged; add a dropped counter if audits need it.
 			select {
 			case p.shed <- port:
 			default:
+				p.lost.Add(1) // a full queue means the drainer has work, so it will log this count
 			}
 		}
 	}
@@ -309,7 +314,10 @@ func splice(client, upstream net.Conn) {
 // deny writes one bounded JSONL line with the running count for this
 // (host, port, reason) and the log-wide line number. New keys past maxDenyKeys share one overflow key, so
 // the log holds at most maxDenyKeys+1 keys whatever ports the allowlist holds.
-func (p *Proxy) deny(host string, port uint16, reason string) {
+func (p *Proxy) deny(host string, port uint16, reason string) { p.denyN(host, port, reason, 1) }
+
+// denyN is deny for n refusals at once.
+func (p *Proxy) denyN(host string, port uint16, reason string, n uint64) {
 	if len(host) > maxLogHost {
 		host = host[:maxLogHost]
 	}
@@ -319,7 +327,7 @@ func (p *Proxy) deny(host string, port uint16, reason string) {
 	if _, seen := p.denies[key]; !seen && len(p.denies) >= maxDenyKeys {
 		key = denyKey{overflowHost, 0, overflowCause}
 	}
-	p.denies[key]++
+	p.denies[key] += n
 	p.seq++
 	line, _ := json.Marshal(denyLine{key.host, key.port, key.reason, p.denies[key], p.seq})
 	_, _ = p.denyLog.Write(append(line, '\n'))
