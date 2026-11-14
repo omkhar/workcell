@@ -90,9 +90,22 @@ while [ ! -f "$2" ]; do sleep .01; done
 exit 0
 `, "fixture", childPIDPath, releasePath)
 	t.Cleanup(func() {
-		// A failed run can leave the fixture child sleeping.
-		if t.Failed() && cmd.Process != nil {
-			_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+		// A failed run can leave the fixture child sleeping. Kill it by the
+		// PID it wrote, and only while it is still in the fixture group, so a
+		// reused group or process ID is never signaled.
+		if !t.Failed() || cmd.Process == nil {
+			return
+		}
+		raw, err := os.ReadFile(childPIDPath)
+		if err != nil {
+			return
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil || pid <= 1 {
+			return
+		}
+		if pgid, err := syscall.Getpgid(pid); err == nil && pgid == cmd.Process.Pid {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
 	return &leaderExitSupervisorFixture{
