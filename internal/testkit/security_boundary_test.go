@@ -340,7 +340,9 @@ func TestWorkcellShadowsCopilotRepoHookControlPlane(t *testing.T) {
 	if !strings.Contains(script, "\n  .github/instructions .github/copilot .github/hooks .github/agents .github/skills\n") {
 		t.Fatalf("%s must list .github/hooks in WORKSPACE_CONTROL_PLANE_DIRS", scriptPath)
 	}
-	sharedDirList := "for rel in \"${WORKSPACE_CONTROL_PLANE_DIRS[@]}\"; do\n      [[ \"${rel}\" == */* ]] || continue\n"
+	// Both branches read the one slash list that
+	// workspace_control_plane_slash_dir_paths builds from that list.
+	sharedDirList := "    done <\"${slash_control_dirs}\"\n"
 	if strings.Count(script, sharedDirList) != 2 {
 		t.Fatalf("%s must use the Copilot repo hook control-plane list for both readonly VCS and safe-path shadowing", scriptPath)
 	}
@@ -757,7 +759,8 @@ func TestRegisterWorkspaceControlPlaneDirMountRefusesSymlinkedParent(t *testing.
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
 	root := t.TempDir()
 	probe := fmt.Sprintf(`set -euo pipefail
-eval "$(sed -n -e '/^refuse_symlinked_workspace_parent_component() {$/,/^}$/p' -e '/^register_workspace_control_plane_dir_mount() {$/,/^}$/p' %[1]s)"
+eval "$(sed -n -e '/^refuse_symlinked_workspace_parent_component() {$/,/^}$/p' -e '/^refuse_redirected_workspace_control_path() {$/,/^}$/p' -e '/^workspace_symlinked_parent_component() {$/,/^}$/p' -e '/^workspace_container_path_resolve() {$/,/^}$/p' -e '/^register_workspace_control_plane_dir_mount() {$/,/^}$/p' %[1]s)"
+git_index_has_path() { return 1; }
 register_shadow_mount() { echo "mount $2"; }
 mkdir -p %[2]s/real/.agents/plugins %[2]s/outside/plugins %[2]s/linked
 ln -s %[2]s/outside %[2]s/linked/.agents

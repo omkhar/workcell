@@ -212,6 +212,16 @@ The mask includes these directories:
 - `.agents/skills/` and `.agents/plugins/`
 - `.vscode/`, `.idea/`, `.cursor/`, and `.zed/`
 
+Each directory mask applies at any depth, in the working tree or the Git index.
+A mask path with a slash, such as `.agents/plugins`, matches in any case, as
+APFS does.
+
+`scripts/workcell` refuses a launch when a parent of a masked path is a
+symlink and the path can show in the session. A link to `/workspace/x` dangles on the host, but
+it resolves in the container. So Workcell reads each such link on the host and
+follows it as the container does. A path under that link is present when the
+host, the Git index, or the container view holds it.
+
 The `.gemini/` mask does not copy a tracked `.gemini/.env` file. The Gemini
 system settings at `/etc/gemini-cli/settings.json` have precedence over
 workspace settings. They disable Gemini hooks and ignore the workspace `.env` file.

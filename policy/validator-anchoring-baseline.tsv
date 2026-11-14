@@ -528,6 +528,10 @@ internal/testkit	TestWorkcellRejectsSensitiveWorkspaceBeforeExistenceCheck	28319
 internal/testkit	TestWorkcellResolvesLaunchWorkspaceBeforeBundlePreparation	3e20ca5b,4c51f69f,e93ba8b7	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestRegisterWorkspaceControlPlaneDirMountRefusesSymlinkedParent	7b40e111,c0707fd9,df0ab916	the searches check the output of a stubbed mount helper run, not script text
 internal/testkit	TestWorkcellShadowsCopilotRepoHookControlPlane	f2691f42,ffd752e5	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestWorkspaceControlPlaneRefusesDanglingControlDirLinkWithVCS	883498c2	the searches check the output of a stubbed launcher run, not script text
+internal/testkit	TestWorkspaceControlPlaneRefusesRedirectedSlashEntries	1d9ccdbb	the searches check the output of a stubbed launcher run, not script text
+internal/testkit	TestWorkspaceControlPlaneSlashEntriesMaskAtAnyDepth	792c7f5f,ce89e950	the searches check the output of a stubbed launcher run, not script text
+internal/testkit	TestWorkspaceControlPlaneSlashDirWalkIsOneFind	e3967d4c	the searches check the output of a stubbed walk run, not script text
 internal/testkit	activeShellLines	1c400327,27098a67	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	assertNoUpdaterFixtureTempResidue	96a65e32,a787d573,c8339f60	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	assertValidatorImagePrefixes	1b35eb41	unreviewed debt in a test: review the subject, then port or justify
