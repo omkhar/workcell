@@ -14,6 +14,11 @@
 # has no Workflows permission. A toolchain candidate is not published either:
 # it waits for a toolchain scope guard, and a person publishes it from a host.
 # AUDIT_FILE receives the tracking-issue audit text.
+workcell_entry_root="$(shopt -s nullglob && f="${BASH_SOURCE[0]}" r=scripts/ci/upstream-refresh-publish.sh && y=/usr/bin/find && { [[ -x "${y}" ]] || y=/bin/find; } && i=/usr/bin/id && { [[ -x "${i}" ]] || i=/bin/id; } && l=/bin/ls && { [[ -x "${l}" ]] || l=/usr/bin/ls; } && e=/usr/bin/getent && { [[ -x "${e}" ]] || e=/bin/getent; } && { [[ "${f}" == /* ]] || f="${PWD}/${f}"; } && cd -P -- "${f%/*}/" && d="${PWD}" && p="${d%/}/${f##*/}" && root="${p%/"${r}"}" && [[ -n "${root}" && "${root}/${r}" == "${p}" ]] && set -- "${p}" && f="${f%/*}" && while ((${#d} >= ${#root})); do cd -L -- "${f}/" && cd -P . && [[ "${PWD}" == "${d}" ]] && set -- "$@" "${d}" && d="${d%/*}" f="${f}/.." || exit 1; done && for h in scripts scripts/ci scripts/ci/lib scripts/lib scripts/lib/launcher runtime/container; do [[ ! -e "${root}/${h}" && ! -L "${root}/${h}" ]] || set -- "$@" "${root}/${h}" "${root}/${h}"/*; done && q="${root%/*}" && a=(/) && while [[ -n "${q}" ]]; do a+=("${q}") && q="${q%/*}"; done && { u="$(LC_ALL=C "${i}")" || u=""; } && g=(-perm -020) && { [[ "${u}" =~ ^uid=[0-9]+\(([^\)]+)\)\ gid=([0-9]+)\( ]] && n="${BASH_REMATCH[1]}" k="${BASH_REMATCH[2]}" && w="$(LC_ALL=C "${e}" group "${k}")" && [[ "${w}" == "${n}:"*":${k}:" ]] && j=$'\n' && o="${j}$(LC_ALL=C "${e}" passwd)" && o="${o//"${j}${n}:"/${j}#:#:#:#:}" && x=$'\n[^:\n]*:[^:\n]*:[^:\n]*:'"${k}:" && [[ ! "${o}" =~ ${x} ]] && g+=(! -gid "${k}") || :; } && { [[ "${OSTYPE}" != darwin* ]] || g+=(! -gid 80); } && bad="$("${y}" "$@" -maxdepth 0 \( ! -type d ! -type f -o ! -uid "${EUID}" ! -uid 0 -o "${g[@]}" -o -perm -002 \) -print)" && [[ -z "${bad}" ]] && bad="$("${y}" "${a[@]}" -maxdepth 0 \( ! -type d -o ! -uid "${EUID}" ! -uid 0 -o \( "${g[@]}" -o -perm -002 \) ! -perm -1000 \) -print)" && [[ -z "${bad}" ]] && if [[ "${OSTYPE}" == darwin* ]]; then z="$(LC_ALL=C "${l}" -lde -- "$@" "${a[@]}")" && x=$' allow ([^\n]*,)?(write|append|add_file|add_subdirectory|delete|delete_child|writeattr|writeextattr|writesecurity|chown)(,|\n|$)' && [[ ! "${z}" =~ ${x} ]]; else z="$(LC_ALL=C "${l}" -ld -- "$@" "${a[@]}")" && [[ $'\n'"${z}" != *$'\n'?????w????+* ]]; fi && printf '%s\n' "${root}")" || workcell_entry_root="" # fail-closed: an empty root stops the script below
+[[ -n "${workcell_entry_root}" ]] || {
+  echo "Run ${BASH_SOURCE[0]} from its own place in a Workcell tree that no other user can write, not through a symlink or a copy: it loads helpers from that tree. A filesystem without Unix permissions, such as WSL /mnt/c or exFAT, cannot hold such a tree." >&2
+  exit 2
+}
 set -euo pipefail
 
 if [[ $# -eq 3 ]]; then
@@ -29,7 +34,7 @@ if [[ $# -eq 3 ]]; then
     [[ -e "$1/${kind}" ]] || continue
     # Start each candidate from the clean base checkout.
     git reset -q --hard HEAD
-    "$0" "$1/${kind}" "$2" "$3" "${kind}" || status=1
+    "${workcell_entry_root}/scripts/ci/upstream-refresh-publish.sh" "$1/${kind}" "$2" "$3" "${kind}" || status=1
   done
   exit "${status}"
 fi
@@ -91,7 +96,7 @@ fi
 branch="codex/upstream-refresh-${kind}-${GITHUB_RUN_ID}"
 # A legacy mixed refresh PR blocks both kinds.
 existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --limit 1000 --json title,url,headRefName,headRefOid,isCrossRepository |
-  jq -L "$(dirname "${BASH_SOURCE[0]}")" -c --arg kind "${kind}" 'include "upstream-refresh-overlap"; overlap($kind) // empty')"
+  jq -L "${workcell_entry_root}/scripts/ci" -c --arg kind "${kind}" 'include "upstream-refresh-overlap"; overlap($kind) // empty')"
 # A PR from this run means an earlier attempt stopped after it opened the PR.
 # Resume its disposition. The commit checks below still run against its head.
 resume=0
