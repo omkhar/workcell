@@ -201,7 +201,7 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 		return "", "", err
 	}
 	defer materializations.Close()
-	if err := materializations.RemoveAll(materializationID); err != nil {
+	if err := removeMaterialization(materializations, materializationID); err != nil {
 		return "", "", err
 	}
 	if err := materializations.Mkdir(materializationID, 0o700); err != nil {
@@ -209,9 +209,25 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 	}
 	err = unpackMaterialization(receiver, materializations, materializationID, spool, limits)
 	if err != nil {
-		return "", "", errors.Join(err, materializations.RemoveAll(materializationID))
+		return "", "", errors.Join(err, removeMaterialization(materializations, materializationID))
 	}
 	return filepath.Join(root, "materializations", materializationID, MaterializedWorktree), digest, nil
+}
+
+// removeMaterialization removes the materialization id. A directory that the
+// archive made read-only blocks the removal of its entries on a non-root
+// guest, so a walk that follows no symlink first gives each directory of the
+// tree owner rwx.
+func removeMaterialization(materializations *os.Root, id string) error {
+	if info, err := materializations.Lstat(id); err == nil && info.IsDir() {
+		_ = fs.WalkDir(materializations.FS(), id, func(name string, entry fs.DirEntry, err error) error {
+			if err == nil && entry.IsDir() {
+				_ = materializations.Chmod(name, 0o700)
+			}
+			return nil
+		})
+	}
+	return materializations.RemoveAll(id)
 }
 
 // beforeReceiverOpen runs between the check of a receiver path and its open.

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -484,5 +485,46 @@ func TestReceiveWorkspaceRefusesAPathSwappedBetweenItsCheckAndItsOpen(t *testing
 				t.Fatalf("the receiver wrote %v into the symlink target", names)
 			}
 		})
+	}
+}
+
+// TestReceiveWorkspaceRemovesAReadOnlyMaterialization receives an ID with a
+// 0555 directory that has an entry, then a copy that fails after the modes are
+// set, then the first again. Without DAC override, as on a non-root guest, the
+// 0555 directory blocks the removal of its entry, so the receiver must give the
+// directories of a tree owner rwx before it removes the tree. Under root the
+// test reruns itself under setpriv without DAC override.
+func TestReceiveWorkspaceRemovesAReadOnlyMaterialization(t *testing.T) {
+	if os.Geteuid() == 0 && os.Getenv("WORKCELL_TEST_NO_DAC") == "" {
+		setpriv, err := exec.LookPath("setpriv")
+		if err != nil {
+			t.Skip("needs a non-root user or setpriv to drop DAC override")
+		}
+		rerun := exec.Command(setpriv, "--bounding-set=-dac_override,-dac_read_search", os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+		rerun.Env = append(os.Environ(), "WORKCELL_TEST_NO_DAC=1")
+		if out, err := rerun.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("--- PASS: "+t.Name())) {
+			t.Fatalf("rerun without DAC override: %v\n%s", err, out)
+		}
+		return
+	}
+	root := t.TempDir()
+	materialization := filepath.Join(root, "materializations", "m1")
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(materialization, MaterializedWorktree, "ro"), 0o755) })
+	readOnly, sealed := dir("ro"), dir("sealed")
+	readOnly.header.Mode, sealed.header.Mode = 0o555, 0o100
+	frame := frameArchive("m1", buildTestArchive(t, readOnly, file("ro/f", "x")))
+	// The sync opens each directory, which a 0100 directory refuses.
+	late := frameArchive("m1", buildTestArchive(t, readOnly, file("ro/f", "x"), sealed))
+	if _, err := receiveFrame(t, root, frame, defaultWorkspaceLimits); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiveFrame(t, root, late, defaultWorkspaceLimits); err == nil {
+		t.Fatal("the receiver synced a 0100 directory")
+	}
+	if _, err := os.Lstat(materialization); !os.IsNotExist(err) {
+		t.Fatalf("the failed receive left its materialization: %v", err)
+	}
+	if ack, err := receiveFrame(t, root, frame, defaultWorkspaceLimits); err != nil || !strings.HasPrefix(ack, "ok ") {
+		t.Fatalf("receive after the failure = %q, %v", ack, err)
 	}
 }
