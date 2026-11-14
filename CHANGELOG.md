@@ -198,6 +198,10 @@ The fixes are below.
   (`internal/colimautil/colima_cache_mount_test.go`). The scenarios, the
   uninstaller and the verify cleanup run `colima` through the same setting.
   `workcell --gc` keeps that root.
+- Colima keeps its VM images under `<cache>/workcell/colima-xdg/colima`, so
+  the first launch after this change downloads the image again and needs
+  network. On Linux, Lima's download cache moves to
+  `<cache>/workcell/colima-xdg/lima`. `workcell --gc` does not prune either.
 - The scheduled Rust fuzz lane builds again. Its dated nightly
   (`nightly-2026-07-02`, rustc 1.98) was older than the crate's
   `rust-version` of 1.99, so cargo refused to build the fuzz targets. The lane

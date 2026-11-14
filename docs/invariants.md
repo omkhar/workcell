@@ -65,7 +65,9 @@ A `colima` run without this `XDG_CACHE_HOME` would write a `lima.yaml` that
 mounts `<cache>/colima` again. Thus every shell `colima` run goes through
 `run_host_colima` or the `workcell_colima` host helper.
 `workcell --gc` never removes `<cache>/workcell/colima-xdg`, and recent use of
-it does not keep the other stale cache entries.
+it does not keep the other stale cache entries. That root also holds the
+Colima VM images and, on Linux, the Lima download cache. A VM needs them to
+start without network, so `--gc` does not prune them.
 
 Invariant `snapshot-store-host-owned`: `workcell session snapshot` writes to
 `<cache>/colima/workcell-snapshots`. No container mounts this store.
