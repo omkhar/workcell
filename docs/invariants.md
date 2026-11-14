@@ -193,6 +193,80 @@ so a new or a swapped match in a listed function fails too. It fails a row whose
 function no longer matches this way. Port a debt row, then delete it in the same
 change.
 
+## 2e. Entry scripts run only from their own place in a Workcell tree
+
+A repository entry script finds its helpers from its own path. A copy, a link
+or a symlinked directory in another tree would load the helpers beside it.
+Each tracked executable Bash script under `scripts/`, `tests/`, `.githooks/`
+and `verify/` that reads `BASH_SOURCE` runs a guard as its first command.
+
+The guard names the script's own path in the tree. It takes the tree root from
+the script's real directory. Each directory from the script up to that root
+must be a real directory, not one reached through a symlink. A symlink to the
+root or to an ancestor of it may still lead there. The script then finds each
+helper from `${workcell_entry_root}`, the physical root that the guard checked.
+It never builds a helper path from `BASH_SOURCE` or `$0` again, so a later
+move of that symlink changes nothing.
+
+The guard then checks these paths: the script, each directory up to the root,
+and every ancestor of the root. It also checks `scripts`, `scripts/ci`,
+`scripts/ci/lib`, `scripts/lib`, `scripts/lib/launcher` and
+`runtime/container` with their direct entries, where they exist. Deeper helper
+files are not checked, and neither are Go sources that a script runs with
+`go run`. Otherwise the guard stops with status 2.
+
+Each checked path must be a directory or a regular file that you or root own.
+Other users must not be able to write it. A group may write it only when the
+group is your private group. A private group has your own name and no members
+in `getent group`, as Ubuntu, Debian and Fedora make for each user. Also,
+`getent passwd` must show no other user with that group as primary group.
+Others may write an ancestor only when it is sticky, as `/tmp` is.
+
+A directory service may let `getent passwd` list only some users. The guard
+then sees only those users. macOS has no `getent`, so no group is private
+there. Instead, the admin group may write a checked path on macOS. Homebrew
+gives `/opt/homebrew/Cellar` to that group, and its members can already run
+sudo.
+
+An access control list can grant write that the mode bits do not show. On
+Linux, `ls -ld` marks a path that has a list with `+`, and the group bits show
+the list's mask. A `+` with group write stops the guard, and a list that
+grants only read passes. On macOS, `ls -lde` lists the entries. An allow entry
+with a right that writes stops the guard: write, append, add_file,
+add_subdirectory, delete, delete_child, writeattr, writeextattr, writesecurity
+or chown.
+
+Deny entries, as a home directory carries, and read entries pass. Where `ls`
+shows no lists, the guard cannot see them. BusyBox shows none, and older
+coreutils show no NFSv4 or CIFS lists.
+
+`scripts/workcell` follows its installed symlink first. It then runs the same
+guard on the file that it finds, and sets `ROOT_DIR` from the checked root. A
+hard link or a copy elsewhere does not stop the checkout script.
+
+A copy of a whole tree that only you can write still runs, since it holds only
+your own files. A checkout
+that a shared group can write is refused. So is a checkout on a filesystem
+without Unix permissions, such as WSL `/mnt/c` or exFAT. Release bundles are
+archived with `tar.umask` 0022, so a bundle that root unpacks passes.
+
+In the validator container, uid 1000 is `node`, whose private group `node`
+may write. Another uid gets a user name there but no group name. Group write
+is refused for it, so check out with umask 022 for that case.
+
+On macOS, a run under another letter case of the tree's path is refused, since
+`scripts/workcell` and the other entry scripts compare the path exactly.
+
+In `internal/testkit/entry_script_guard_test.go`,
+`TestEntryScriptsCarryTheGuard` fails a script without the guard. It also fails
+one that builds a helper path from `BASH_SOURCE` or `$0` after the guard, and
+a shell library that passes on `$0`. The other tests there run the guard
+against copies, links, FIFOs and access control lists. Some lists grant write
+and some grant only read. They
+also cover fake group and user files, and trees and ancestors that others or a
+shared group can write. They move a symlinked root after the guard, and the
+helper still comes from the checked tree.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only
