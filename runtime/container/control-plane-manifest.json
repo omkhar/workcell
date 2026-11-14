@@ -246,7 +246,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "22924ee60d2a5538ece089975315bf61ed535455c578af93e8859e5417b1a805"
+      "sha256": "b7eb7dc98d9a78a2b48c10d011e7975a2dc423f234a76e869a0d6480c4c307d3"
     },
     {
       "kind": "runtime-control-plane",
@@ -282,7 +282,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "5ad1cfef95e0e4fae486f9ea6bffa4eb47b0e7a74d318c178022eab273dd0708"
+      "sha256": "5c0ac14c1c609eaf1b97a2f3b651716f141e271ffbae5eab99c2411a91c61248"
     },
     {
       "kind": "runtime-control-plane",

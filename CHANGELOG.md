@@ -116,6 +116,18 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Changed
 
+- The provider argument policy of the runtime is now Go code
+  (`internal/providerpolicy`). The entrypoint and the provider wrapper run it
+  through `workcell-provider-policy` in place of the shell policy functions. A
+  differential test in the C locale showed the same decisions and messages for
+  both policies over a generated argument corpus. One change: a Codex `--profile` with the
+  session mode no longer stops the launch with a silent exit 1. A safe
+  `--config=` override as the last argument also passes now.
+- The Go provider policy refuses two argument forms that the shell policy
+  passed, and `internal/providerpolicy/providerpolicy_test.go` covers both.
+  A Codex profile value that starts with `=`, as in `--profile =strict`, is
+  the literal profile name `=strict`. A Gemini or Copilot long option name
+  with a control or non-ASCII byte is refused.
 - The `apple-container` host guard now requires Apple Silicon macOS 27 or
   later. It required macOS 26 before. `RequireMacOS26` is now `RequireMacOS27`
   (`internal/applecontainer/guard.go`). The matrix row stays `preview-only`

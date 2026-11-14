@@ -3103,7 +3103,7 @@ run_case forged-copilot-token.out
 // copilotUnsafeFlagsHappyProviderWrapper is a minimal but structurally faithful
 // runtime/container/provider-wrapper.sh containing the argv re-check needle.
 const copilotUnsafeFlagsHappyProviderWrapper = `#!/usr/bin/env bash
-reject_unsafe_copilot_args "$@"
+workcell_provider_policy_check copilot "$@"
 `
 
 // copilotUnsafeFlagsHappyDevelopmentWrapper is a minimal but structurally
@@ -3194,7 +3194,7 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			name:               "provider wrapper missing argv re-check",
 			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              copilotUnsafeFlagsHappySmoke,
-			providerWrapper:    strings.Replace(copilotUnsafeFlagsHappyProviderWrapper, "reject_unsafe_copilot_args", "other", 1),
+			providerWrapper:    strings.Replace(copilotUnsafeFlagsHappyProviderWrapper, "workcell_provider_policy_check copilot", "other", 1),
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
 			rustLib:            copilotUnsafeFlagsHappyRustLib,
 			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,

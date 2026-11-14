@@ -243,9 +243,11 @@ COPY --chmod=0555 internal/injectionpolicy ./internal/injectionpolicy
 COPY --chmod=0555 internal/rootio ./internal/rootio
 COPY --chmod=0555 internal/tomlsubset ./internal/tomlsubset
 COPY --chmod=0555 cmd/workcell-egress-proxy ./cmd/workcell-egress-proxy
+COPY --chmod=0555 internal/providerpolicy ./internal/providerpolicy
+COPY --chmod=0555 cmd/workcell-provider-policy ./cmd/workcell-provider-policy
 
-RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server ./cmd/workcell-egress-proxy \
-  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy
+RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server ./cmd/workcell-egress-proxy ./cmd/workcell-provider-policy \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /out/workcell-provider-policy
 
 FROM runtime-base AS provider-builder
 
@@ -739,7 +741,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
       /usr/bin/sudo \
       -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
-COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /usr/local/libexec/workcell/
+COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /out/workcell-provider-policy /usr/local/libexec/workcell/
 
 WORKDIR /workspace
 
