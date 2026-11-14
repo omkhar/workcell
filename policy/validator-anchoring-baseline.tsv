@@ -35,7 +35,7 @@ internal/metadatautil	ExtractCopilotSHA	13056216,264e3788,304ff98c	debt: regexp 
 internal/metadatautil	ExtractDockerfileArg	828b8b57,e7295a85,fb388a05	debt: regexp over Dockerfile text; read the parsed ARG instruction
 internal/metadatautil	HadolintManifestChecksum	40acb559,b65cec14	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	IsSafePullRequestTargetWorkflow	4db683f1,f9acf37a	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	LaneScripts	055d0553,333ec69d,5b763629,71f7a2d2,e0d25c5a	the matches read EveryShellCommand words, the ROOT_DIR or ./ prefix of a program word and a workflow working directory; they parse words, not free text
+internal/metadatautil	LaneScripts	055d0553,333ec69d,5b763629,71f7a2d2	the matches read EveryShellCommand words, the ROOT_DIR or ./ prefix of a program word and a workflow working directory; they parse words, not free text
 internal/metadatautil	ParseHelpCommands	1254e754,14bf0875,a1d90014,c0c9634c,c87d28bb,fb82ec77	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
@@ -214,6 +214,13 @@ internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a l
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	rebindsCommand	419dfc3d	the = test tells an alias definition from an alias listing among parsed command words
+internal/metadatautil	laneChildNamesRoot	623ba690	fails closed: a child shell whose program text names ROOT_DIR makes the lane unreadable
+internal/metadatautil	laneExpands	4d870f23	fails closed: a word with an expansion is read as one this reader cannot spell
+internal/metadatautil	laneInnerText	7a693089	the checks read the command words laneCommand returns for an eval operand with an expansion and a trap option; they parse words, not free text
+internal/metadatautil	laneReadable	532c91a7,8a60283b	fails closed: an arithmetic assignment to a computed name or one bash reads, or a BASH_CMDS or BASH_ALIASES name, makes the lane unreadable
+internal/metadatautil	laneScanWrites	e285c2fb	the checks read laneScan command words for an assignment; they parse words, not free text
+internal/metadatautil	laneUnredirected	4b6e734b	the check reads one command word for a redirection operator; it parses words, not free text
+internal/metadatautil	laneWrites	16e67208,4a3c19dd,60783146,bf2e822d,d3dab433	the checks read the operands of one command for the names declare, read, printf -v and their kin assign; they parse words, not free text
 internal/metadatautil	rebindsLane	3f223eda,ab6e4d23,f2af6bdf	the checks read the command words laneCommand returns for an alias, a hash -p option or a program word bash may rewrite; they parse words, not free text
 internal/metadatautil	refsRoot	8c451e37	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rejectInstallScriptAptPackages	30b19070,7ae83b67	unreviewed debt: review the subject, then port or justify
@@ -260,7 +267,7 @@ internal/metadatautil	scopeGuardSplitLF	4f546323	unreviewed debt: review the sub
 internal/metadatautil	scriptRef	96b9da97	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	selectGitHubReleaseStable	94527446	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sentenceWords	e91bc492	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	shadowingFunction	eb4d2dd6	the checks read the function names definedFunctionNames returns
+internal/metadatautil	shadowsLaneProgram	adb8ad62	the checks read the function names definedFunctionNames returns
 internal/metadatautil	shebangInterpreter	92689fd9,9a831542	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellArrayOpen	728ab60a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellCodeOnly	046624a5,2a34b9b5,300d14bf,a6dcde68,b2af9b08,b95527a9	unreviewed debt: review the subject, then port or justify

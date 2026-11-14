@@ -104,40 +104,36 @@ func LaneScripts(rootDir string) ([]string, error) {
 		}
 	}
 	for _, run := range runs {
-		texts, read := []string{run.body}, map[string]bool{}
-		for _, library := range run.libraries {
-			texts, read[library.path] = append(texts, library.text), true
+		// A lane that assigns PATH, BASH_ENV or ENV may change the program each
+		// later command runs, a script's own #! interpreter included, so it
+		// wires no script.
+		startup, err := laneReadable(run.body, run.libraries, run.pinned)
+		if err != nil {
+			return nil, err
 		}
-		for _, text := range texts {
-			name, complete := shadowingFunction(text)
-			if !complete {
-				return nil, fmt.Errorf("lane wiring is unreadable: a lane nests eval or trap text more than eight deep, or holds more text than this reader parses")
-			}
-			if name != "" {
-				return nil, fmt.Errorf("lane wiring is unreadable: a lane defines a function named %q, which bash calls instead of the program", name)
-			}
-			if namesShellVariable(text, laneHashTables.MatchString) {
-				return nil, fmt.Errorf("lane wiring is unreadable: a lane names BASH_CMDS or BASH_ALIASES, which may rebind the scripts it runs")
-			}
+		if startup {
+			continue
 		}
 		moved := run.moved || strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
 		// A library runs nothing until the lane calls it, so each function it
 		// defines is read on its own, and so is its text outside them. An
 		// alias, a hash -p or a source of a path this reader has not read may
 		// rebind what the lane runs, and so may text it cannot spell.
-		var library [][]string
+		read := map[string]bool{}
 		for _, each := range run.libraries {
-			for _, part := range libraryParts(each.text) {
-				library = append(library, part...)
+			read[each.path] = true
+		}
+		for _, each := range run.libraries {
+			parts, _ := libraryParts(each.text) // laneReadable read every part
+			for _, part := range parts {
+				for _, words := range part.commands {
+					if command := laneCommand(words); len(command) > 0 && slices.Contains([]string{"alias", "hash", "source", "."}, command[0]) && rebindsLane(words) || runsUnreadText(words, read) {
+						return nil, fmt.Errorf("lane wiring is unreadable: a library a lane sources runs %q, which may rebind the scripts it runs", strings.Join(words, " "))
+					}
+				}
 			}
 		}
-		for _, words := range library {
-			if command := laneCommand(words); len(command) > 0 && slices.Contains([]string{"alias", "hash", "source", "."}, command[0]) && rebindsLane(words) || runsUnreadText(words, read) {
-				return nil, fmt.Errorf("lane wiring is unreadable: a library a lane sources runs %q, which may rebind the scripts it runs", strings.Join(words, " "))
-			}
-		}
-		commands := laneCommands(run.body)[0]
-		for _, words := range commands {
+		for _, words := range laneCommands(run.body)[0] {
 			if rebindsLane(words) || runsUnreadText(words, read) {
 				return nil, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which may rebind the scripts it runs", strings.Join(words, " "))
 			}
@@ -175,9 +171,9 @@ var laneLibraryRoot = regexp.MustCompile(`^\$(?:ROOT_DIR|\{ROOT_DIR\})/`)
 
 // laneRootPlain is an expansion of ROOT_DIR that cannot assign it: the plain
 // $ROOT_DIR or ${ROOT_DIR}, or ${ROOT_DIR with an operator that only reads it,
-// as ${ROOT_DIR:-} or ${ROOT_DIR%/} do. ${ROOT_DIR:=x} and ${ROOT_DIR=x}
+// as ${ROOT_DIR:-}, ${ROOT_DIR%/} or its length ${#ROOT_DIR} do. ${ROOT_DIR:=x} and ${ROOT_DIR=x}
 // assign it, so they are left for laneRootNamed to find.
-var laneRootPlain = regexp.MustCompile(`\$ROOT_DIR(?:[^A-Za-z0-9_]|$)|\$\{ROOT_DIR(?:\}|:?[-+?]|[#%/^,@])`)
+var laneRootPlain = regexp.MustCompile(`\$ROOT_DIR(?:[^A-Za-z0-9_]|$)|\$\{#?ROOT_DIR(?:\}|:?[-+?]|[#%/^,@])`)
 
 // laneRootNamed is any other mention of ROOT_DIR: an assignment, an export or
 // declaration, a read, a for loop, a nameref, an assigning expansion or a
@@ -233,14 +229,20 @@ func laneRootPinned(root *os.File, rel, body string) (bool, []laneLibrary, error
 		return false, nil, nil
 	}
 	lines[at], lines[at+1] = "", ""
-	if namesLaneRoot(strings.Join(lines, "\n")) {
+	if named, opaque := namesLaneRoot(strings.Join(lines, "\n")); opaque {
+		return false, nil, errLaneBraces
+	} else if named {
 		return false, nil, nil
 	}
 	var libraries []laneLibrary
 	seen := map[string]bool{}
 	for pending := []string{body}; len(pending) > 0; pending = pending[1:] {
-		for _, part := range libraryParts(pending[0]) {
-			for _, words := range part {
+		parts, complete := libraryParts(pending[0])
+		if !complete {
+			return false, nil, fmt.Errorf("lane wiring is unreadable: a lane nests function definitions deeper than this reader parses")
+		}
+		for _, part := range parts {
+			for _, words := range part.commands {
 				library, fixed := laneLibraryPath(words)
 				if !fixed || seen[library] {
 					continue
@@ -252,7 +254,12 @@ func laneRootPinned(root *os.File, rel, body string) (bool, []laneLibrary, error
 				}
 				content, err := rootio.ReadFileAtNoFollow(parent, path.Base(library), "lane library", 1<<20)
 				_ = parent.Close()
-				if err != nil || namesLaneRoot(string(content)) {
+				if err != nil {
+					return false, nil, nil
+				}
+				if named, opaque := namesLaneRoot(string(content)); opaque {
+					return false, nil, errLaneBraces
+				} else if named {
 					return false, nil, nil
 				}
 				libraries, pending = append(libraries, laneLibrary{library, string(content)}), append(pending, string(content))
@@ -262,23 +269,43 @@ func laneRootPinned(root *os.File, rel, body string) (bool, []laneLibrary, error
 	return true, libraries, nil
 }
 
+// lanePart is the commands of one part of a text: outside every function,
+// where function is "", or in the body of the function named function.
+type lanePart struct {
+	function string
+	text     string // the body, past every nested definition
+	commands [][]string
+}
+
 // libraryParts returns the commands of text outside every function it
 // defines, then those of each function body on its own, nested ones too,
-// since a library's function runs only when a caller runs it.
-func libraryParts(text string) [][][]string {
-	var parts []string
-	var split func(text string)
-	split = func(text string) {
+// since a library's function runs only when a caller runs it. Each nested
+// body is read again on its own, so the bytes it reads are charged to a budget
+// linear in the text's length; complete is false once that runs out.
+func libraryParts(text string) (parts []lanePart, complete bool) {
+	var functions, bodies []string
+	budget := 16*len(text) + 1<<16
+	var split func(function, text string) bool
+	split = func(function, text string) bool {
+		if budget -= len(text) + 1; budget < 0 {
+			return false
+		}
 		for _, part := range functionBodies(flattenSubstitutions(heredocsAsHereStrings(text))) {
 			if part.name == "" {
-				parts = append(parts, part.text)
-			} else {
-				split(part.text) // a nested definition binds when its outer function runs
+				functions, bodies = append(functions, function), append(bodies, part.text)
+			} else if !split(part.name, part.text) { // a nested definition binds when its outer function runs
+				return false
 			}
 		}
+		return true
 	}
-	split(text)
-	return laneCommands(parts...)
+	if !split("", text) {
+		return nil, false
+	}
+	for at, commands := range laneCommands(bodies...) {
+		parts = append(parts, lanePart{functions[at], bodies[at], commands})
+	}
+	return parts, true
 }
 
 // laneCommands returns the commands EveryShellCommand reads in each text.
@@ -292,7 +319,7 @@ func laneCommands(texts ...string) [][][]string {
 
 // namesLaneRoot reports whether text names ROOT_DIR other than in an
 // expansion that only reads it, as namesShellVariable reads text.
-func namesLaneRoot(text string) bool {
+func namesLaneRoot(text string) (named, opaque bool) {
 	return namesShellVariable(text, func(text string) bool { return laneRootNamed.MatchString(laneRootPlain.ReplaceAllString(text, "")) })
 }
 
@@ -300,26 +327,30 @@ func namesLaneRoot(text string) bool {
 // for that text with each backslash-newline removed, as bash joins
 // ROOT\<newline>_DIR, or for a word read without its quotes, in each word its
 // brace expansion makes, as export ROOT{_,}DIR does. A brace expansion this
-// reader does not expand may spell any name, so it counts.
-func namesShellVariable(text string, names func(string) bool) bool {
+// reader does not expand may spell any name, so opaque reports it.
+func namesShellVariable(text string, names func(string) bool) (named, opaque bool) {
 	joined := strings.ReplaceAll(text, "\\\n", "")
 	if names(text) || names(joined) {
-		return true
+		return true, false
 	}
 	for line := range strings.Lines(joined) {
 		words, _, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
 		for _, each := range words {
-			variants, opaque := braceVariants(each.text, each.syntax)
-			if opaque || slices.ContainsFunc(variants, names) {
-				return true
+			variants, unread := braceVariants(each.text, each.syntax)
+			if unread {
+				return false, true
+			}
+			if slices.ContainsFunc(variants, names) {
+				return true, false
 			}
 		}
 	}
-	return false
+	return false, false
 }
 
-// braceLimit bounds the words braceVariants makes and the bytes of the word it
-// reads, so a long or deeply grouped word costs a fixed amount of work.
+// braceLimit bounds the words braceVariants makes and braceWordLimit the bytes
+// of a word with a group it expands, so a long or deeply grouped word costs a
+// fixed amount of work.
 const braceLimit, braceWordLimit = 256, 4096
 
 // braceSequence is the body of a sequence expression, as in {a..z}, {1..9}
@@ -330,14 +361,12 @@ var braceSequence = regexp.MustCompile(`^(?:-?[0-9]+\.\.-?[0-9]+|([A-Za-z])\.\.(
 // read from its syntax, so a quoted brace or comma is text and the { of a ${
 // expansion opens none. A letter sequence such as {a..e} makes a word for each
 // letter. A number sequence makes digits, which spell no name, so one 0 stands
-// for it. A word over braceWordLimit bytes, or one whose groups may make more
-// than braceLimit words, is opaque: this reader does not expand it. One pass
-// matches every brace, and the product of each group's alternatives bounds the
-// words before any is made.
+// for it. A word with a group that is over braceWordLimit bytes, or whose
+// groups may make more than braceLimit words, is opaque: this reader does not
+// expand it. A word with no group is itself at any length. One pass matches
+// every brace, and the product of each group's alternatives bounds the words
+// before any is made.
 func braceVariants(text, syntax string) (variants []string, opaque bool) {
-	if len(syntax) > braceWordLimit {
-		return nil, true
-	}
 	type group struct {
 		open, end    int
 		commas       []int
@@ -393,6 +422,9 @@ func braceVariants(text, syntax string) (variants []string, opaque bool) {
 	if len(groups) == 0 {
 		return []string{text}, false
 	}
+	if len(syntax) > braceWordLimit {
+		return nil, true
+	}
 	first := slices.MinFunc(groups, func(a, b group) int { return a.open - b.open })
 	var texts, syntaxes []string
 	for index, start := range append([]int{first.open}, first.commas...) {
@@ -412,25 +444,6 @@ func braceVariants(text, syntax string) (variants []string, opaque bool) {
 		}
 	}
 	return variants, false
-}
-
-// shadowingFunction returns the name of a function text defines that shadows a
-// program a lane names: a shell or a wrapper whose operand the reader takes
-// as the command, trap or eval, whose text the reader runs, or a name with a
-// slash, which bash calls in place of the file the name spells. The shared
-// definedFunctionNames reads the names, so a nested definition, one in an if
-// or case arm, one spelled name ( ), one with a ( ) body and one in the
-// literal text of an eval or a trap all count. complete is false when the
-// reader stopped short of the whole text.
-func shadowingFunction(text string) (shadows string, complete bool) {
-	names, complete := definedFunctionNames(text)
-	for _, defined := range names {
-		name := commandName(defined)
-		if _, wrapper := commandWrappers[name]; wrapper || strings.Contains(defined, "/") || slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh", "trap", "eval"}, name) {
-			return defined, complete
-		}
-	}
-	return "", complete
 }
 
 // laneSource is a source of a fixed repository path, whose text this check reads as a lane of its own when it is one.
