@@ -84,10 +84,11 @@ scenario_platform_matches() {
 }
 
 # print_failed_output prints the last FAILED_OUTPUT_LINES lines of a failed
-# scenario's captured stdout and stderr between two marker lines.
+# scenario's captured stdout and stderr between two marker lines. The status
+# is "exit N" or the signal that stopped the runner.
 print_failed_output() {
   local scenario_id="$1"
-  local exit_code="$2"
+  local status="$2"
   local output_file="$3"
   local total_lines=""
   local unterminated=0
@@ -100,9 +101,9 @@ print_failed_output() {
   total_lines="$(wc -l <"${output_file}")"
   total_lines=$((${total_lines//[[:space:]]/} + unterminated))
   if [[ "${total_lines}" -gt "${FAILED_OUTPUT_LINES}" ]]; then
-    echo "--- ${scenario_id} output (exit ${exit_code}; last ${FAILED_OUTPUT_LINES} of ${total_lines} lines) ---"
+    echo "--- ${scenario_id} output (${status}; last ${FAILED_OUTPUT_LINES} of ${total_lines} lines) ---"
   else
-    echo "--- ${scenario_id} output (exit ${exit_code}; ${total_lines} lines) ---"
+    echo "--- ${scenario_id} output (${status}; ${total_lines} lines) ---"
   fi
   tail -n "${FAILED_OUTPUT_LINES}" "${output_file}"
   if [[ "${unterminated}" -eq 1 ]]; then
@@ -172,13 +173,20 @@ run_scenario() {
   fi
 
   local scenario_exit=0
-  bash "${full_test_path}" </dev/null >"${output_file}" 2>&1 || scenario_exit="$?"
+  local scenario_pid=""
+  # The scenario runs in the background so that its PID is known: a runner
+  # stopped by a signal stops the scenario and prints its output.
+  printf '%s\n' "${scenario_id}" >"${output_file%.output}.id"
+  bash "${full_test_path}" </dev/null >"${output_file}" 2>&1 &
+  scenario_pid="$!"
+  printf '%d\n' "${scenario_pid}" >"${output_file%.output}.pid"
+  wait "${scenario_pid}" || scenario_exit="$?"
   if [[ "${scenario_exit}" -eq 0 ]]; then
     echo "PASS ${scenario_id}"
     return 0
   fi
   echo "FAIL ${scenario_id}"
-  print_failed_output "${scenario_id}" "${scenario_exit}" "${output_file}" >"${failure_file}"
+  print_failed_output "${scenario_id}" "exit ${scenario_exit}" "${output_file}" >"${failure_file}"
   return 1
 }
 
@@ -198,17 +206,54 @@ run_scenario_record() {
   )
 }
 
+declare -a pids=()
+
+# stop_on_signal handles a runner stopped by a signal, as a CI timeout does.
+# It prints the captured output of each scenario that has not finished, and
+# then stops those scenarios and their record subshells.
+stop_on_signal() {
+  local signal="$1"
+  local status="$2"
+  local i=""
+  local prefix=""
+  local pid=""
+
+  trap - TERM INT HUP
+  for i in $(seq 1 "${idx}"); do
+    prefix="${RESULTS_DIR}/${i}"
+    [[ -f "${prefix}.output" && -f "${prefix}.id" && ! -f "${prefix}.exit" ]] || continue
+    echo ""
+    echo "STOPPED $(<"${prefix}.id")"
+    print_failed_output "$(<"${prefix}.id")" "stopped by SIG${signal}" "${prefix}.output"
+    if [[ -f "${prefix}.pid" ]]; then
+      pid="$(<"${prefix}.pid")"
+      [[ "${pid}" =~ ^[1-9][0-9]*$ ]] && kill -TERM "${pid}" 2>/dev/null || true
+    fi
+  done
+  for pid in ${pids[@]+"${pids[@]}"}; do
+    kill -TERM "${pid}" 2>/dev/null || true
+  done
+  exit "${status}"
+}
+trap 'stop_on_signal TERM 143' TERM
+trap 'stop_on_signal INT 130' INT
+trap 'stop_on_signal HUP 129' HUP
+
 if [[ "${SCENARIO_JOBS}" -eq 1 ]]; then
   while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform validation_tier manual; do
     idx=$((idx + 1))
     result_file="${RESULTS_DIR}/${idx}.exit"
+    # A background record and a wait let a signal trap run at once; bash
+    # runs a trap only after a foreground child exits.
     run_scenario_record "${result_file}" \
-      "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${validation_tier}" "${manual}"
+      "${scenario_id}" "${test_file}" "${requires_creds}" "${lane}" "${platform}" "${validation_tier}" "${manual}" &
+    pids=("$!")
+    wait "${pids[0]}" || true
+    pids=()
   done <"${SCENARIO_LIST}"
 else
   # Explicit opt-in parallel mode for local debugging; repo-required validation
   # stays serial by default because several scenarios share host-side state.
-  declare -a pids=()
   running_jobs=0
   while IFS=$'\t' read -r scenario_id test_file requires_creds lane platform validation_tier manual; do
     idx=$((idx + 1))
@@ -224,10 +269,11 @@ else
     fi
   done <"${SCENARIO_LIST}"
 
-  for pid in "${pids[@]}"; do
+  for pid in ${pids[@]+"${pids[@]}"}; do
     wait "${pid}" || true
   done
 fi
+trap - TERM INT HUP
 
 # Aggregate results from per-scenario exit files.
 # Exit codes: 0 = pass, 1 = fail, 2 = skip
