@@ -1161,6 +1161,34 @@ func TestBrokeredTargetEndsTheLockWhenTheSendPanics(t *testing.T) {
 	}
 }
 
+// panickingErrContext panics when a send asks whether it has ended.
+type panickingErrContext struct{ context.Context }
+
+func (panickingErrContext) Err() error { panic("context check") }
+
+// TestMaterializeEndsTheLockWhenTheStagePanics panics in the context check
+// that follows the lock. A later send of the same ID in this process must not
+// wait for the lock of the panicked send. A collection could close a leaked
+// descriptor and end its lock, so the test turns collection off.
+// Not parallel: it changes the collector setting.
+func TestMaterializeEndsTheLockWhenTheStagePanics(t *testing.T) {
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the send did not panic")
+			}
+		}()
+		_, _ = materializeInStateRoot(panickingErrContext{t.Context()}, DefaultGCPVMContract(), req)
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if _, err := materializeInStateRoot(ctx, DefaultGCPVMContract(), req); err != nil {
+		t.Fatalf("materializeInStateRoot() after a panic under the lock = %v", err)
+	}
+}
+
 // TestMaterializeRefusesAnEndedContextBeforeTheSwap ends the context before a
 // free lock is taken, or after the staging. The host copy and the kept
 // manifest must stay, and the broker must not start.

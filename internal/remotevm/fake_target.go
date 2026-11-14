@@ -246,13 +246,21 @@ type stagedHostCopy struct {
 // copies the source workspace into a new sibling of the workspace directory.
 // A failed copy removes the sibling and leaves the earlier host copy, which a
 // kept manifest of that run still describes.
-func stageWorkspaceCopy(ctx context.Context, sourceWorkspace, materializationRoot, workspaceDir, manifestName string, excluded []string) (*stagedHostCopy, []WorkspaceEntry, error) {
+func stageWorkspaceCopy(ctx context.Context, sourceWorkspace, materializationRoot, workspaceDir, manifestName string, excluded []string) (_ *stagedHostCopy, _ []WorkspaceEntry, err error) {
 	// The parent of a name in materializationRoot is that root, opened
 	// without a follow.
 	parent, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(materializationRoot, workspaceDir))
 	if err != nil {
 		return nil, nil, err
 	}
+	// Every return but the last ends the lock, also after a panic, so that a
+	// later send of this ID in the same process does not wait for it.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			err = errors.Join(err, endHostLock(parent))
+		}
+	}()
 	// A second send of this ID waits for this lock on the parent, which
 	// endHostLock ends. The wait polls, so that it ends with ctx.
 	err = unix.Flock(int(parent.Fd()), unix.LOCK_EX|unix.LOCK_NB)
@@ -268,21 +276,22 @@ func stageWorkspaceCopy(ctx context.Context, sourceWorkspace, materializationRoo
 		err = ctx.Err()
 	}
 	if err != nil {
-		return nil, nil, errors.Join(err, endHostLock(parent))
+		return nil, nil, err
 	}
 	leftovers, err := recoverInterruptedSwap(parent, materializationRoot, workspaceDir, manifestName)
 	if err != nil {
-		return nil, nil, errors.Join(err, endHostLock(parent))
+		return nil, nil, err
 	}
 	name, err := mkdirTempAt(parent, "."+workspaceDir+stagingInfix)
 	if err != nil {
-		return nil, nil, errors.Join(err, endHostLock(parent))
+		return nil, nil, err
 	}
 	staged := &stagedHostCopy{parent: parent, name: name, workspaceDir: workspaceDir, path: filepath.Join(materializationRoot, name), leftovers: leftovers}
 	entries, err := copyWorkspaceTree(sourceWorkspace, staged.path, excluded)
 	if err != nil {
-		return nil, nil, errors.Join(err, staged.close())
+		return nil, nil, errors.Join(err, rootio.RemoveAllAtNoFollow(parent, name))
 	}
+	handedOff = true
 	return staged, entries, nil
 }
 
