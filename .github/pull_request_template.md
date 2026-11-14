@@ -39,5 +39,4 @@ merge until you address or disposition each actionable comment.
 - [ ] The PR base is `main`
 - [ ] All required checks passed
 - [ ] No actionable comment or unresolved thread remains
-- [ ] The exact-head Codex marker is clean
 - [ ] If I use an admin merge, it bypasses only the missing independent approval
