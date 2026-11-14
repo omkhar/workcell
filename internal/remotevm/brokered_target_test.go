@@ -597,8 +597,8 @@ func testSource(t *testing.T, change string) string {
 		t.Fatal(err)
 	}
 	target, readme := "README.md", filepath.Join(source, "README.md")
-	// A mode that a usual umask changes.
-	err := os.Chmod(filepath.Join(source, "subdir"), 0o777)
+	// Modes that a usual umask changes.
+	err := errors.Join(os.Chmod(filepath.Join(source, "subdir"), 0o777), os.Chmod(filepath.Join(source, "subdir", "config.txt"), 0o666))
 	switch change {
 	case "content":
 		err = errors.Join(err, os.WriteFile(readme, []byte("second"), 0o644))
@@ -716,7 +716,7 @@ func TestMaterializeRefusesToRestoreAPlantedPrevious(t *testing.T) {
 func TestMaterializeRefusesAKeptManifestThatItCannotRead(t *testing.T) {
 	t.Parallel()
 
-	for name, content := range map[string]string{"not json": "{", "no entries": "{}\n"} {
+	for name, content := range map[string]string{"not json": "{", "no entries": "{}\n", "version 1, no entries": `{"version":1}`, "version 2": `{"version":2,"entries":[]}`} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
@@ -824,6 +824,10 @@ func TestMaterializeRefusesAManifestOverTheReadLimit(t *testing.T) {
 	if _, err := os.Lstat(leftover); err != nil {
 		t.Fatalf("leftover copy: %v", err)
 	}
+	// A manifest of exactly the limit is written.
+	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap stops a second
@@ -896,8 +900,11 @@ func TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap(t *testing.T) {
 						materializeUntilKilled(t, second)
 					} else if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), second); !errors.Is(err, unix.ENOSPC) {
 						t.Fatalf("materializeInStateRoot() = %v, want ENOSPC", err)
-					} else {
-						assertKept()
+					} else if assertKept(); want == nil {
+						// No manifest describes the new copy, so it is not left in place.
+						if _, err := os.Lstat(first.MaterializedWorkspace); !errors.Is(err, os.ErrNotExist) {
+							t.Fatalf("host workspace after an uncommitted first copy: %v, want none", err)
+						}
 					}
 					swapStep, writeManifestAt = noStep, write
 					left := hostCopies(t, first.MaterializationRoot)
@@ -996,6 +1003,41 @@ func TestMaterializeKeepsTheNewCopyWhenItCannotReadBackAFailedManifest(t *testin
 		t.Fatal(err)
 	}
 	assertHostCopyMatchesKeptManifest(t, req, want)
+}
+
+// TestMaterializeRemovesWhatRecoveryMovesAside kills a send after it put its
+// copy in place and before its manifest write, and plants the temporary
+// files of a killed archive and manifest write. The next good send puts back
+// the copy that the kept manifest describes and moves the killed copy aside.
+// It must leave only its own copy and manifest.
+// Not parallel: it replaces writeManifestAt.
+func TestMaterializeRemovesWhatRecoveryMovesAside(t *testing.T) {
+	write := writeManifestAt
+	t.Cleanup(func() { writeManifestAt = write })
+	req := brokeredRequest(t, testSource(t, ""))
+	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManifestAt = func(parent *os.File, _ string, _ []byte, _ os.FileMode, _ string) error {
+		parent.Close()
+		panic(killedRun{})
+	}
+	second := req
+	second.SourceWorkspace = secondSource(t)
+	materializeUntilKilled(t, second)
+	writeManifestAt = write
+	for _, name := range []string{archivePrefix + "0011", ".manifest-0011"} {
+		if err := os.WriteFile(filepath.Join(first.MaterializationRoot, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err != nil {
+		t.Fatal(err)
+	}
+	if names, err := os.ReadDir(first.MaterializationRoot); err != nil || len(names) != 2 {
+		t.Fatalf("materialization root holds %v (%v), want only the manifest and the workspace", names, err)
+	}
 }
 
 // TestBrokeredTargetRefusesASendWhoseConfirmedManifestCannotFit lowers the
