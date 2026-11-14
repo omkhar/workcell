@@ -606,6 +606,9 @@ func (check *pinnedInputsCheck) validateWorkflowPolicy(text, path string) error 
 	if regexp.MustCompile(`secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b`).MatchString(text) {
 		return fmt.Errorf("%s must not contain long-lived personal access tokens", path)
 	}
+	if err := validateClaudeMentionPlacement(text, path); err != nil {
+		return err
+	}
 	return validateWorkflowActions(text, path, check.allowedActions)
 }
 

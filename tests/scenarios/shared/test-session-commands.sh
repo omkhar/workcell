@@ -60,6 +60,55 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A dry run prints each docker argument through printf %q, so a TMPDIR path
+# that holds a space, a $ or a backtick appears escaped. These helpers match
+# the quoted arguments as text, never the raw path as a regex.
+#
+# dry_run_has_args OUTPUT ARG... succeeds when OUTPUT holds the ARGs as
+# consecutive whole arguments.
+dry_run_has_args() {
+  local output="$1"
+  local quoted=""
+  shift
+  printf -v quoted '%q ' "$@"
+  grep -Fq -- " ${quoted}" <<<" ${output} "
+}
+
+# ere_escape prints its argument with each extended regex metacharacter
+# escaped, so the result matches only the text itself.
+ere_escape() {
+  printf '%s' "$1" | sed 's/[][\\.*^$+?(){}|]/\\&/g'
+}
+
+# dry_run_has_flag_value OUTPUT FLAG PREFIX SUFFIX succeeds when FLAG is
+# followed by one argument that starts with PREFIX and ends with SUFFIX, with
+# at least one character between them.
+dry_run_has_flag_value() {
+  local output="$1"
+  local flag=""
+  local prefix=""
+  local suffix=""
+  printf -v flag '%q' "$2"
+  printf -v prefix '%q' "$3"
+  printf -v suffix '%q' "$4"
+  grep -Eq -- "(^| )$(ere_escape "${flag}") $(ere_escape "${prefix}")[^ ]+$(ere_escape "${suffix}")( |$)" <<<"${output}"
+}
+
+# Check the helpers with the path shapes of the hostile TMPDIR job on every
+# host. The assertions that use them run only on a supported launch host.
+dry_run_probe_workspace="/probe/hostile \$HOME \`id\` --hostname/ws (x)"
+printf -v dry_run_probe_output '%q ' docker run -d -v "${dry_run_probe_workspace}/.git/workcell-sessions/s-1/repo:/workspace" -e A=1 workcell:local
+dry_run_probe_output="  ${dry_run_probe_output}"
+dry_run_has_args "${dry_run_probe_output}" -v "${dry_run_probe_workspace}/.git/workcell-sessions/s-1/repo:/workspace"
+dry_run_has_flag_value "${dry_run_probe_output}" -v "${dry_run_probe_workspace}/.git/workcell-sessions/" "/repo:/workspace"
+if dry_run_has_args "${dry_run_probe_output}" -v "${dry_run_probe_workspace}:/workspace" ||
+  dry_run_has_args "${dry_run_probe_output}" -v "${dry_run_probe_workspace}/.git/workcell-sessions/s-1/repo:/works" ||
+  dry_run_has_flag_value "${dry_run_probe_output}" -v "${dry_run_probe_workspace}/other/" "/repo:/workspace" ||
+  dry_run_has_flag_value "${dry_run_probe_output}" -e "${dry_run_probe_workspace}/.git/workcell-sessions/" "/repo:/workspace"; then
+  echo "A dry-run matcher accepted an argument that the probe output does not hold" >&2
+  exit 1
+fi
+
 top_level_help="$("${ROOT_DIR}/scripts/workcell" --help)"
 grep -Fq 'workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork|restore>' <<<"${top_level_help}"
 grep -Fq 'workcell session verify --id SESSION_ID' <<<"${top_level_help}"
@@ -250,15 +299,27 @@ grep -q $'^'"${SESSION_TWO}"$'\tfailed\tstopped\tdetached\tclaude\tdevelopment\t
 
 if command -v script >/dev/null 2>&1; then
   tty_list_cmd=("${ROOT_DIR}/scripts/workcell" session list --colima-profile "${PROFILE}")
+  # script's own stderr carries only its own errors, because the command runs
+  # on the pseudo-terminal. Keep it, so a failure names its cause.
+  tty_list_stderr="${TMP_DIR}/tty-session-list.stderr"
+  tty_list_status=0
   if script_help="$(script --help 2>&1 || true)" && grep -q -- ' -c, --command ' <<<"${script_help}"; then
     printf -v tty_list_shell_cmd '%q ' "${tty_list_cmd[@]}"
     tty_list_output="$(
-      script -q /dev/null -c "${tty_list_shell_cmd% }" 2>/dev/null | tr -d '\r\004\010'
-    )"
+      script -q /dev/null -c "${tty_list_shell_cmd% }" 2>"${tty_list_stderr}" | tr -d '\r\004\010'
+    )" || tty_list_status=$?
   else
     tty_list_output="$(
-      script -q /dev/null "${tty_list_cmd[@]}" 2>/dev/null | tr -d '\r\004\010'
-    )"
+      script -q /dev/null "${tty_list_cmd[@]}" 2>"${tty_list_stderr}" | tr -d '\r\004\010'
+    )" || tty_list_status=$?
+  fi
+  if [[ "${tty_list_status}" -ne 0 ]]; then
+    echo "TTY session list through script failed with status ${tty_list_status}" >&2
+    echo "script stderr:" >&2
+    cat "${tty_list_stderr}" >&2
+    echo "script output:" >&2
+    printf '%s\n' "${tty_list_output}" >&2
+    exit 1
   fi
   grep -q 'session_id[[:space:]]status[[:space:]]live_status[[:space:]]control[[:space:]]agent[[:space:]]mode[[:space:]]profile[[:space:]]started_at[[:space:]]assurance[[:space:]]workspace' <<<"${tty_list_output}"
   if printf '%s' "${tty_list_output}" | LC_ALL=C grep -q $'\033\['; then
@@ -624,9 +685,9 @@ else
     echo "Detached session start kept Docker's init ahead of the managed session supervisor" >&2
     exit 1
   fi
-  grep -Eq -- "-v ${DETACHED_START_WORKSPACE}/\\.git/workcell-sessions/.+/repo:/workspace($| )" <<<"${detached_start_default_output}"
+  dry_run_has_flag_value "${detached_start_default_output}" -v "${DETACHED_START_WORKSPACE}/.git/workcell-sessions/" "/repo:/workspace"
   grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" <<<"${detached_start_default_output}"
-  if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_default_output}"; then
+  if dry_run_has_args "${detached_start_default_output}" -v "${DETACHED_START_WORKSPACE}:/workspace"; then
     echo "Detached session start honored an inherited workspace-mode env override" >&2
     exit 1
   fi
@@ -643,7 +704,7 @@ fi
 custom_state_home="${TMP_DIR}/detached-state-home"
 if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   detached_start_direct_output="$(run_detached_start_dry_run isolated "${DETACHED_START_WORKSPACE}" --session-workspace direct)"
-  grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_direct_output}"
+  dry_run_has_args "${detached_start_direct_output}" -v "${DETACHED_START_WORKSPACE}:/workspace"
 
   NONGIT_DETACHED_WORKSPACE="${TMP_DIR}/detached-start-nongit"
   mkdir -p "${NONGIT_DETACHED_WORKSPACE}"
@@ -652,7 +713,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   nongit_isolated_status=$?
   set -e
   test "${nongit_isolated_status}" -eq 2
-  grep -q "Workspace is not a git worktree: ${NONGIT_DETACHED_WORKSPACE}" <<<"${nongit_isolated_output}"
+  grep -Fq -- "Workspace is not a git worktree: ${NONGIT_DETACHED_WORKSPACE}" <<<"${nongit_isolated_output}"
   grep -q 'Detached session start with --session-workspace isolated requires a git workspace\.' <<<"${nongit_isolated_output}"
   grep -q 'Next step: rerun with --session-workspace direct if you want to use the current workspace in place\.' <<<"${nongit_isolated_output}"
 
@@ -662,7 +723,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   dirty_isolated_status=$?
   set -e
   test "${dirty_isolated_status}" -eq 2
-  grep -q "session start requires a clean source workspace for isolated session cloning: ${DETACHED_START_WORKSPACE}" <<<"${dirty_isolated_output}"
+  grep -Fq -- "session start requires a clean source workspace for isolated session cloning: ${DETACHED_START_WORKSPACE}" <<<"${dirty_isolated_output}"
   grep -q 'Next step: commit or stash the workspace changes, or rerun with --session-workspace direct to use the current workspace in place\.' <<<"${dirty_isolated_output}"
 
   LINKED_WORKTREE_ROOT="${TMP_DIR}/detached-linked-worktree"
@@ -681,7 +742,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   linked_isolated_status=$?
   set -e
   test "${linked_isolated_status}" -eq 2
-  grep -q "Refusing git workspace with admin state outside the mounted workspace: ${LINKED_WORKTREE_PATH}" <<<"${linked_isolated_output}"
+  grep -Fq -- "Refusing git workspace with admin state outside the mounted workspace: ${LINKED_WORKTREE_PATH}" <<<"${linked_isolated_output}"
   grep -q 'This workspace is a linked worktree: its .git file points to a .git directory outside the mounted path\.' <<<"${linked_isolated_output}"
   grep -q 'To use this workspace on the safe path, create a standard clone at the same location instead\.' <<<"${linked_isolated_output}"
   grep -q 'Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with a linked worktree\.' <<<"${linked_isolated_output}"
