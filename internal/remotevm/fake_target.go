@@ -235,7 +235,6 @@ type stagedHostCopy struct {
 	name         string
 	workspaceDir string
 	path         string
-	placed       bool
 	// leftovers are the names that earlier runs left. Only a committed
 	// send removes them.
 	leftovers []string
@@ -251,6 +250,16 @@ func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir, mani
 	parent, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(materializationRoot, workspaceDir))
 	if err != nil {
 		return nil, nil, err
+	}
+	// A second send of this ID waits for this lock on the parent, which close
+	// ends. A child that a fork starts holds the lock too until its exec, so
+	// a send that does not wait could fail with no second send running.
+	err = unix.Flock(int(parent.Fd()), unix.LOCK_EX)
+	for errors.Is(err, unix.EINTR) {
+		err = unix.Flock(int(parent.Fd()), unix.LOCK_EX)
+	}
+	if err != nil {
+		return nil, nil, errors.Join(err, parent.Close())
 	}
 	leftovers, err := recoverInterruptedSwap(parent, materializationRoot, workspaceDir, manifestName)
 	if err != nil {
@@ -269,11 +278,14 @@ func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir, mani
 }
 
 const (
-	stagingInfix     = "-staging-"
-	previousInfix    = "-previous-"
-	archivePrefix    = ".archive-"
-	maxManifestBytes = 64 << 20
+	stagingInfix  = "-staging-"
+	previousInfix = "-previous-"
+	archivePrefix = ".archive-"
 )
+
+// maxManifestBytes caps a manifest when it is written and when it is read
+// back. Tests lower it.
+var maxManifestBytes int64 = 64 << 20
 
 // recoverInterruptedSwap makes sure that the host workspace is the copy that
 // the kept manifest describes, if a run killed part way left that copy under
@@ -291,7 +303,7 @@ func recoverInterruptedSwap(parent *os.File, materializationRoot, workspaceDir, 
 	var leftovers, candidates []string
 	for _, name := range names {
 		copyName := strings.HasPrefix(name, "."+workspaceDir+stagingInfix) || strings.HasPrefix(name, "."+workspaceDir+previousInfix)
-		if copyName || strings.HasPrefix(name, archivePrefix) {
+		if copyName || strings.HasPrefix(name, archivePrefix) || strings.HasPrefix(name, ".manifest-") {
 			leftovers = append(leftovers, name)
 		}
 		if copyName && ownedDirectoryAt(parent, name) {
@@ -309,13 +321,17 @@ func recoverInterruptedSwap(parent *os.File, materializationRoot, workspaceDir, 
 	if err == nil {
 		err = json.Unmarshal(raw, &kept)
 	}
+	if err == nil && (kept.Version != 1 || kept.Entries == nil) {
+		err = errors.New("no version 1 manifest with entries")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read the kept host manifest: %w", err)
 	}
 	matches := func(name string) bool {
 		entries, err := copyWorkspaceTree(filepath.Join(materializationRoot, name), "", nil)
 		return err == nil && slices.EqualFunc(entries, kept.Entries, func(a, b WorkspaceEntry) bool {
-			return a.Path == b.Path && a.Kind == b.Kind && a.SHA256 == b.SHA256 && a.LinkTarget == b.LinkTarget
+			return a.Path == b.Path && a.Kind == b.Kind && a.SHA256 == b.SHA256 && a.LinkTarget == b.LinkTarget &&
+				(a.Kind == "symlink" || a.Mode.Perm() == b.Mode.Perm())
 		})
 	}
 	if ownedDirectoryAt(parent, workspaceDir) && matches(workspaceDir) {
@@ -371,74 +387,71 @@ func moveAside(parent *os.File, name string) (string, error) {
 }
 
 // commit moves the earlier host copy aside, moves the staged copy into its
-// place, and writes the manifest. If a step fails, the earlier host copy
-// goes back in place, so the host copy and its manifest change together. A
-// kill or a failed rollback leaves both copies, and the next run puts back
-// the one that the kept manifest describes. Only after the manifest is
-// written does commit remove the earlier copy and the leftovers.
+// place, and writes the manifest. If a step fails before the manifest is in
+// place, the earlier host copy goes back, so the host copy and its manifest
+// change together. A kill or a failed rollback leaves both copies, and the
+// next run puts back the one that the kept manifest describes. Only after
+// the manifest is written does commit remove the earlier copy and the
+// leftovers.
 func (s *stagedHostCopy) commit(manifestPath string, manifest any) error {
 	content, err := manifestContent(manifest)
 	if err != nil {
 		return err
 	}
 	fd := int(s.parent.Fd())
-	if err := swapStep("first rename"); err != nil {
+	if err := swapStep("first rename", s.parent); err != nil {
 		return err
 	}
 	previous, err := moveAside(s.parent, s.workspaceDir)
 	if err != nil {
 		return err
 	}
+	placed := false
 	rollback := func(err error) error {
-		if s.placed {
+		// close removes the new copy from its staged name.
+		if placed {
 			err = errors.Join(err, unix.Renameat(fd, s.workspaceDir, fd, s.name))
-			// A failed write can still have put the manifest in place. Then
-			// the new copy stays under its staged name, for the next run.
-			kept, readErr := rootio.ReadFileAtNoFollow(s.parent, filepath.Base(manifestPath), "host manifest", maxManifestBytes)
-			s.placed = readErr == nil && bytes.Equal(kept, content)
 		}
 		if previous != "" {
 			err = errors.Join(err, unix.Renameat(fd, previous, fd, s.workspaceDir))
 		}
 		return errors.Join(err, s.parent.Sync())
 	}
-	if err := swapStep("second rename"); err != nil {
+	if err := swapStep("second rename", s.parent); err != nil {
 		return rollback(err)
 	}
 	if err := unix.Renameat(fd, s.name, fd, s.workspaceDir); err != nil {
 		return rollback(err)
 	}
-	s.placed = true
+	placed = true
 	if err := s.parent.Sync(); err != nil {
 		return rollback(err)
 	}
-	if err := swapStep("manifest"); err != nil {
-		return rollback(err)
-	}
-	err = writeJSON(manifestPath, manifest)
-	if err == nil {
-		err = swapStep("cleanup")
-	}
-	if err != nil {
-		return rollback(err)
+	name := filepath.Base(manifestPath)
+	if err := writeManifestAt(s.parent, name, content, 0o600, ".manifest-"); err != nil {
+		// A write can fail after its rename. Roll back only when the kept
+		// manifest is known not to be the new one. Otherwise the new copy
+		// stays in place with it, and the next run checks both.
+		kept, readErr := rootio.ReadFileAtNoFollow(s.parent, name, "host manifest", maxManifestBytes)
+		if errors.Is(readErr, os.ErrNotExist) || readErr == nil && !bytes.Equal(kept, content) {
+			return rollback(err)
+		}
+		return err
 	}
 	for _, name := range append(s.leftovers, previous) {
 		if name != "" {
 			_ = rootio.RemoveAllAtNoFollow(s.parent, name)
 		}
 	}
-	_ = swapStep("done")
+	_ = swapStep("done", s.parent)
 	return s.parent.Sync()
 }
 
-// close removes the staged copy unless commit put it in place, and closes the
-// parent directory.
+// close removes the staged copy if it is still under its staged name, which
+// no kept manifest then describes, and closes the parent directory. Closing
+// the parent ends the lock.
 func (s *stagedHostCopy) close() error {
-	var err error
-	if !s.placed {
-		err = rootio.RemoveAllAtNoFollow(s.parent, s.name)
-	}
-	return errors.Join(err, s.parent.Close())
+	return errors.Join(rootio.RemoveAllAtNoFollow(s.parent, s.name), s.parent.Close())
 }
 
 // mkdirTempAt creates a new owner-only directory under parent with a random
@@ -728,6 +741,10 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 			if err := mkdirAllUnless(scanOnly, destPath, info.Mode().Perm()); err != nil {
 				return err
 			}
+			// The umask must not change the modes that the manifest records.
+			if err := chmodUnless(scanOnly, destPath, info.Mode().Perm()); err != nil {
+				return err
+			}
 			entries = append(entries, WorkspaceEntry{Path: rel, Kind: "dir", Mode: info.Mode()})
 		case info.Mode().IsRegular():
 			if err := mkdirAllUnless(scanOnly, filepath.Dir(destPath), 0o755); err != nil {
@@ -746,6 +763,9 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 			totalBytes += int64(len(content))
 			if !scanOnly {
 				if err := os.WriteFile(destPath, content, info.Mode().Perm()); err != nil {
+					return err
+				}
+				if err := os.Chmod(destPath, info.Mode().Perm()); err != nil {
 					return err
 				}
 			}
@@ -886,6 +906,13 @@ func mkdirAllUnless(skip bool, dir string, perm os.FileMode) error {
 	return os.MkdirAll(dir, perm)
 }
 
+func chmodUnless(skip bool, path string, perm os.FileMode) error {
+	if skip {
+		return nil
+	}
+	return os.Chmod(path, perm)
+}
+
 func mkdirAllSynced(dir string) error {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
@@ -935,7 +962,11 @@ func manifestContent(value any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(content, '\n'), nil
+	// A manifest that is written must be one that can be read back.
+	if content = append(content, '\n'); int64(len(content)) > maxManifestBytes {
+		return nil, fmt.Errorf("manifest of %d bytes exceeds the limit of %d bytes", len(content), maxManifestBytes)
+	}
+	return content, nil
 }
 
 func writeJSON(path string, value any) error {

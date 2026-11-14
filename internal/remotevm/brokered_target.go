@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/omkhar/workcell/internal/rootio"
 	"io"
 	"os"
 	"os/exec"
@@ -82,11 +83,12 @@ func validateBrokerArgs(cliPath string, receiverPort int, values ...string) erro
 	return nil
 }
 
-// createArchiveFile and swapStep are replaced only by tests that inject a
-// failure or a kill.
+// createArchiveFile, swapStep and writeManifestAt are replaced only by tests
+// that inject a failure or a kill.
 var (
 	createArchiveFile = os.CreateTemp
-	swapStep          = func(string) error { return nil }
+	swapStep          = func(string, *os.File) error { return nil }
+	writeManifestAt   = rootio.WriteFileAtomicAtNoFollow
 )
 
 func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (MaterializeResult, error) {
@@ -104,14 +106,15 @@ func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req Materializ
 	// record that the guest can hold a workspace: a lost acknowledgment, a
 	// refusal that kept an earlier guest copy, and a host crash all leave it
 	// for an operator to reconcile.
+	// The confirmed manifest is written before close ends the lock.
 	guestWorkspace, err := b.sendStagedWorkspace(ctx, req.TargetID, &result, staged)
-	if err = errors.Join(err, staged.close()); err != nil {
-		return MaterializeResult{}, err
+	if err == nil {
+		result.MaterializedWorkspace = guestWorkspace
+		result.Manifest.MaterializedWorkspace = guestWorkspace
+		result.Manifest.GuestTransfer = ""
+		err = writeJSON(result.ManifestPath, result.Manifest)
 	}
-	result.MaterializedWorkspace = guestWorkspace
-	result.Manifest.MaterializedWorkspace = guestWorkspace
-	result.Manifest.GuestTransfer = ""
-	if err := writeJSON(result.ManifestPath, result.Manifest); err != nil {
+	if err = errors.Join(err, staged.close()); err != nil {
 		return MaterializeResult{}, err
 	}
 	return result, nil

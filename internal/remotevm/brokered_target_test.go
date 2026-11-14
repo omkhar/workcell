@@ -585,19 +585,36 @@ func assertHostCopyMatchesKeptManifest(t *testing.T, req MaterializeRequest, wan
 	}
 }
 
-// secondSource has the paths of the test source workspace, and one file
-// with other content.
-func secondSource(t *testing.T) string {
+// testSource copies the test source workspace and adds a symlink. A change
+// of "content", "mode" or "link target" changes one entry, and no other part
+// of it.
+func testSource(t *testing.T, change string) string {
 	t.Helper()
-	source := filepath.Join(t.TempDir(), "second")
+	source := filepath.Join(t.TempDir(), "source")
 	if _, err := copyWorkspaceTree(filepath.Join("testdata", "source-workspace"), source, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("second"), 0o644); err != nil {
+	target, readme := "README.md", filepath.Join(source, "README.md")
+	// A mode that a usual umask changes.
+	err := os.Chmod(filepath.Join(source, "subdir"), 0o777)
+	switch change {
+	case "content":
+		err = errors.Join(err, os.WriteFile(readme, []byte("second"), 0o644))
+	case "mode":
+		err = errors.Join(err, os.Chmod(readme, 0o600))
+	case "link target":
+		target = "subdir/config.txt"
+	}
+	if err == nil {
+		err = os.Symlink(target, filepath.Join(source, "link"))
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	return source
 }
+
+func secondSource(t *testing.T) string { return testSource(t, "content") }
 
 // TestBrokeredTargetKeepsTheHostCopyWhenTheArchiveFails fails the archive of
 // a second send. The host copy and the kept manifest must still agree.
@@ -648,95 +665,237 @@ func failHostileSend(t *testing.T, req MaterializeRequest) {
 // previous name while the workspace is missing. A walk of the symlink finds
 // no entries, as the empty kept manifest records, but recovery must not make
 // it the host workspace, and must not touch its target.
+// The same holds for an empty directory that another account owns.
 func TestMaterializeRefusesToRestoreAPlantedPrevious(t *testing.T) {
 	t.Parallel()
 
-	req := brokeredRequest(t, t.TempDir())
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign directory=%v", foreign), func(t *testing.T) {
+			t.Parallel()
+			if foreign && os.Geteuid() != 0 {
+				t.Skip("needs root to give a directory to another account")
+			}
+			req := brokeredRequest(t, t.TempDir())
+			first, err := materializeInStateRoot(DefaultGCPVMContract(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.RemoveAll(first.MaterializedWorkspace); err != nil {
+				t.Fatal(err)
+			}
+			outside := t.TempDir()
+			if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			planted := filepath.Join(first.MaterializationRoot, "."+DefaultGCPVMContract().WorkspaceMaterialization.WorkspaceDir+"-previous-0011")
+			if foreign {
+				mustMkdir(t, planted)
+				err = os.Lchown(planted, 1, 1)
+			} else {
+				err = os.Symlink(outside, planted)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			failHostileSend(t, req)
+			if info, err := os.Lstat(first.MaterializedWorkspace); err == nil {
+				t.Fatalf("recovery made %v the host workspace", info.Mode())
+			}
+			if names, err := os.ReadDir(outside); err != nil || len(names) != 1 {
+				t.Fatalf("symlink target holds %v (%v), want only keep", names, err)
+			}
+		})
+	}
+}
+
+// TestMaterializeRefusesAKeptManifestThatItCannotRead plants an empty
+// leftover copy and a kept manifest that recovery cannot use. The send must
+// fail and move nothing.
+func TestMaterializeRefusesAKeptManifestThatItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	for name, content := range map[string]string{"not json": "{", "no entries": "{}\n"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+			first, err := materializeInStateRoot(DefaultGCPVMContract(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leftover := filepath.Join(first.MaterializationRoot, "."+DefaultGCPVMContract().WorkspaceMaterialization.WorkspaceDir+"-staging-0011")
+			mustMkdir(t, leftover)
+			if err := os.WriteFile(first.ManifestPath, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := materializeInStateRoot(DefaultGCPVMContract(), req); err == nil {
+				t.Fatal("materializeInStateRoot() accepted a kept manifest that it cannot read")
+			}
+			if entries, err := copyWorkspaceTree(first.MaterializedWorkspace, "", nil); err != nil || !slices.Equal(entries, first.Manifest.Entries) {
+				t.Fatalf("host workspace = %v (%v), want the first copy", entries, err)
+			}
+			if _, err := os.Lstat(leftover); err != nil {
+				t.Fatalf("leftover copy: %v", err)
+			}
+		})
+	}
+}
+
+// TestMaterializeWaitsForASendOfTheSameID holds the lock of a send. A second
+// send of the same ID must wait until the lock ends.
+func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
+	t.Parallel()
+
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
 	first, err := materializeInStateRoot(DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(first.MaterializedWorkspace); err != nil {
+	held, err := os.Open(first.MaterializationRoot)
+	if err != nil {
 		t.Fatal(err)
 	}
-	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("keep"), 0o600); err != nil {
+	defer held.Close()
+	if err := unix.Flock(int(held.Fd()), unix.LOCK_EX); err != nil {
 		t.Fatal(err)
 	}
-	mustSymlink(t, outside, filepath.Join(first.MaterializationRoot, "."+DefaultGCPVMContract().WorkspaceMaterialization.WorkspaceDir+"-previous-0011"))
-	failHostileSend(t, req)
-	if info, err := os.Lstat(first.MaterializedWorkspace); err == nil {
-		t.Fatalf("recovery made %v the host workspace", info.Mode())
+	done := make(chan error, 1)
+	go func() {
+		_, err := materializeInStateRoot(DefaultGCPVMContract(), req)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("materializeInStateRoot() = %v while another send held the lock", err)
+	case <-time.After(200 * time.Millisecond):
 	}
-	if names, err := os.ReadDir(outside); err != nil || len(names) != 1 {
-		t.Fatalf("symlink target holds %v (%v), want only keep", names, err)
+	held.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMaterializeRefusesAManifestOverTheReadLimit lowers the manifest limit
+// to the size of the kept manifest, which recovery must still read. A send
+// whose manifest is larger must fail before it moves a copy.
+// Not parallel: it replaces maxManifestBytes.
+func TestMaterializeRefusesAManifestOverTheReadLimit(t *testing.T) {
+	limit := maxManifestBytes
+	t.Cleanup(func() { maxManifestBytes = limit })
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	first, err := materializeInStateRoot(DefaultGCPVMContract(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(first.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxManifestBytes = info.Size()
+	leftover := filepath.Join(first.MaterializationRoot, "."+DefaultGCPVMContract().WorkspaceMaterialization.WorkspaceDir+"-staging-0011")
+	mustMkdir(t, leftover)
+	second := req
+	second.SourceWorkspace = secondSource(t)
+	if _, err := materializeInStateRoot(DefaultGCPVMContract(), second); err == nil || !strings.Contains(err.Error(), "exceeds the limit") {
+		t.Fatalf("materializeInStateRoot() = %v, want the manifest limit", err)
+	}
+	assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
+	if _, err := os.Lstat(leftover); err != nil {
+		t.Fatalf("leftover copy: %v", err)
 	}
 }
 
 // TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap stops a second
-// send before each step of its swap, by a kill or by a failed step. A later
-// send that fails must find the host copy that the kept manifest describes,
-// and a later good send must leave only its own copy and manifest. A failure
-// before the cleanup comes after the manifest write, as when the write puts
-// the manifest in place and then fails.
-// Not parallel: it replaces swapStep.
+// send by a kill or by a failure before each step of its swap, and before
+// and after the manifest write, for each kind of change. A failed send must
+// leave a host copy that the kept manifest describes. A kill may leave them
+// apart, but a later send that fails must put them together, and must keep
+// every copy that the kill left. A later good send must leave only its own
+// copy and manifest.
+// Not parallel: it replaces swapStep and writeManifestAt.
 func TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap(t *testing.T) {
-	noStep := swapStep
-	t.Cleanup(func() { swapStep = noStep })
-	for _, earlier := range []string{"another", "the same", "no"} {
-		for _, step := range []string{"first rename", "second rename", "manifest", "cleanup", "done"} {
+	noStep, write := swapStep, writeManifestAt
+	t.Cleanup(func() { swapStep, writeManifestAt = noStep, write })
+	for _, change := range []string{"content", "mode", "link target", "no", "first copy"} {
+		for _, step := range []string{"first rename", "second rename", "manifest", "written", "done"} {
 			for _, kill := range []bool{true, false} {
-				committed := step == "cleanup" || step == "done"
 				if step == "done" && !kill {
 					continue
 				}
-				t.Run(fmt.Sprintf("%s copy, kill=%v before %s", earlier, kill, step), func(t *testing.T) {
-					req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+				t.Run(fmt.Sprintf("%s change, kill=%v before %s", change, kill, step), func(t *testing.T) {
+					req := brokeredRequest(t, testSource(t, ""))
 					first, err := materializeInStateRoot(DefaultGCPVMContract(), req)
 					if err != nil {
 						t.Fatal(err)
 					}
-					want := first.Manifest.Entries
-					second := req
-					switch earlier {
-					case "another":
-						second.SourceWorkspace = secondSource(t)
-					case "no":
+					want, second := first.Manifest.Entries, req
+					switch change {
+					case "first copy":
 						for _, path := range []string{first.MaterializedWorkspace, first.ManifestPath} {
 							if err := os.RemoveAll(path); err != nil {
 								t.Fatal(err)
 							}
 						}
 						want = nil
+					case "no":
+					default:
+						second.SourceWorkspace = testSource(t, change)
 					}
-					swapStep = func(at string) error {
+					if step == "written" || step == "done" {
+						if want, err = copyWorkspaceTree(second.SourceWorkspace, "", nil); err != nil {
+							t.Fatal(err)
+						}
+					}
+					inject := func(at string, parent *os.File) error {
 						if at == step && kill {
+							parent.Close() // a kill ends the lock
 							panic(killedRun{})
 						} else if at == step {
 							return unix.ENOSPC
 						}
 						return nil
 					}
+					swapStep = inject
+					writeManifestAt = func(parent *os.File, name string, data []byte, mode os.FileMode, prefix string) error {
+						err := inject("manifest", parent)
+						if err == nil {
+							err = write(parent, name, data, mode, prefix)
+						}
+						return errors.Join(err, inject("written", parent))
+					}
+					assertKept := func() {
+						t.Helper()
+						if want != nil {
+							assertHostCopyMatchesKeptManifest(t, req, want)
+						} else if _, err := os.Lstat(first.ManifestPath); !errors.Is(err, os.ErrNotExist) {
+							t.Fatalf("manifest after an uncommitted first copy: %v, want none", err)
+						}
+					}
 					if kill {
 						materializeUntilKilled(t, second)
 					} else if _, err := materializeInStateRoot(DefaultGCPVMContract(), second); !errors.Is(err, unix.ENOSPC) {
 						t.Fatalf("materializeInStateRoot() = %v, want ENOSPC", err)
+					} else {
+						assertKept()
+					}
+					swapStep, writeManifestAt = noStep, write
+					left := hostCopies(t, first.MaterializationRoot)
+					failHostileSend(t, req)
+					assertKept()
+					assertCopiesKept(t, first.MaterializationRoot, left)
+					// A send that fails part way after recovery keeps them too.
+					left = hostCopies(t, first.MaterializationRoot)
+					swapStep = func(at string, _ *os.File) error {
+						if at == "second rename" {
+							return unix.ENOSPC
+						}
+						return nil
+					}
+					if _, err := materializeInStateRoot(DefaultGCPVMContract(), second); !errors.Is(err, unix.ENOSPC) {
+						t.Fatalf("materializeInStateRoot() = %v, want ENOSPC", err)
 					}
 					swapStep = noStep
-					if !kill && !committed && want != nil {
-						assertHostCopyMatchesKeptManifest(t, req, want)
-					}
-					failHostileSend(t, req)
-					if committed {
-						if want, err = copyWorkspaceTree(second.SourceWorkspace, filepath.Join(t.TempDir(), "mirror"), nil); err != nil {
-							t.Fatal(err)
-						}
-					}
-					if want != nil {
-						assertHostCopyMatchesKeptManifest(t, req, want)
-					} else if _, err := os.Lstat(first.ManifestPath); !errors.Is(err, os.ErrNotExist) {
-						t.Fatalf("manifest after an uncommitted first copy: %v, want none", err)
-					}
+					assertKept()
+					assertCopiesKept(t, first.MaterializationRoot, left)
 					result, err := materializeInStateRoot(DefaultGCPVMContract(), req)
 					if err != nil {
 						t.Fatal(err)
@@ -749,4 +908,70 @@ func TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap(t *testing.T) {
 			}
 		}
 	}
+}
+
+func assertCopiesKept(t *testing.T, root string, before map[string]bool) {
+	t.Helper()
+	after := hostCopies(t, root)
+	for copied := range before {
+		if !after[copied] {
+			t.Fatalf("lost the copy %s", copied)
+		}
+	}
+}
+
+// hostCopies returns the entries of each directory in root, as text.
+func hostCopies(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	names, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copies := map[string]bool{}
+	for _, name := range names {
+		if name.IsDir() {
+			entries, err := copyWorkspaceTree(filepath.Join(root, name.Name()), "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			copies[fmt.Sprint(entries)] = true
+		}
+	}
+	return copies
+}
+
+// TestMaterializeKeepsTheNewCopyWhenItCannotReadBackAFailedManifest fails a
+// manifest write after its rename and leaves a manifest that the read back
+// refuses. The commit cannot tell which manifest is kept, so it must keep the
+// new copy in place, which the landed manifest describes.
+// Not parallel: it replaces writeManifestAt.
+func TestMaterializeKeepsTheNewCopyWhenItCannotReadBackAFailedManifest(t *testing.T) {
+	write := writeManifestAt
+	t.Cleanup(func() { writeManifestAt = write })
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	first, err := materializeInStateRoot(DefaultGCPVMContract(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := first.ManifestPath + ".moved"
+	writeManifestAt = func(parent *os.File, name string, data []byte, mode os.FileMode, prefix string) error {
+		err := write(parent, name, data, mode, prefix)
+		if err == nil {
+			err = errors.Join(os.Rename(first.ManifestPath, moved), os.Symlink(filepath.Base(moved), first.ManifestPath), unix.EIO)
+		}
+		return err
+	}
+	second := req
+	second.SourceWorkspace = secondSource(t)
+	if _, err := materializeInStateRoot(DefaultGCPVMContract(), second); !errors.Is(err, unix.EIO) {
+		t.Fatalf("materializeInStateRoot() = %v, want EIO", err)
+	}
+	if err := os.Rename(moved, first.ManifestPath); err != nil {
+		t.Fatal(err)
+	}
+	want, err := copyWorkspaceTree(second.SourceWorkspace, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHostCopyMatchesKeptManifest(t, req, want)
 }
