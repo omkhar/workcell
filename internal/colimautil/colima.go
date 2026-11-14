@@ -41,10 +41,40 @@ func CacheRoot(home string) string {
 // other host. It ignores XDG_CACHE_HOME: the launcher reaches this root from
 // paths with and without the caller's environment, and they must agree.
 func cacheRoot(goos, home string) string {
+	return filepath.Join(hostCacheDir(goos, home), "colima")
+}
+
+func hostCacheDir(goos, home string) string {
 	if goos == "darwin" {
-		return filepath.Join(home, "Library", "Caches", "colima")
+		return filepath.Join(home, "Library", "Caches")
 	}
-	return filepath.Join(home, ".cache", "colima")
+	return filepath.Join(home, ".cache")
+}
+
+// ChildCacheHome returns the XDG_CACHE_HOME that the launcher gives every
+// colima child. It is the Go copy of colima_child_cache_home in
+// scripts/lib/launcher/host-detect.sh, and TestCacheRootMatchesShellHelper
+// keeps the two equal.
+//
+// Colima reads its own cache root from $XDG_CACHE_HOME/colima and always
+// mounts that root read-only into the VM (environment/vm/lima/yaml.go in
+// v0.9.1 and v0.10.1). Without this value the root is the staging root of
+// CacheRoot, so the VM would see the snapshot store and every staging root
+// of every session. This home keeps the Colima root apart from all Workcell
+// staging.
+func ChildCacheHome(home string) string {
+	return childCacheHome(runtime.GOOS, home)
+}
+
+func childCacheHome(goos, home string) string {
+	return filepath.Join(hostCacheDir(goos, home), "workcell", "colima-xdg")
+}
+
+// ChildColimaCacheRoot is the cache root that Colima uses under
+// ChildCacheHome. It is the one read-only host mount that Colima adds by
+// itself, and validateManagedMounts accepts it only at this exact path.
+func ChildColimaCacheRoot(home string) string {
+	return filepath.Join(ChildCacheHome(home), "colima")
 }
 
 func expectedReadOnlyCacheMounts() (map[string]bool, error) {
@@ -76,8 +106,24 @@ func expectedTokenHandoffMount() (string, error) {
 	return canonicalizeConfigPath(filepath.Join(CacheRoot(home), "workcell-token-handoff"))
 }
 
+// expectedColimaOwnCacheMount returns the Colima cache root under the
+// canonical home. The path is not canonicalized: a mount matches only when
+// its canonical location is this exact path, so a symlink in the path fails
+// closed.
+func expectedColimaOwnCacheMount() (string, error) {
+	home, err := canonicalizeConfigPath(userHome())
+	if err != nil {
+		return "", err
+	}
+	return ChildColimaCacheRoot(home), nil
+}
+
 func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 	expected, err := canonicalizeConfigPath(workspace)
+	if err != nil {
+		return err
+	}
+	colimaOwnCacheMount, err := expectedColimaOwnCacheMount()
 	if err != nil {
 		return err
 	}
@@ -124,6 +170,13 @@ func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 		}
 		if _, ok := cacheMounts[location]; ok {
 			cacheMounts[location] = true
+			continue
+		}
+		// Colima adds its own cache root read-only. It holds only Colima
+		// downloads, because the launcher moves it out of the staging root
+		// with ChildCacheHome. The mount is optional: Colima drops it when
+		// another mount covers it. A writable copy fails above.
+		if location == colimaOwnCacheMount {
 			continue
 		}
 		return fmt.Errorf("colima profile %s has an unexpected host mount: %s", profile, rawLocation)

@@ -190,6 +190,12 @@ The fixes are below.
 
 ### Fixed
 
+- Strict Colima launch now passes post-start mount validation when Colima adds
+  its own read-only cache root (`internal/colimautil/colima.go`). The launcher
+  now gives each `colima` command `XDG_CACHE_HOME=<cache>/workcell/colima-xdg`,
+  so that root holds no Workcell staging or snapshot store. The validator
+  accepts only that exact root, and only as read-only
+  (`internal/colimautil/colima_cache_mount_test.go`).
 - The scheduled Rust fuzz lane builds again. Its dated nightly
   (`nightly-2026-07-02`, rustc 1.98) was older than the crate's
   `rust-version` of 1.99, so cargo refused to build the fuzz targets. The lane

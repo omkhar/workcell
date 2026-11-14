@@ -598,6 +598,12 @@ var checks = []check{
 		message:      "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home",
 	},
 	{
+		kind:         kindFunctionBlock,
+		functionName: "run_host_colima",
+		pattern:      `XDG_CACHE_HOME="$(colima_child_cache_home)"`,
+		message:      "Expected run_host_colima to move the Colima cache root, which Colima mounts read-only into the VM, out of the Workcell staging root",
+	},
+	{
 		kind:    kindFirstLineRegex,
 		regex:   `^#!/usr/bin/env -S -i PATH=.* BASH_ENV= ENV= /bin/bash$`,
 		message: "Expected scripts/workcell to use env -S -i with an absolute /bin/bash and cleared host environment",

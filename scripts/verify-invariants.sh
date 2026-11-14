@@ -274,6 +274,9 @@ verify_colima_cache_root() {
   esac
 }
 VERIFY_COLIMA_CACHE_ROOT="$(verify_colima_cache_root "${REAL_HOME}")"
+# The launcher gives each colima child XDG_CACHE_HOME=<cache>/workcell/colima-xdg,
+# so Colima's own read-only cache mount holds no Workcell staging.
+VERIFY_COLIMA_CHILD_CACHE_HOME="$(dirname "${VERIFY_COLIMA_CACHE_ROOT}")/workcell/colima-xdg"
 source "${ROOT_DIR}/scripts/lib/owned-root.sh"
 VERIFY_RUN_ROOT="$(workcell_owned_root_create "${TMPDIR:-/tmp}" workcell-verify)"
 CODEX_VERIFY_HOME="$(mktemp -d "${VERIFY_RUN_ROOT}/codex.XXXXXX")"
@@ -2358,6 +2361,8 @@ WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harnes
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_staging_cache_root
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_child_cache_home
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prepare_colima_staging_cache_roots
@@ -2376,6 +2381,8 @@ WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-ti
   extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" workcell_host_cache_root
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_staging_cache_root
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_child_cache_home
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'
@@ -4316,6 +4323,8 @@ SYMLINK_STAGING_HARNESS="$(mktemp)"
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_staging_cache_root
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_child_cache_home
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prepare_colima_staging_cache_roots
@@ -4346,6 +4355,11 @@ run_reject() {
       mkdir -p "${cache}/workcell-host-inputs" "${cache}/workcell-shadow" "${target}/token-handoff"
       ln -s "${target}/token-handoff" "${cache}/workcell-token-handoff"
       ;;
+    colima_own)
+      mkdir -p "${cache}/workcell-host-inputs" "${cache}/workcell-shadow" "${cache}/workcell-token-handoff"
+      mkdir -p "$(REAL_HOME="${home}" colima_child_cache_home)" "${target}/colima-own"
+      ln -s "${target}/colima-own" "$(REAL_HOME="${home}" colima_child_cache_home)/colima"
+      ;;
   esac
 
   REAL_HOME="${home}"
@@ -4360,6 +4374,7 @@ run_reject colima 'Refusing to use Colima staging cache root through symlink com
 run_reject host_inputs 'Refusing to use Workcell host-input staging root through symlink component'
 run_reject shadow 'Refusing to use Workcell shadow staging root through symlink component'
 run_reject token_handoff 'Refusing to use Workcell token handoff staging root through symlink component'
+run_reject colima_own 'Refusing to use Colima cache root through symlink component'
 EOF
 } >"${SYMLINK_STAGING_HARNESS}"
 SYMLINK_STAGING_HOME="${SYMLINK_STAGING_HOME}" \
@@ -6623,6 +6638,24 @@ for snapshot_store_workspace in \
     exit 1
   fi
   grep -q 'Refusing workspace mount that overlaps the host-owned snapshot store' /tmp/workcell-snapshot-store-workspace.out
+done
+
+# No workspace mount may contain or sit inside the Colima cache root, which
+# Colima mounts read-only into every managed VM.
+for colima_cache_workspace in \
+  "$(dirname "${VERIFY_COLIMA_CHILD_CACHE_HOME}")" \
+  "${REAL_HOME}$(tr '[:lower:]' '[:upper:]' <<<"${VERIFY_COLIMA_CHILD_CACHE_HOME#"${REAL_HOME}"}")" \
+  "${VERIFY_COLIMA_CHILD_CACHE_HOME}/colima/caches"; do
+  if run_workcell_verify \
+    --agent codex \
+    --workspace "${colima_cache_workspace}" \
+    --allow-nongit-workspace \
+    --no-default-injection-policy \
+    --dry-run >/tmp/workcell-colima-cache-workspace.out 2>&1; then
+    echo "Expected Colima cache workspace rejection for ${colima_cache_workspace}" >&2
+    exit 1
+  fi
+  grep -q 'Refusing workspace mount that overlaps the Colima cache root' /tmp/workcell-colima-cache-workspace.out
 done
 
 PROVIDER_HOME_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/workcell-provider-home.XXXXXX")"

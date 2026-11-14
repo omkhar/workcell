@@ -47,6 +47,20 @@ The managed Colima VM mounts these roots as read-only. These mounts do not give
 the runtime durable write access outside the selected workspace. GitHub
 publication remains a separate host action.
 
+Colima also mounts its own cache root as read-only in each VM. Colima reads
+this root from `XDG_CACHE_HOME`. Its default is `<cache>/colima`, which also
+holds the snapshot store and the staging of all sessions. Thus the launcher
+sets `XDG_CACHE_HOME` to `<cache>/workcell/colima-xdg` for each `colima`
+command. The Colima cache root is then `<cache>/workcell/colima-xdg/colima`.
+This root holds only Colima downloads.
+
+The mount validator in `internal/colimautil/colima.go` accepts this exact root
+only as a read-only mount. It refuses a writable copy, a parent, a sibling, a
+child, and `<cache>/colima`.
+
+The launcher in `scripts/workcell` refuses a symlink in the root path. It also
+refuses a workspace that contains the root or is inside it.
+
 Invariant `snapshot-store-host-owned`: `workcell session snapshot` writes to
 `<cache>/colima/workcell-snapshots`. No container mounts this store.
 Workcell refuses a workspace that contains the store or is inside it.

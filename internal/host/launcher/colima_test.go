@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/omkhar/workcell/internal/colimautil"
 )
 
 func TestValidateColimaStatusOutputAcceptsExpectedStatus(t *testing.T) {
@@ -322,4 +324,34 @@ func writeFakeColima(t *testing.T, dir, script string) string {
 		t.Fatalf("chmod fake colima: %v", err)
 	}
 	return path
+}
+
+// TestColimaChildEnvMovesColimaCacheRoot checks that every colima child gets
+// the Workcell-owned XDG_CACHE_HOME, so the cache root that Colima mounts
+// read-only into the VM never holds Workcell staging. An inherited value
+// must not survive.
+func TestColimaChildEnvMovesColimaCacheRoot(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "/hostile cache/$x`y`")
+	home := "/h"
+	env := colimaChildEnv(HostColimaInvocation{RealHome: home, ColimaHome: "/h/.colima"})
+	var got []string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "XDG_CACHE_HOME=") {
+			got = append(got, entry)
+		}
+	}
+	want := "XDG_CACHE_HOME=" + colimautil.ChildCacheHome(home)
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("colimaChildEnv XDG_CACHE_HOME entries = %q, want [%q]", got, want)
+	}
+	if strings.HasPrefix(colimautil.ChildCacheHome(home)+"/colima", colimautil.CacheRoot(home)+"/") {
+		t.Fatalf("Colima cache root %s is inside the staging root %s", colimautil.ChildCacheHome(home), colimautil.CacheRoot(home))
+	}
+
+	env = colimaChildEnv(HostColimaInvocation{})
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "XDG_CACHE_HOME=") {
+			t.Fatalf("colimaChildEnv without a real home kept %q", entry)
+		}
+	}
 }

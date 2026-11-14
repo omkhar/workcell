@@ -19,6 +19,9 @@ Remove Workcell-owned local install links and managed host state:
   - workcell-host-inputs, workcell-shadow, and workcell-token-handoff under the
     Colima cache root: ~/Library/Caches/colima on macOS and ~/.cache/colima on
     Linux (XDG_CACHE_HOME does not move it)
+  - the Colima cache root that Workcell gives Colima:
+    ~/Library/Caches/workcell/colima-xdg on macOS and
+    ~/.cache/workcell/colima-xdg on Linux
   - /tmp/workcell-docker.*, /tmp/workcell-provider-e2e.*, and /tmp/workcell-*.log/failed scratch
     (a workcell-docker.* sandbox stays while the process that owns it runs)
 
@@ -102,6 +105,7 @@ COLIMA_CACHE_ROOT="$(colima_staging_cache_root)"
 INJECTION_ROOT="${COLIMA_CACHE_ROOT}/workcell-host-inputs"
 SHADOW_ROOT="${COLIMA_CACHE_ROOT}/workcell-shadow"
 TOKEN_HANDOFF_ROOT="${COLIMA_CACHE_ROOT}/workcell-token-handoff"
+COLIMA_CHILD_CACHE_HOME="$(colima_child_cache_home)"
 MACOS_CACHE_ROOT="${REAL_HOME}/Library/Caches/workcell"
 XDG_WORKCELL_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell"
 
@@ -463,6 +467,7 @@ remove_path "${STATE_ROOT}"
 remove_path "${INJECTION_ROOT}"
 remove_path "${SHADOW_ROOT}"
 remove_path "${TOKEN_HANDOFF_ROOT}"
+remove_path "${COLIMA_CHILD_CACHE_HOME}"
 remove_path "${MACOS_CACHE_ROOT}"
 remove_path "${XDG_WORKCELL_CACHE_ROOT}"
 
