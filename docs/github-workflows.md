@@ -382,19 +382,28 @@ The environment rule keeps the secret on `main`, so set it as step 5 says.
 Text from other people in the thread is still model input.
 It can change the answer, but it cannot run a command or change a file.
 
+### When a mention run fails
+
+The action hides Claude's output, because that output can hold what Claude read.
+When Claude stops with an error, the step `Show why Claude failed` prints four fields of the final result.
+They are the HTTP status, the subtype, the terminal reason, and the stop reason.
+The step prints only numbers and short lowercase codes, never the text of the result.
+A status of 401 means the API rejected `CLAUDE_CODE_OAUTH_TOKEN`. Replace the token as steps 5 and 6 below say.
+
 ### Claude mention administrator steps
 
-`.github/workflows/claude-mention.yml` fails until the owner does these steps:
+The owner set up the workflow with these steps. Repeat them to reinstall it or to bump the action pin.
 
 1. Run `gh api repos/anthropics/claude-code-action/commits/v1 --jq .sha`.
-2. Replace the placeholder SHA in `.github/workflows/claude-mention.yml` with that SHA.
+2. Put that SHA in the `uses:` line of `.github/workflows/claude-mention.yml`.
 3. Add the row for that SHA to `tests/fixtures/actions/inputs.tsv`.
 4. Install the Claude GitHub App on this repository only.
 5. Create the `claude-mention` environment with no required reviewers. Set its deployment branches to `main` only.
 6. Add the `CLAUDE_CODE_OAUTH_TOKEN` secret to that environment only.
 
 `claude setup-token` creates the OAuth token.
-`check-workflow-refs` fails until step 3 is complete.
+`gh secret set CLAUDE_CODE_OAUTH_TOKEN --env claude-mention -R omkhar/workcell` sets it from a hidden prompt.
+`check-workflow-refs` fails without the row of step 3.
 `internal/metadatautil/workflow_refs.go` reads `tests/fixtures/actions/inputs.tsv` for that check.
 The hosted-controls audit does not check the `claude-mention` environment.
 
