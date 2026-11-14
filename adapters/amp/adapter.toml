@@ -1,5 +1,5 @@
 # Workcell adapter manifest; see adapters/README.md. No review certified this
-# CLI, so its options pass only through [flags] allow (reject_manifest_args).
+# CLI, so its options pass only through [flags] allow (the manifest policy).
 
 schema = 1
 id = "amp"
