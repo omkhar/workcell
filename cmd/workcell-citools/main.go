@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -481,8 +482,16 @@ func cmdUpstreamGet(args []string) error {
 	return err
 }
 
+const debianBootstrapUnavailableExit = 75
+
 func cmdResolveDebianBootstrap(args []string) error {
 	pins, err := metadatautil.ResolveDefaultDebianBootstrapPins(args[0])
+	if errors.Is(err, metadatautil.ErrUpstreamUnavailable) {
+		// The pin updater reads the upstream-unavailable prefix, because go run
+		// reports every failed exit as 1. It then keeps the current pin and
+		// does not walk back to an older snapshot. Exit 75 is EX_TEMPFAIL.
+		return &cliexit.ExitCodeError{Code: debianBootstrapUnavailableExit, Message: "upstream-unavailable: " + err.Error()}
+	}
 	if err != nil {
 		return err
 	}

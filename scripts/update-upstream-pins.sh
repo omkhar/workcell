@@ -139,9 +139,15 @@ require_tool shasum
 
 # Response-body download policy lives in workcell-citools. curl remains only
 # for bodyless Debian Release probes, which need no curl size-cap capability.
-CURL_HEAD_GUARDS=(--max-time 120 --connect-timeout 15)
+# curl --retry retries only timeouts and HTTP 408, 429, 500, 502, 503 and 504.
+CURL_HEAD_GUARDS=(--max-time 30 --connect-timeout 15 --retry 3 --retry-max-time 90)
 DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-60}"
 MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
+# While snapshot.debian.org is down, keep the current snapshot pin only if it
+# is at most this many days old. An older pin fails the refresh.
+DEBIAN_SNAPSHOT_HOLD_MAX_AGE_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_HOLD_MAX_AGE_DAYS:-7}"
+# Internal status for an archive that did not answer (EX_TEMPFAIL).
+readonly DEBIAN_ARCHIVE_UNAVAILABLE_STATUS=75
 
 run_upstream_citools() {
   (
@@ -343,14 +349,85 @@ resolve_debian_bootstrap_pins() {
   )
 }
 
+# debian_release_probe URL: status 0 when the Release file exists, 1 when the
+# archive answers 404 or 410, DEBIAN_ARCHIVE_UNAVAILABLE_STATUS for a 429, a
+# 5xx or a network failure after curl's retries, and 2 for any other result.
+debian_release_probe() {
+  local http_code=""
+  local curl_status=0
+  http_code="$(curl -q -sSI "${CURL_HEAD_GUARDS[@]}" -o /dev/null -w '%{http_code}' "$1")" || curl_status=$?
+  case "${curl_status}" in
+    0) ;;
+    # Name or proxy lookup, connect, timeout, TLS handshake, empty reply,
+    # send, receive and HTTP/2 or HTTP/3 stream failures. A TLS certificate
+    # failure (60) or a curl usage error is not an outage.
+    5 | 6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92 | 95)
+      echo "snapshot.debian.org did not answer for $1 (curl exit ${curl_status})" >&2
+      return "${DEBIAN_ARCHIVE_UNAVAILABLE_STATUS}"
+      ;;
+    *)
+      echo "Debian Release probe failed for $1 (curl exit ${curl_status})" >&2
+      return 2
+      ;;
+  esac
+  case "${http_code}" in
+    2?? | 3??) return 0 ;;
+    404 | 410) return 1 ;;
+    429 | 5??)
+      echo "snapshot.debian.org answered HTTP ${http_code} for $1" >&2
+      return "${DEBIAN_ARCHIVE_UNAVAILABLE_STATUS}"
+      ;;
+    *)
+      echo "snapshot.debian.org answered unexpected HTTP ${http_code} for $1" >&2
+      return 2
+      ;;
+  esac
+}
+
+# debian_snapshot_candidate STAMP: status 0 and the plan JSON on stdout when the
+# stamp resolves, 1 when it is absent or unsuitable,
+# DEBIAN_ARCHIVE_UNAVAILABLE_STATUS when the archive was down, and 2 when a
+# Release probe failed for another reason.
+debian_snapshot_candidate() {
+  local stamp="$1"
+  local release_url=""
+  local status=0
+  for release_url in \
+    "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" \
+    "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" \
+    "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release"; do
+    status=0
+    debian_release_probe "${release_url}" || status=$?
+    if [[ "${status}" -ne 0 ]]; then
+      return "${status}"
+    fi
+  done
+  # go run reports every failed exit as 1, so the resolver marks an outage
+  # with an upstream-unavailable line on stderr.
+  local error_path=""
+  error_path="$(mktemp "${TMPDIR:-/tmp}/workcell-debian-resolve.XXXXXX")"
+  status=0
+  resolve_debian_bootstrap_pins "${stamp}" 2>"${error_path}" || status=$?
+  cat "${error_path}" >&2
+  if [[ "${status}" -ne 0 ]] && grep -q '^upstream-unavailable: ' "${error_path}"; then
+    status="${DEBIAN_ARCHIVE_UNAVAILABLE_STATUS}"
+  elif [[ "${status}" -ne 0 ]]; then
+    status=1
+  fi
+  rm -f "${error_path}"
+  return "${status}"
+}
+
 latest_debian_bootstrap_plan() {
   local stamp
   local offset
   local lookback_days="${DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-60}"
   local max_age_days="${MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
+  local hold_max_age_days="${DEBIAN_SNAPSHOT_HOLD_MAX_AGE_DAYS:-7}"
   local resolution=""
   local resolution_error=""
   local resolution_error_path=""
+  local status=0
   if [[ ! "${lookback_days}" =~ ^(0|[1-9][0-9]?)$ ]] || ((10#${lookback_days} > 60)); then
     echo "WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS must be an integer from 0 through 60" >&2
     return 2
@@ -358,6 +435,14 @@ latest_debian_bootstrap_plan() {
   if [[ ! "${max_age_days}" =~ ^(0|[1-9][0-9]?)$ ]] || ((10#${max_age_days} > 60)); then
     echo "WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS must be an integer from 0 through 60" >&2
     return 2
+  fi
+  if [[ ! "${hold_max_age_days}" =~ ^(0|[1-9][0-9]?)$ ]] || ((10#${hold_max_age_days} > 60)); then
+    echo "WORKCELL_DEBIAN_SNAPSHOT_HOLD_MAX_AGE_DAYS must be an integer from 0 through 60" >&2
+    return 2
+  fi
+  # A hold never keeps a pin past the freshness bound.
+  if ((10#${hold_max_age_days} > 10#${max_age_days})); then
+    hold_max_age_days="${max_age_days}"
   fi
   if ((10#${lookback_days} > 10#${max_age_days})); then
     lookback_days="${max_age_days}"
@@ -372,13 +457,37 @@ latest_debian_bootstrap_plan() {
     if [[ -n "${debian_snapshot_pin:-}" && "${stamp}" != "${debian_snapshot_pin}" ]]; then
       continue
     fi
-    if curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
-      curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
-      curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
-      resolution="$(resolve_debian_bootstrap_pins "${stamp}" 2>"${resolution_error_path}")"; then
+    # Never walk back past the current pin: an older snapshot would roll back
+    # Debian security updates. Keep the current pin.
+    if [[ -z "${debian_snapshot_pin:-}" && "${stamp}" < "${current_debian_snapshot}" ]]; then
+      rm -f "${resolution_error_path}"
+      printf '{"keep_current":true}\n'
+      return
+    fi
+    status=0
+    resolution="$(debian_snapshot_candidate "${stamp}" 2>"${resolution_error_path}")" || status=$?
+    if [[ "${status}" -eq 0 ]]; then
       rm -f "${resolution_error_path}"
       printf '%s\n' "${resolution}"
       return
+    fi
+    if [[ "${status}" -eq "${DEBIAN_ARCHIVE_UNAVAILABLE_STATUS}" ]]; then
+      # An outage is not an unsuitable snapshot, so do not walk back. Keep a
+      # fresh current pin and report the hold, so the other pins still refresh.
+      resolution_error="$(<"${resolution_error_path}")"
+      rm -f "${resolution_error_path}"
+      printf '%s\n' "${resolution_error}" >&2
+      if [[ -z "${debian_snapshot_pin:-}" && ! "${current_debian_snapshot}" < "$(date_stamp_for_offset "${hold_max_age_days}")" ]]; then
+        printf '{"keep_current":true,"held":"snapshot.debian.org unavailable at %s"}\n' "${stamp}"
+        return
+      fi
+      echo "snapshot.debian.org is unavailable and the Debian snapshot pin ${current_debian_snapshot} is older than ${hold_max_age_days} days or pinned; refusing to keep it" >&2
+      exit 1
+    fi
+    if [[ "${status}" -ne 1 ]]; then
+      cat "${resolution_error_path}" >&2
+      rm -f "${resolution_error_path}"
+      exit 1
     fi
   done
   resolution_error="$(<"${resolution_error_path}")"
@@ -600,14 +709,53 @@ else
   target_cargo_rust_version="${current_cargo_rust_version}"
   target_runtime_rust_toolchain_image="${current_runtime_rust_toolchain_image}"
 fi
-target_debian_bootstrap_plan="$(latest_debian_bootstrap_plan)"
-target_debian_snapshot="$(jq -er '.snapshot' <<<"${target_debian_bootstrap_plan}")"
-target_debian_openssl_amd64_path="$(jq -er '.openssl_amd64.filename' <<<"${target_debian_bootstrap_plan}")"
-target_debian_openssl_amd64_sha256="$(jq -er '.openssl_amd64.sha256' <<<"${target_debian_bootstrap_plan}")"
-target_debian_openssl_arm64_path="$(jq -er '.openssl_arm64.filename' <<<"${target_debian_bootstrap_plan}")"
-target_debian_openssl_arm64_sha256="$(jq -er '.openssl_arm64.sha256' <<<"${target_debian_bootstrap_plan}")"
-target_debian_ca_path="$(jq -er '.ca_certificates.filename' <<<"${target_debian_bootstrap_plan}")"
-target_debian_ca_sha256="$(jq -er '.ca_certificates.sha256' <<<"${target_debian_bootstrap_plan}")"
+# --apply records its Debian plan, and a --check in the same job reuses it.
+# Thus snapshot.debian.org can recover or fail between the two runs, and the
+# check still compares the tree with the plan that --apply wrote.
+debian_plan_record="${WORKCELL_DEBIAN_PLAN_RECORD:-}"
+if [[ -n "${debian_plan_record}" && "${debian_plan_record}" != /* ]]; then
+  echo "WORKCELL_DEBIAN_PLAN_RECORD must be an absolute path" >&2
+  exit 2
+fi
+if [[ "${mode}" == "check" && -n "${debian_plan_record}" ]]; then
+  if [[ -L "${debian_plan_record}" || ! -f "${debian_plan_record}" ]] || (($(wc -c <"${debian_plan_record}") > 65536)); then
+    echo "WORKCELL_DEBIAN_PLAN_RECORD ${debian_plan_record} is not a plan that --apply recorded" >&2
+    exit 2
+  fi
+  target_debian_bootstrap_plan="$(<"${debian_plan_record}")"
+  if ! jq -e '(type == "object") and ((.keep_current == true) or ((.snapshot | type == "string") and (.snapshot | test("^[0-9]{8}T000000Z$"))))' <<<"${target_debian_bootstrap_plan}" >/dev/null 2>&1; then
+    echo "WORKCELL_DEBIAN_PLAN_RECORD ${debian_plan_record} does not hold a Debian bootstrap plan" >&2
+    exit 2
+  fi
+else
+  # Remove an older record first, so a failed plan cannot leave one for --check.
+  if [[ "${mode}" == "apply" && -n "${debian_plan_record}" ]]; then
+    rm -f "${debian_plan_record}"
+  fi
+  target_debian_bootstrap_plan="$(latest_debian_bootstrap_plan)"
+  if [[ "${mode}" == "apply" && -n "${debian_plan_record}" ]]; then
+    (umask 077 && printf '%s\n' "${target_debian_bootstrap_plan}" >"${debian_plan_record}")
+  fi
+fi
+held_debian_snapshot=""
+if jq -e '.keep_current == true' <<<"${target_debian_bootstrap_plan}" >/dev/null; then
+  held_debian_snapshot="$(jq -r '.held // ""' <<<"${target_debian_bootstrap_plan}")"
+  target_debian_snapshot="${current_debian_snapshot}"
+  target_debian_openssl_amd64_path="${current_debian_openssl_amd64_path}"
+  target_debian_openssl_amd64_sha256="${current_debian_openssl_amd64_sha256}"
+  target_debian_openssl_arm64_path="${current_debian_openssl_arm64_path}"
+  target_debian_openssl_arm64_sha256="${current_debian_openssl_arm64_sha256}"
+  target_debian_ca_path="${current_debian_ca_path}"
+  target_debian_ca_sha256="${current_debian_ca_sha256}"
+else
+  target_debian_snapshot="$(jq -er '.snapshot' <<<"${target_debian_bootstrap_plan}")"
+  target_debian_openssl_amd64_path="$(jq -er '.openssl_amd64.filename' <<<"${target_debian_bootstrap_plan}")"
+  target_debian_openssl_amd64_sha256="$(jq -er '.openssl_amd64.sha256' <<<"${target_debian_bootstrap_plan}")"
+  target_debian_openssl_arm64_path="$(jq -er '.openssl_arm64.filename' <<<"${target_debian_bootstrap_plan}")"
+  target_debian_openssl_arm64_sha256="$(jq -er '.openssl_arm64.sha256' <<<"${target_debian_bootstrap_plan}")"
+  target_debian_ca_path="$(jq -er '.ca_certificates.filename' <<<"${target_debian_bootstrap_plan}")"
+  target_debian_ca_sha256="$(jq -er '.ca_certificates.sha256' <<<"${target_debian_bootstrap_plan}")"
+fi
 target_buildkit_image="${buildkit_track}@$(docker_image_digest "${buildkit_track}")"
 target_qemu_tag="$(latest_qemu_tag)"
 target_qemu_image="tonistiigi/binfmt:${target_qemu_tag}@$(docker_image_digest "tonistiigi/binfmt:${target_qemu_tag}")"
@@ -722,6 +870,10 @@ print_summary() {
   print_summary_line "runtime-base" "${current_runtime_base}" "${target_runtime_base}"
   print_summary_line "validator-base" "${current_validator_base}" "${target_validator_base}"
   print_summary_line "debian-snapshot" "${current_debian_snapshot}" "${target_debian_snapshot}"
+  if [[ -n "${held_debian_snapshot}" ]]; then
+    printf '  debian-snapshot-candidate: upstream-unavailable %s (held, current pin unchanged)\n' "${held_debian_snapshot}"
+    echo "::warning::Debian snapshot refresh held: ${held_debian_snapshot}. The current pin stays."
+  fi
   print_summary_line "debian-openssl-amd64" "${current_debian_openssl_amd64_path}" "${target_debian_openssl_amd64_path}"
   print_summary_line "debian-openssl-amd64-sha256" "${current_debian_openssl_amd64_sha256}" "${target_debian_openssl_amd64_sha256}"
   print_summary_line "debian-openssl-arm64" "${current_debian_openssl_arm64_path}" "${target_debian_openssl_arm64_path}"
@@ -778,6 +930,9 @@ if [[ "${has_changes}" -eq 0 ]]; then
   if [[ -n "${held_lines}" ]]; then
     printf '%s\n' "${held_lines}"
     echo "::warning::Held Codex release needs command namespace classification."
+  fi
+  if [[ -n "${held_debian_snapshot}" ]]; then
+    printf '  debian-snapshot-candidate: upstream-unavailable %s (held, current pin unchanged)\n' "${held_debian_snapshot}"
   fi
   exit 0
 fi

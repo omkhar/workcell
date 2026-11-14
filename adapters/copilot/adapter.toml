@@ -52,6 +52,7 @@ allow = [
   "--no-eager-powershell-resolution", "--no-experimental", "--no-mouse", "-p",
   "--plain-diff", "--prompt", "--reasoning-effort", "-s", "--screen-reader",
   "--silent", "--stream", "--usage-output-file", "-v", "--version",
+  "--disable-client-telemetry",
 ]
 deny = [
   "-A", "-a", "--acp", "--add-dir", "--add-github-mcp-tool",
@@ -71,4 +72,5 @@ deny = [
   "--no-sandbox", "--output-format", "--plan", "--plugin-dir", "-r", "--remote",
   "--remote-export", "--resume", "--sandbox", "--secret-env-vars",
   "--session-id", "--share", "--share-gist", "-w", "--worktree", "--yolo",
+  "--host-compute-id", "--host-environment", "--sync-session", "--trust-folder",
 ]

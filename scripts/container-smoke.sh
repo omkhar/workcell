@@ -1414,8 +1414,6 @@ case " $* " in
 esac
 for expected_copilot_arg in \
   --no-auto-update \
-  --no-remote \
-  --no-remote-export \
   --disable-builtin-mcps \
   --no-custom-instructions \
   --disallow-temp-dir \
@@ -1603,8 +1601,6 @@ case " $* " in
 esac
 for expected_copilot_arg in \
   --no-auto-update \
-  --no-remote \
-  --no-remote-export \
   --disable-builtin-mcps \
   --no-custom-instructions \
   --disallow-temp-dir \

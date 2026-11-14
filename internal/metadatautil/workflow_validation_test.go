@@ -1391,6 +1391,19 @@ jobs:
           SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
         run: |
           ./scripts/ci/upstream-refresh-publish.sh candidate "${SCOPE_GUARD_RESULT}" audit.md
+  report:
+    needs: [refresh]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main'
+    permissions: {}
+    steps:
+      - env:
+          REFRESH_FAILED: ${{ needs.refresh.outputs.failed }}
+        run: |
+          if [[ -n "${REFRESH_FAILED}" ]]; then
+            echo "::error::Upstream refresh failed for: ${REFRESH_FAILED}. The other kind still publishes."
+            exit 1
+          fi
 `
 
 func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
@@ -1458,6 +1471,15 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"provider updater runs apply and check in one call", "update-provider-pins.sh --apply | tee provider.log\n          WORKCELL_GITHUB_API_TOKEN_FILE=\"${token_file}\" ./scripts/update-provider-pins.sh --check\n", "update-provider-pins.sh --apply --check | tee provider.log\n", "each updater --apply and --check once"},
 		{"provider step is skipped", "if: steps.existing_pr.outputs.provider == ''", "if: false", "must run only when"},
 		{"toolchain step gains a false condition", "if: steps.existing_pr.outputs.toolchain == ''", "if: steps.existing_pr.outputs.toolchain == '' && false", "must run only when"},
+		{"report job gains permissions", "    permissions: {}\n    steps:\n      - env:\n          REFRESH_FAILED", "    permissions:\n      contents: write\n    steps:\n      - env:\n          REFRESH_FAILED", "report job must grant no permissions"},
+		{"report job waits on publish", "    needs: [refresh]\n    runs-on: ubuntu-latest\n    if: always()", "    needs: [refresh, publish]\n    runs-on: ubuntu-latest\n    if: always()", "report job must need exactly refresh"},
+		{"report job condition changed", "if: always() && github.ref == 'refs/heads/main'", "if: always()", "report job must run only when"},
+		{"report job gains a second step", "still publishes.\"\n            exit 1\n          fi\n", "still publishes.\"\n            exit 1\n          fi\n      - run: echo x\n", "report step alone"},
+		{"report job gains job env", "    permissions: {}\n    steps:\n      - env:\n          REFRESH_FAILED", "    permissions: {}\n    env:\n      BASH_ENV: ./wrap.sh\n    steps:\n      - env:\n          REFRESH_FAILED", "report step alone, with no job env"},
+		{"report step reads a secret", "          REFRESH_FAILED: ${{ needs.refresh.outputs.failed }}\n", "          REFRESH_FAILED: ${{ needs.refresh.outputs.failed }}\n          K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "report job must run only the reviewed report step"},
+		{"report step fails open", "          REFRESH_FAILED: ${{ needs.refresh.outputs.failed }}\n        run:", "          REFRESH_FAILED: ${{ needs.refresh.outputs.failed }}\n        continue-on-error: true\n        run:", "report job must run only the reviewed report step"},
+		{"report step run changed", "still publishes.\"\n            exit 1\n", "still publishes.\"\n            exit 0\n", "report job must run only the reviewed report step"},
+		{"report step uses an action", "      - env:\n          REFRESH_FAILED", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        env:\n          REFRESH_FAILED", "report job must run only the reviewed report step"},
 		{"hosted signing input", "      - env:\n          GH_TOKEN: ${{ github.token }}\n        run: |\n          gh issue create", "      - env:\n          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}\n        run: |\n          gh issue create", "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
 	}
 	for _, mutation := range mutations {
