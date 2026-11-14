@@ -320,14 +320,17 @@ if build_runtime_host_aliases "a.example:5432 b.example:5432"; then echo accepte
 // a no-audit stop before an unsealed seal would leave them out of the sealed
 // chain (issue 823). The monitor can be gone from the start, or alive when
 // the stop writes the terminal record and gone before its own proxy stop and
-// seal: then the proxy network is still up and the fallback runs. With no
-// network left, the monitor already stopped the proxy, and only the recheck
-// seals.
+// seal, either before the dead-monitor cleanup or before the seal recheck:
+// then the proxy network is still up and the fallback runs. With no network
+// left, the monitor already stopped the proxy, and only the recheck seals.
 func TestSessionStopOfAFailedSessionStopsTheProxyBeforeTheSeal(t *testing.T) {
 	cases := []struct{ name, liveCalls, network, want string }{
 		{"monitor gone", "0", "wc-S", "record stop-request\nproxy prof S\nrecord exit\nterminal 7\nseal\nproxy prof S no-audit\n"},
 		{"monitor dies before its proxy stop", "1", "wc-S", "record stop-request\nterminal 7\nproxy prof S\nrecord exit\nterminal 7\nseal\n"},
 		{"monitor dies after its proxy stop", "1", "", "record stop-request\nterminal 7\nproxy prof S no-audit\nseal\n"},
+		{"monitor dies before the seal recheck", "2", "wc-S", "record stop-request\nterminal 7\nproxy prof S\nrecord exit\nterminal 7\nseal\n"},
+		{"monitor dies after its proxy stop, before the seal recheck", "2", "", "record stop-request\nterminal 7\nseal\n"},
+		{"monitor live throughout", "9", "wc-S", "record stop-request\nterminal 7\nseal\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
