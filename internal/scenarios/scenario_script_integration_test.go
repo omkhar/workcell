@@ -177,7 +177,6 @@ func TestRunScenarioTestsRepoRequiredOnlySkipsCertificationEntries(t *testing.T)
 		t.Fatalf("run-scenario-tests exit code = %d stdout=%q", code, stdout)
 	}
 	for _, want := range []string{
-		"required-ran",
 		"PASS shared/required",
 		"SKIP shared/certification (validation tier certification)",
 		"SKIP shared/provider (lane provider-e2e)",
@@ -236,7 +235,6 @@ func TestRunScenarioTestsCertificationOnlySkipsRepoRequiredEntries(t *testing.T)
 	}
 	for _, want := range []string{
 		"SKIP shared/required (validation tier repo-required)",
-		"certification-ran",
 		"PASS shared/certification",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -304,16 +302,17 @@ func TestRunScenarioTestsAllIncludesCertificationByDefault(t *testing.T) {
 		t.Fatalf("run-scenario-tests --all exit code = %d stdout=%q", code, stdout)
 	}
 	for _, want := range []string{
-		"required-ran",
 		"PASS shared/required",
-		"certification-ran",
 		"PASS shared/certification",
-		"provider-ran",
 		"PASS shared/provider",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout %q does not contain %q", stdout, want)
 		}
+	}
+	// A passing scenario's own output stays quiet.
+	if strings.Contains(stdout, "-ran") {
+		t.Fatalf("stdout %q shows a passing scenario's output", stdout)
 	}
 }
 
@@ -363,5 +362,59 @@ func TestRunScenarioTestsFailsWhenManifestValidationFails(t *testing.T) {
 	}
 	if strings.Contains(stdout, "Scenario tests passed") {
 		t.Fatalf("stdout %q unexpectedly reported success", stdout)
+	}
+}
+
+func TestRunScenarioTestsPrintsAFailedScenarioOutput(t *testing.T) {
+	t.Parallel()
+
+	scenarioRoot := t.TempDir()
+	writeScenarioScript(t, scenarioRoot, "shared/test-passing.sh", "#!/bin/sh\nset -eu\necho passing-noise\necho passing-noise-err >&2\n")
+	writeScenarioScript(t, scenarioRoot, "shared/test-failing.sh", "#!/bin/sh\nset -eu\ni=1\nwhile [ \"$i\" -le 250 ]; do echo \"failing-line-$i\"; i=$((i + 1)); done\necho failing-cause >&2\nexit 3\n")
+	scenarios := []map[string]any{}
+	for _, name := range []string{"failing", "passing"} {
+		scenarios = append(scenarios, map[string]any{
+			"id":                   "shared/" + name,
+			"description":          name + " fixture",
+			"lane":                 "secretless",
+			"platform":             "any",
+			"validation_tier":      "repo-required",
+			"manual":               false,
+			"providers":            []string{"codex"},
+			"persona":              "developer",
+			"test_file":            "shared/test-" + name + ".sh",
+			"requires_credentials": false,
+		})
+	}
+	manifestPath := writeScenarioManifest(t, scenarioRoot, scenarios)
+
+	for _, jobs := range []string{"1", "2"} {
+		code, stdout, _ := runScenarioScript(
+			t,
+			filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"),
+			map[string]string{
+				"WORKCELL_SCENARIO_ROOT":     scenarioRoot,
+				"WORKCELL_SCENARIO_MANIFEST": manifestPath,
+				"WORKCELL_SCENARIO_JOBS":     jobs,
+			},
+		)
+		if code != 1 {
+			t.Fatalf("jobs %s: run-scenario-tests exit code = %d stdout=%q", jobs, code, stdout)
+		}
+		header := "--- shared/failing output (exit 3; last 200 of 251 lines) ---\n"
+		block := header + "failing-line-52\n"
+		for _, want := range []string{"FAIL shared/failing", "PASS shared/passing", block, "failing-line-250\nfailing-cause\n--- end shared/failing output ---\n"} {
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("jobs %s: stdout %q does not contain %q", jobs, stdout, want)
+			}
+		}
+		for _, unwanted := range []string{"failing-line-51\n", "passing-noise"} {
+			if strings.Contains(stdout, unwanted) {
+				t.Fatalf("jobs %s: stdout %q contains %q", jobs, stdout, unwanted)
+			}
+		}
+		if strings.Index(stdout, header) > strings.Index(stdout, "Results: passed=1 failed=1") {
+			t.Fatalf("jobs %s: the failed output follows the summary: %q", jobs, stdout)
+		}
 	}
 }

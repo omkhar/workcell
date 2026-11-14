@@ -46,6 +46,8 @@ if [[ "${RUN_ALL}" -eq 1 ]] && [[ "${TIER_SELECTION_EXPLICIT}" -eq 0 ]]; then
 fi
 
 CURRENT_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+# A failed scenario's captured output is printed up to this many final lines.
+readonly FAILED_OUTPUT_LINES=200
 SCENARIO_JOBS="${WORKCELL_SCENARIO_JOBS:-1}"
 SCENARIO_LIST="$(mktemp "${TMPDIR:-/tmp}/workcell-scenarios.XXXXXX")"
 RESULTS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-scenario-results.XXXXXX")"
@@ -81,7 +83,36 @@ scenario_platform_matches() {
   esac
 }
 
-# Returns: 0 = pass, 1 = fail, 2 = skip
+# print_failed_output prints the last FAILED_OUTPUT_LINES lines of a failed
+# scenario's captured stdout and stderr between two marker lines.
+print_failed_output() {
+  local scenario_id="$1"
+  local exit_code="$2"
+  local output_file="$3"
+  local total_lines=""
+  local unterminated=0
+
+  # The command substitution drops a final newline, so only another final
+  # byte is left: an unterminated last line that wc -l does not count.
+  if [[ -n "$(tail -c 1 "${output_file}")" ]]; then
+    unterminated=1
+  fi
+  total_lines="$(wc -l <"${output_file}")"
+  total_lines=$((${total_lines//[[:space:]]/} + unterminated))
+  if [[ "${total_lines}" -gt "${FAILED_OUTPUT_LINES}" ]]; then
+    echo "--- ${scenario_id} output (exit ${exit_code}; last ${FAILED_OUTPUT_LINES} of ${total_lines} lines) ---"
+  else
+    echo "--- ${scenario_id} output (exit ${exit_code}; ${total_lines} lines) ---"
+  fi
+  tail -n "${FAILED_OUTPUT_LINES}" "${output_file}"
+  if [[ "${unterminated}" -eq 1 ]]; then
+    echo ""
+  fi
+  echo "--- end ${scenario_id} output ---"
+}
+
+# Returns: 0 = pass, 1 = fail, 2 = skip. A failed scenario's output block goes
+# to failure_file, which the summary prints in manifest order.
 run_scenario() {
   local scenario_id="$1"
   local test_file="$2"
@@ -90,6 +121,8 @@ run_scenario() {
   local platform="$5"
   local validation_tier="$6"
   local manual="$7"
+  local output_file="$8"
+  local failure_file="$9"
 
   if [[ "${manual}" == "1" ]]; then
     echo "SKIP ${scenario_id} (manual lane)"
@@ -138,13 +171,15 @@ run_scenario() {
     return 2
   fi
 
-  if bash "${full_test_path}" </dev/null; then
+  local scenario_exit=0
+  bash "${full_test_path}" </dev/null >"${output_file}" 2>&1 || scenario_exit="$?"
+  if [[ "${scenario_exit}" -eq 0 ]]; then
     echo "PASS ${scenario_id}"
     return 0
-  else
-    echo "FAIL ${scenario_id}"
-    return 1
   fi
+  echo "FAIL ${scenario_id}"
+  print_failed_output "${scenario_id}" "${scenario_exit}" "${output_file}" >"${failure_file}"
+  return 1
 }
 
 if ! "${ROOT_DIR}/scripts/lib/scenario_manifest" list-tsv "${MANIFEST}" >"${SCENARIO_LIST}"; then
@@ -158,7 +193,7 @@ run_scenario_record() {
 
   (
     exit_code=0
-    run_scenario "$@" || exit_code="$?"
+    run_scenario "$@" "${result_file%.exit}.output" "${result_file%.exit}.failure" || exit_code="$?"
     printf '%d\n' "${exit_code}" >"${result_file}"
   )
 }
@@ -210,6 +245,10 @@ for i in $(seq 1 "${idx}"); do
     esac
   else
     failed=$((failed + 1))
+  fi
+  if [[ -f "${RESULTS_DIR}/${i}.failure" ]]; then
+    echo ""
+    cat "${RESULTS_DIR}/${i}.failure"
   fi
 done
 
