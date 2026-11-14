@@ -841,3 +841,20 @@ func TestParsePrepareBundleArgsBrokerCredentials(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteEgressProxyEndpoints prints the canonical endpoints the launcher
+// makes the agent's host aliases from, and nothing for a list the proxy
+// refuses (issue 823).
+func TestWriteEgressProxyEndpoints(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeEgressProxyEndpoints(&out, "API.OpenAI.com.:443 x.example.:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "api.openai.com:443\nx.example:8080\n"; out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+	out.Reset()
+	if err := writeEgressProxyEndpoints(&out, "a.example:5432 b.example:5432"); err == nil || out.Len() != 0 {
+		t.Fatalf("refused list: err = %v, output = %q; want an error and no output", err, out.String())
+	}
+}
