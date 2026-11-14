@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -417,77 +416,112 @@ func (s *server) record(request Request, key, result string) error {
 // the checked walk and the bind. The apt broker keeps its own root-only rule,
 // which admits no sticky directory, because its socket lives under a
 // root-owned run directory.
-func requireAncestryWritableOnlyBy(dir string, uid uint32) error {
-	current, err := filepath.Abs(dir)
+//
+// The walk starts at the pinned directory and opens each parent through ".."
+// of the descriptor before it, so it checks the directories the pinned
+// descriptor hangs from, not the ones a pathname names now. dir only names
+// the directories in errors.
+func requireAncestryWritableOnlyBy(pinned *os.File, dir string, uid uint32) error {
+	fd, err := unix.Openat(int(pinned.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
-	for {
-		info, err := os.Lstat(current)
+	defer func() { _ = unix.Close(fd) }()
+	for name := dir; ; name = filepath.Dir(name) {
+		var info unix.Stat_t
+		if err := unix.Fstat(fd, &info); err != nil {
+			return err
+		}
+		if info.Mode&unix.S_IFMT != unix.S_IFDIR {
+			return fmt.Errorf("credential broker ancestor %s is not a directory", name)
+		}
+		if (info.Uid != 0 && info.Uid != uid) || (info.Mode&0o022 != 0 && info.Mode&unix.S_ISVTX == 0) {
+			return fmt.Errorf("credential broker ancestor %s is writable by another uid", name)
+		}
+		if err := rootio.RejectExtendedACL(fd); err != nil {
+			return fmt.Errorf("credential broker ancestor %s: %w", name, err)
+		}
+		parent, err := unix.Openat(fd, "..", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
-			return fmt.Errorf("credential broker ancestor %s is not a directory", current)
-		}
-		owner := fileUID(info)
-		mode := info.Mode()
-		if (owner != 0 && owner != uid) || (mode.Perm()&0o022 != 0 && mode&os.ModeSticky == 0) {
-			return fmt.Errorf("credential broker ancestor %s is writable by another uid", current)
-		}
-		if err := rejectDirectoryACL(current); err != nil {
+		var parentInfo unix.Stat_t
+		err = unix.Fstat(parent, &parentInfo)
+		_ = unix.Close(fd)
+		fd = parent
+		if err != nil {
 			return err
 		}
-		next := filepath.Dir(current)
-		if next == current {
+		// Only the root directory is its own parent.
+		if parentInfo.Dev == info.Dev && parentInfo.Ino == info.Ino {
 			return nil
 		}
-		current = next
 	}
-}
-
-// rejectDirectoryACL opens dir without following a symlink and refuses it
-// when it carries an extended ACL.
-func rejectDirectoryACL(dir string) error {
-	file, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if err := rootio.RejectExtendedACL(int(file.Fd())); err != nil {
-		return fmt.Errorf("credential broker ancestor %s: %w", dir, err)
-	}
-	return nil
 }
 
 // boundSocket is a listening socket with the parent directory descriptor it
 // was created through. The descriptor lives as long as the listener, so the
-// final unlink also goes through it rather than through a pathname.
+// final unlink also goes through it rather than through a pathname. dev and
+// ino identify the socket the broker bound.
 type boundSocket struct {
-	listener *net.UnixListener
+	listener *boundListener
 	parent   *os.File
 	name     string
+	dev      uint64
+	ino      uint64
+	unlink   sync.Once
 }
 
-// close stops the listener, unlinks the socket through the pinned parent
-// while it is still a socket, and releases the parent.
+// boundListener is the broker's listener. Its Close unlinks the socket name
+// first, while the open listener still keeps the bound inode in use, so every
+// close, whichever path runs it first (ctx's end in Serve, a failed check, or
+// the deferred cleanup), checks the name before the inode number can be
+// reused by another socket.
+type boundListener struct {
+	*net.UnixListener
+	socket *boundSocket
+}
+
+func (l *boundListener) Close() error {
+	l.socket.unlinkIfBound()
+	return l.UnixListener.Close()
+}
+
+// close unlinks the socket through the pinned parent while the name still
+// holds the socket the broker bound, stops the listener and releases the
+// parent. A socket another process put under the name stays.
 //
-// Residual risk, accepted: the check and the unlink address the leaf by name
-// under the pinned parent, and POSIX has no unlink by inode, so a process that
+// Residual risk, accepted: POSIX has no unlink by inode, so the check and the
+// unlink address the leaf by name under the pinned parent, and a process that
 // can write that directory could swap the leaf between the two calls. listen
 // admits only a directory owned by the broker uid that no other uid can
 // write, so that process is the broker uid itself or root, both of which
-// already control the broker; the guard exists to keep the broker from
-// removing another occupant's entry by accident, not to defend against a
-// hostile same-uid process, which is outside the threat model, as it is for
-// scripts/lib/owned-root.sh.
+// already control the broker; the guard keeps the broker from removing
+// another occupant's entry by accident, not from a hostile same-uid process,
+// which is outside the threat model, as it is for scripts/lib/owned-root.sh.
 func (b *boundSocket) close() {
 	_ = b.listener.Close()
-	var leaf unix.Stat_t
-	if err := unix.Fstatat(int(b.parent.Fd()), b.name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err == nil && leaf.Mode&unix.S_IFMT == unix.S_IFSOCK {
-		_ = unix.Unlinkat(int(b.parent.Fd()), b.name, 0)
-	}
 	_ = b.parent.Close()
+}
+
+// unlinkIfBound runs once, before the first close of the listener: the open
+// listener keeps its inode in use, so no new socket can take the same inode
+// number while the name is checked and unlinked. A later close finds it done
+// and never looks at the name again.
+func (b *boundSocket) unlinkIfBound() {
+	b.unlink.Do(func() {
+		var leaf unix.Stat_t
+		if err := unix.Fstatat(int(b.parent.Fd()), b.name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err == nil &&
+			leaf.Mode&unix.S_IFMT == unix.S_IFSOCK && b.bound(&leaf) {
+			_ = unix.Unlinkat(int(b.parent.Fd()), b.name, 0)
+		}
+	})
+}
+
+// bound reports whether leaf is the socket the broker bound. The widths of
+// Dev and Ino differ by platform, so both sides are widened to uint64.
+func (b *boundSocket) bound(leaf *unix.Stat_t) bool {
+	return uint64(leaf.Dev) == b.dev && uint64(leaf.Ino) == b.ino
 }
 
 // listen binds a 0600 socket owned by the broker uid in a directory that no
@@ -502,7 +536,7 @@ func listen(path string) (*boundSocket, error) {
 	}
 	// cleaned is the canonical path the no-follow walk opened, so its
 	// ancestors are the directories that walk pinned.
-	if err := requireAncestryWritableOnlyBy(filepath.Dir(cleaned), uint32(os.Getuid())); err != nil {
+	if err := requireAncestryWritableOnlyBy(parent, filepath.Dir(cleaned), uint32(os.Getuid())); err != nil {
 		_ = parent.Close()
 		return nil, err
 	}
@@ -535,26 +569,37 @@ func listen(path string) (*boundSocket, error) {
 		return nil, err
 	}
 	listener.SetUnlinkOnClose(false)
-	bound := &boundSocket{listener: listener, parent: parent, name: name}
+	bound := &boundSocket{parent: parent, name: name}
+	bound.listener = &boundListener{UnixListener: listener, socket: bound}
 	fail := func(err error) (*boundSocket, error) {
 		bound.close()
 		return nil, err
 	}
+	// The listener's own address cannot name its inode, so the first check
+	// records the socket found under the pinned parent; a later check and the
+	// final unlink act only while the name still holds that socket.
 	if err := unix.Fstatat(int(parent.Fd()), name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || leaf.Uid != uint32(os.Getuid()) {
-		return fail(errors.New("credential broker socket verification failed"))
+		_ = listener.Close()
+		_ = parent.Close()
+		return nil, errors.New("credential broker socket verification failed")
 	}
-	if err := unix.Fchmodat(int(parent.Fd()), name, 0o600, 0); err != nil {
+	bound.dev, bound.ino = uint64(leaf.Dev), uint64(leaf.Ino)
+	if err := bound.restrict(); err != nil {
 		return fail(err)
-	}
-	if err := unix.Fstatat(int(parent.Fd()), name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || leaf.Mode&0o777 != 0o600 {
-		return fail(errors.New("credential broker socket verification failed"))
 	}
 	return bound, nil
 }
 
-func fileUID(info os.FileInfo) uint32 {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return stat.Uid
+// restrict sets the socket's mode to 0600 through the pinned parent, then
+// checks that the name still holds the socket the broker bound, with that
+// mode. A socket swapped in under the name after the first check fails it.
+func (b *boundSocket) restrict() error {
+	if err := unix.Fchmodat(int(b.parent.Fd()), b.name, 0o600, 0); err != nil {
+		return err
 	}
-	return ^uint32(0)
+	var leaf unix.Stat_t
+	if err := unix.Fstatat(int(b.parent.Fd()), b.name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || leaf.Mode&0o777 != 0o600 || !b.bound(&leaf) {
+		return errors.New("credential broker socket verification failed")
+	}
+	return nil
 }
