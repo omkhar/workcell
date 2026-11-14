@@ -253,6 +253,20 @@ check when it can change what a later command runs. An `alias` does this, and
 so does a source of a path outside `${ROOT_DIR}`. A program name that the check
 cannot read also fails. The check does not follow a symlink to a lane file.
 
+A `${ROOT_DIR}/` path counts only in a lane script that sets `ROOT_DIR` to the
+repository root first and makes it `readonly` on the next line. Bash then
+keeps that value for the rest of the lane. Any other line that names `ROOT_DIR`
+cancels the path, in the lane or in a library that the lane sources. A
+workflow step does not set `ROOT_DIR`, so the path does not count there. A
+program name without a slash runs from `PATH`, so it does not count.
+
+A lane also fails when it defines a function with the name of a shell, a
+wrapper, a path, `trap` or `eval`. The function then runs in place of the
+program. It fails when it names `BASH_CMDS` or `BASH_ALIASES`, or runs an
+`eval` of an expansion. See `internal/metadatautil/lane_scripts.go`. A sourced
+library fails the same way when it runs an `alias`, a `hash -p` or a source
+that the check cannot read.
+
 A sentence that claims enforcement needs such a span within two lines, and
 it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger
 words.

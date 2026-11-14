@@ -500,13 +500,21 @@ type functionPart struct{ name, text string }
 // never closes: both read too much rather than too little. text holds no
 // heredoc body and no line that ends inside a quote.
 func functionBodies(text string) []functionPart {
-	var current strings.Builder
+	var current, outside strings.Builder // outside holds the last part's text while it has no name
 	parts := []functionPart{{}}
 	emit := func(name, text string) {
-		if last := &parts[len(parts)-1]; name == "" && last.name == "" {
-			last.text += text // keep a continued command in one part
-		} else {
-			parts = append(parts, functionPart{name, text})
+		last := &parts[len(parts)-1]
+		if name == "" && last.name == "" {
+			outside.WriteString(text) // keep a continued command in one part
+			return
+		}
+		if last.name == "" {
+			last.text = outside.String()
+			outside.Reset()
+		}
+		if parts = append(parts, functionPart{name, text}); name == "" {
+			parts[len(parts)-1].text = ""
+			outside.WriteString(text)
 		}
 	}
 	name, depth, definedAt, opened := "", 0, 0, false
@@ -579,6 +587,9 @@ func functionBodies(text string) []functionPart {
 		}
 	}
 	emit("", current.String())
+	if last := &parts[len(parts)-1]; last.name == "" {
+		last.text = outside.String()
+	}
 	return parts
 }
 

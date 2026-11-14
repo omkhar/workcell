@@ -123,6 +123,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"a wrapped number stays in a code span", "See `scripts/nope.sh\n10) more` here.\n", "", "", "", "missing-path"},
 		{"a wrapped year stays in a code span", "See `scripts/nope.sh\n2026. more` here.\n", "", "", "", "missing-path"},
 		{"an HTML comment opener in a code span is code", "Use `<!--` to describe a literal opener.\nThe launcher rejects bad input.\n", "", "", "", "unanchored-claim"},
+		{"a moved ROOT_DIR names no repository script", "See `scripts/orphan.sh` here.\n", laneRoot + "\nROOT_DIR=/tmp\n\"${ROOT_DIR}/scripts/orphan.sh\"\n", "", "", "unwired-script"},
+		{"an interpreter function runs no script", "See `scripts/orphan.sh` here.\n", "bash() { :; }\nbash scripts/orphan.sh\n", "", "", "lane wiring is unreadable"},
 		{"no main ref", "Nothing here.\n", "", "", "", "no origin/main or main ref"},
 		{"unreadable base baseline", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
 		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "", "escaping-path"},

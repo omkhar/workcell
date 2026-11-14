@@ -35,7 +35,7 @@ internal/metadatautil	ExtractCopilotSHA	13056216,264e3788,304ff98c	debt: regexp 
 internal/metadatautil	ExtractDockerfileArg	828b8b57,e7295a85,fb388a05	debt: regexp over Dockerfile text; read the parsed ARG instruction
 internal/metadatautil	HadolintManifestChecksum	40acb559,b65cec14	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	IsSafePullRequestTargetWorkflow	4db683f1,f9acf37a	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	LaneScripts	055d0553,333ec69d,5b763629	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	LaneScripts	055d0553,333ec69d,5b763629,71f7a2d2,e0d25c5a	the matches read EveryShellCommand words, the ROOT_DIR or ./ prefix of a program word and a workflow working directory; they parse words, not free text
 internal/metadatautil	ParseHelpCommands	1254e754,14bf0875,a1d90014,c0c9634c,c87d28bb,fb82ec77	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
@@ -100,6 +100,7 @@ internal/metadatautil	assignmentPrefix	28c9a340	the match reads the parsed argv 
 internal/metadatautil	assignmentRun	64f729a5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	assignsInRun	5cfb8c8f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	assignsWord	db8fa01d	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	braceVariants	dcfffc3c	the scan reads the braces, commas and sequence body of one shellWords word by its syntax, where a quoted byte is _; it parses a word, not free text
 internal/metadatautil	buildStampedVersionPattern	f79ba133	the pattern checks one npm version string, not file content
 internal/metadatautil	canonicalImageRef	04006e89,2e34cec2,e738c6c0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	carriesParen	1c5fb76f,76e37fa3	unreviewed debt: review the subject, then port or justify
@@ -115,6 +116,7 @@ internal/metadatautil	commandName	86476538	unreviewed debt: review the subject, 
 internal/metadatautil	commandWords	89820ff5,a3f98e42,f129b634	the match drops the leading control keywords and a case pattern from the parsed argv words of one command
 internal/metadatautil	countCalls	8a596b86,ca8a38dc	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe11386	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	definedFunctionNames	145c8632,5bf52d3c	the checks read shellWords words of one command for a definition header, a reserved word or a case pattern; they parse words, not free text
 internal/metadatautil	definedName	0f1edc2e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	docClaimRule	3ac775b1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.aptBrokerBuilderStage	174cd5ff	unreviewed debt: review the subject, then port or justify
@@ -158,6 +160,8 @@ internal/metadatautil	isHexDigest	00a043e2	unreviewed debt: review the subject, 
 internal/metadatautil	isListEntry	10421324,f92e0ad1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	isShellSource	5798c4c9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	joinFirstWords	80fea3c8	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	laneLibraryPath	21765aac,40f39ba5,75a4ad0b	the patterns read the operand word of a source command EveryShellCommand returns, for a fixed ${ROOT_DIR}/ path, its root prefix and any .. in it; they parse words, not free text
+internal/metadatautil	laneRootPinned	02e69514,150a3aed,29f26c27,3b1893bc,4f345bb4,80ec0e4b,ed4ea645	fails closed: a lane line or library path it cannot match leaves ROOT_DIR unpinned, so a ${ROOT_DIR}/ path wires nothing
 internal/metadatautil	loadDocLanguageBaseline	5939fd27	the prefix skips a TSV comment line
 internal/metadatautil	loadHardenedBaseline	7d0fa33e,a3ef0e02	the prefix skips a TSV comment line
 internal/metadatautil	loadShellFailOpenBaseline	ec489ec0	unreviewed debt: review the subject, then port or justify
@@ -167,6 +171,7 @@ internal/metadatautil	matchesText	55cdea10,ad3d3395,e58a4acd	unreviewed debt: re
 internal/metadatautil	moveStepBefore	65e9dda2,c92fcbf2,dd7bb1ad	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	moveStepToEnd	93097790,aaffba0a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	mutatedContractCopy	950732e1	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	namesLaneRoot	8f6530d0,d859e316	fails closed: any mention of ROOT_DIR other than a reading expansion, in the text, in the text with each line continuation joined, or in a shellWords word or a word its brace expansion makes, unpins the root, and so does a brace sequence it does not expand
 internal/metadatautil	namesRoot	da78757a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	nextLinkURL	1ce5780e,2e8dac47,6086a5aa,f5ab2fe7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ociConfigDigest	6ba3b673,ff801b55	the prefix checks a decoded digest field
@@ -207,7 +212,7 @@ internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a l
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	rebindsCommand	419dfc3d	the = test tells an alias definition from an alias listing among parsed command words
-internal/metadatautil	rebindsLane	880960f2,e4f6455a,f6a659e3	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	rebindsLane	3f223eda,ab6e4d23,f2af6bdf	the checks read the command words laneCommand returns for an alias, a hash -p option or a program word bash may rewrite; they parse words, not free text
 internal/metadatautil	refsRoot	8c451e37	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rejectInstallScriptAptPackages	30b19070,7ae83b67	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	renderDiscoverabilitySurface	e9d7ffc7	the prefix checks a surface name from the decoded contract
@@ -239,6 +244,7 @@ internal/metadatautil	reviewedLibrarySource	8a4712f0	unreviewed debt: review the
 internal/metadatautil	rewriteAptBrokerDockerfile	9e5c7dbc	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rewritesParameters	604a9e2e,72dcf36c	the prefix tests tell an option from an operand of one parsed set command
 internal/metadatautil	runsAPath	791f4239,a5daa4a4,bf909428,db8056d1,ece68d1c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	runsUnreadText	42fd4a07,be933573,dbfd6b6d	the checks read the command words laneCommand returns for an eval operand with an expansion or a mapfile -C option; they parse words, not free text
 internal/metadatautil	rustupChecksumRequest	82097558	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sanitizedScriptEnvironment	1a8ceb50,2fada460	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scanDebianPackageStanzas	6c69f878,f89ede85	unreviewed debt: review the subject, then port or justify
@@ -252,6 +258,7 @@ internal/metadatautil	scopeGuardSplitLF	4f546323	unreviewed debt: review the sub
 internal/metadatautil	scriptRef	96b9da97	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	selectGitHubReleaseStable	94527446	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sentenceWords	e91bc492	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shadowingFunction	eb4d2dd6	the checks read the function names definedFunctionNames returns
 internal/metadatautil	shebangInterpreter	92689fd9,9a831542	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellArrayOpen	728ab60a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellCodeOnly	046624a5,2a34b9b5,300d14bf,a6dcde68,b2af9b08,b95527a9	unreviewed debt: review the subject, then port or justify
