@@ -107,6 +107,8 @@ func subcommands() []subcommand {
 		{"verify-goose-release", "DOCKERFILE", 1, 1, cmdVerifyGooseRelease},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"flag-inventory", "plan|check|restamp ROOT | compare|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
+		{"refresh-action-inputs", "[--check] ROOT | --verify BASE ROOT", 1, 3, cmdRefreshActionInputs},
+		{"fixture-patch", "ROOT", 1, 1, cmdFixturePatch},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
@@ -583,6 +585,46 @@ func cmdVerifyGooseRelease(args []string) error {
 
 func cmdPrepareCodexSubcommandFixture(args []string) error {
 	return metadatautil.PrepareCodexSubcommandFixture(args[0], args[1], args[2])
+}
+
+// cmdRefreshActionInputs rewrites tests/fixtures/actions/inputs.tsv from the
+// SHA-pinned actions in ROOT/.github/workflows. With --check it writes nothing
+// and exits 1 when the table is out of date. With --verify BASE it writes
+// nothing and exits 1 unless ROOT's table keeps BASE's rows and adds only
+// rows for new pins that match their fetched action.yml.
+func cmdRefreshActionInputs(args []string) error {
+	const usage = "usage: workcell-citools refresh-action-inputs [--check] ROOT | --verify BASE ROOT"
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	switch {
+	case len(args) == 3 && args[0] == "--verify":
+		if err := metadatautil.VerifyActionInputs(ctx, args[1], args[2], metadatautil.FetchActionMetadata); err != nil {
+			return &cliexit.ExitCodeError{Code: 1, Message: err.Error()}
+		}
+		return nil
+	case len(args) == 3, len(args) == 2 && args[0] != "--check":
+		return &cliexit.ExitCodeError{Code: 2, Message: usage}
+	}
+	check := len(args) == 2
+	changed, err := metadatautil.RefreshActionInputs(ctx, args[len(args)-1], metadatautil.FetchActionMetadata, check)
+	if err != nil {
+		return err
+	}
+	if check && changed {
+		return &cliexit.ExitCodeError{Code: 1, Message: "tests/fixtures/actions/inputs.tsv is out of date; run workcell-citools refresh-action-inputs ROOT"}
+	}
+	return nil
+}
+
+// cmdFixturePatch prints the git patch of the regenerated fixtures in ROOT,
+// new files included, and fails when the tree differs but the patch is empty.
+func cmdFixturePatch(args []string) error {
+	patch, err := metadatautil.FixturePatch(args[0])
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(patch)
+	return err
 }
 
 func cmdFlagInventory(args []string) error {

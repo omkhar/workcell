@@ -47,6 +47,9 @@ internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,
 internal/metadatautil	checkClaudeMentionReach	bf0bcc67,bf0bcc67,f2e98a0c	finds expression spans and the action, secret or environment names in decoded YAML scalars; a match only rejects or adds checks
 internal/metadatautil	checkSecretsUse	6c1fd84d,b75c08fe	reads the secrets context in a decoded expression; anything but one literal secret name fails
 internal/metadatautil	normalizeClaudeMentionNode	04f5fe0b,ac3399b8	picks the action reference in the decoded uses value; the digest covers the rest
+internal/metadatautil	actionInputNames	a39bcf76	the pattern checks one decoded YAML mapping key of action metadata
+internal/metadatautil	parseActionRef	0a2ee96f	the pattern splits one decoded workflow step uses: value
+internal/metadatautil	pinnedWorkflowActionRefs	6ec42091,9dce78c5	the prefixes check a decoded workflow step uses: value
 internal/metadatautil	shellGrepIsQuiet	1541affc,a2afbe0b,d97760a1	the checks read the option words of one grep stage that shellQuietGrepStages cut at a pipe; they parse the grep options, not free text
 internal/metadatautil	shellQuietGrepStages	ff1b798d	the search cuts each later pipeline stage at the next shell operator in the comment-free command text
 internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
