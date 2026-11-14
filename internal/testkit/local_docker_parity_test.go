@@ -56,8 +56,8 @@ func TestValidatorRunnersRequireWorkspaceMountPreflight(t *testing.T) {
 				t.Fatalf("%s must use the non-creating comma-safe bind mechanism for its validator workload", tc.rel)
 			}
 			if tc.workspace == "ROOT_DIR" &&
-				!strings.Contains(string(content), `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"`) {
-				t.Fatalf("%s must canonicalize ROOT_DIR before both preflight and workload binds", tc.rel)
+				!strings.Contains(string(content), `ROOT_DIR="${workcell_entry_root}"`) {
+				t.Fatalf("%s must set ROOT_DIR from the physical root its entry guard checked before both preflight and workload binds", tc.rel)
 			}
 		})
 	}

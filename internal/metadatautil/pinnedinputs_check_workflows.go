@@ -482,7 +482,7 @@ func (check *pinnedInputsCheck) validateReleasePublishingInputs() error {
 		`sudo install -m 0755 "$(command -v syft)" /usr/local/bin/syft`,
 		`actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"`,
 		`tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint`,
-		"git -c safe.directory=/workspace archive \\",
+		"git -c safe.directory=/workspace -c tar.umask=0022 archive \\",
 	} {
 		if !strings.Contains(check.releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)

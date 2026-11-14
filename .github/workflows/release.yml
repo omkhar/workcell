@@ -637,7 +637,7 @@ jobs:
               set -euo pipefail
               mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
               bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
-              git -c safe.directory=/workspace archive \
+              git -c safe.directory=/workspace -c tar.umask=0022 archive \
                 --format=tar \
                 --mtime="@${SOURCE_DATE_EPOCH}" \
                 --prefix="${BUNDLE_PREFIX}" \
@@ -1287,7 +1287,7 @@ jobs:
               set -euo pipefail
               mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
               bundle_tar="/dist/${BUNDLE_NAME%.tar.gz}.tar"
-              git -c safe.directory=/workspace archive \
+              git -c safe.directory=/workspace -c tar.umask=0022 archive \
                 --format=tar \
                 --mtime="@${SOURCE_DATE_EPOCH}" \
                 --prefix="${BUNDLE_PREFIX}" \

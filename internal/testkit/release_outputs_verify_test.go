@@ -508,7 +508,12 @@ func mutatedVerifierDriver(t *testing.T, source, old, replacement string) string
 	if mutated == source {
 		t.Fatalf("release verifier no longer contains %q", old)
 	}
-	path := filepath.Join(t.TempDir(), "mutated-verify-release-outputs.sh")
+	// The copy sits at the verifier's own path in a private tree, where the
+	// entry guard of a Workcell script accepts it.
+	path := filepath.Join(t.TempDir(), "scripts", "verify-release-outputs.sh")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(mutated), 0o644); err != nil {
 		t.Fatal(err)
 	}
