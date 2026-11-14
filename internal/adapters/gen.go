@@ -129,31 +129,12 @@ func RenderLauncherShell(manifests []Manifest) ([]byte, error) {
 }
 
 // RenderRuntimeShell renders runtime/container/generated-adapters.sh: the
-// supported provider ids, their tiers, and the [flags] lists of each
-// uncertified adapter that the runtime policy reads.
+// supported provider ids. The runtime provider policy reads the tiers and the
+// [flags] lists from internal/providerpolicy/adapters_gen.go.
 func RenderRuntimeShell(manifests []Manifest) ([]byte, error) {
 	var b strings.Builder
 	b.WriteString(shellHeader)
 	writeShellSupportedAgent(&b, manifests)
-	writeShellAdapterTier(&b, manifests)
-	b.WriteString("\n# workcell_manifest_flags prints the [flags] list $2 (allow, deny, or\n# other_commands) of uncertified adapter $1, one entry per line.\nworkcell_manifest_flags() {\n  case \"$1:$2\" in\n")
-	for _, m := range manifests {
-		if m.Tier != "uncertified" {
-			continue
-		}
-		for _, list := range []struct {
-			name  string
-			items []string
-		}{{"allow", m.Flags.Allow}, {"deny", m.Flags.Deny}, {"other_commands", m.Flags.OtherCommands}} {
-			if len(list.items) == 0 {
-				fmt.Fprintf(&b, "    %s:%s) ;;\n", m.ID, list.name)
-				continue
-			}
-			// validateFlags limits each entry to a plain token, so single quotes hold it.
-			fmt.Fprintf(&b, "    %s:%s)\n      printf '%%s\\n' '%s'\n      ;;\n", m.ID, list.name, strings.Join(list.items, "' '"))
-		}
-	}
-	b.WriteString("    *)\n      return 1\n      ;;\n  esac\n}\n")
 	return []byte(b.String()), nil
 }
 

@@ -6,12 +6,17 @@ package adapters
 import (
 	"bytes"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -137,45 +142,103 @@ func TestRejectManifestArgsFailsClosed(t *testing.T) {
 	}
 }
 
-// TestRenderRuntimeShellUncertifiedTables pins the tier and [flags] tables of
-// the runtime shell for an uncertified manifest, and their absence for a
-// certified one.
-func TestRenderRuntimeShellUncertifiedTables(t *testing.T) {
-	rendered, err := RenderRuntimeShell(loadUncertifiedFixture(t))
+// TestRenderProviderPolicyUncertifiedTables parses the rendered provider
+// policy data and pins the tier and [flags] lists of an uncertified manifest,
+// and the tier alone for a certified one.
+func TestRenderProviderPolicyUncertifiedTables(t *testing.T) {
+	rendered, err := RenderProviderPolicyGo(loadUncertifiedFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"    claude | codex | copilot | gemini)\n      echo certified\n",
-		"    amp | goose | opencode | zz-fixture)\n      echo uncertified\n",
-		"    zz-fixture:allow)\n      printf '%s\\n' '-h' '--help' '-m' '--model'\n",
-		"    zz-fixture:deny)\n      printf '%s\\n' '-y' '--yolo'\n",
-		"    zz-fixture:other_commands)\n      printf '%s\\n' 'serve' 'mcp'\n",
-	} {
-		if !strings.Contains(string(rendered), want) {
-			t.Errorf("runtime shell lacks %q:\n%s", want, rendered)
-		}
+	got := parseProviderPolicyAdapters(t, rendered)
+	want := map[string]map[string][]string{
+		"codex": {"Tier": {"certified"}},
+		"zz-fixture": {
+			"Tier":          {"uncertified"},
+			"Allow":         {"-h", "--help", "-m", "--model"},
+			"Deny":          {"-y", "--yolo"},
+			"OtherCommands": {"serve", "mcp"},
+		},
 	}
-	if strings.Contains(string(rendered), "codex:allow") {
-		t.Error("runtime shell must not render [flags] lists of a certified adapter")
+	for id, fields := range want {
+		if !reflect.DeepEqual(got[id], fields) {
+			t.Errorf("provider policy data for %s = %v, want %v", id, got[id], fields)
+		}
 	}
 }
 
-// TestCommittedRuntimeShellAdapterTier asks each committed generated shell for
+// parseProviderPolicyAdapters decodes the Adapters map literal of a rendered
+// internal/providerpolicy/adapters_gen.go: adapter id to field name to the
+// string values of that field.
+func parseProviderPolicyAdapters(t *testing.T, src []byte) map[string]map[string][]string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "adapters_gen.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unquote := func(e ast.Expr) string {
+		lit, ok := e.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			t.Fatalf("want a string literal, got %T", e)
+		}
+		v, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	out := map[string]map[string][]string{}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs := spec.(*ast.ValueSpec)
+			if len(vs.Names) != 1 || vs.Names[0].Name != "Adapters" || len(vs.Values) != 1 {
+				continue
+			}
+			table := vs.Values[0].(*ast.CompositeLit)
+			for _, elt := range table.Elts {
+				entry := elt.(*ast.KeyValueExpr)
+				fields := map[string][]string{}
+				for _, f := range entry.Value.(*ast.CompositeLit).Elts {
+					field := f.(*ast.KeyValueExpr)
+					name := field.Key.(*ast.Ident).Name
+					if list, ok := field.Value.(*ast.CompositeLit); ok {
+						values := []string{}
+						for _, v := range list.Elts {
+							values = append(values, unquote(v))
+						}
+						fields[name] = values
+					} else {
+						fields[name] = []string{unquote(field.Value)}
+					}
+				}
+				out[unquote(entry.Key)] = fields
+			}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("rendered provider policy data has no Adapters entries")
+	}
+	return out
+}
+
+// TestCommittedLauncherShellAdapterTier asks the committed launcher shell for
 // the tier of every manifest id: a planned or unknown id has none.
-func TestCommittedRuntimeShellAdapterTier(t *testing.T) {
-	for _, script := range []string{"runtime/container/generated-adapters.sh", "scripts/lib/launcher/generated-adapters.sh"} {
-		for _, m := range append(loadRepoManifests(t), Manifest{ID: "no-such-agent", Tier: "planned"}) {
-			cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && workcell_adapter_tier "$2"`, "bash", filepath.Join(repoRoot, script), m.ID)
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-			out, err := cmd.Output()
-			want := m.Tier + "\n"
-			if m.Tier == "planned" {
-				want = ""
-			}
-			if string(out) != want || (err == nil) != (m.Tier != "planned") {
-				t.Errorf("%s: workcell_adapter_tier %s = %q (%v), want %q", script, m.ID, out, err, want)
-			}
+func TestCommittedLauncherShellAdapterTier(t *testing.T) {
+	script := "scripts/lib/launcher/generated-adapters.sh"
+	for _, m := range append(loadRepoManifests(t), Manifest{ID: "no-such-agent", Tier: "planned"}) {
+		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && workcell_adapter_tier "$2"`, "bash", filepath.Join(repoRoot, script), m.ID)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+		out, err := cmd.Output()
+		want := m.Tier + "\n"
+		if m.Tier == "planned" {
+			want = ""
+		}
+		if string(out) != want || (err == nil) != (m.Tier != "planned") {
+			t.Errorf("%s: workcell_adapter_tier %s = %q (%v), want %q", script, m.ID, out, err, want)
 		}
 	}
 }
