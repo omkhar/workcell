@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 )
 
 type archiveItem struct {
@@ -53,15 +54,47 @@ func frameArchive(id string, archive []byte) []byte {
 	return append([]byte(fmt.Sprintf("%s %s %s %d\n", archiveMagic, id, hex.EncodeToString(sum[:]), len(archive))), archive...)
 }
 
+// lockWaitBound bounds how long a test waits for a receive to finish, so a
+// receive that waits for a lock that an earlier receive kept fails the test
+// instead of hanging it until the go test timeout.
+const lockWaitBound = 15 * time.Second
+
+type receiveResult struct {
+	ack string
+	err error
+}
+
+// startReceive runs the receiver over an in-memory stream in a goroutine.
+func startReceive(root string, frame []byte, limits workspaceLimits) <-chan receiveResult {
+	done := make(chan receiveResult, 1)
+	go func() {
+		var ack bytes.Buffer
+		err := receiveWorkspace(struct {
+			io.Reader
+			io.Writer
+		}{bytes.NewReader(frame), &ack}, root, limits)
+		done <- receiveResult{ack.String(), err}
+	}()
+	return done
+}
+
+// awaitReceive returns the ack of a started receive, and fails the test if
+// the receive does not finish within lockWaitBound.
+func awaitReceive(t *testing.T, done <-chan receiveResult) (string, error) {
+	t.Helper()
+	select {
+	case result := <-done:
+		return result.ack, result.err
+	case <-time.After(lockWaitBound):
+		t.Fatalf("the receive did not finish within %v; an earlier receive may have kept the materializations lock", lockWaitBound)
+		return "", nil
+	}
+}
+
 // receiveFrame runs the receiver over an in-memory stream and returns the ack.
 func receiveFrame(t *testing.T, root string, frame []byte, limits workspaceLimits) (string, error) {
 	t.Helper()
-	var ack bytes.Buffer
-	err := receiveWorkspace(struct {
-		io.Reader
-		io.Writer
-	}{bytes.NewReader(frame), &ack}, root, limits)
-	return ack.String(), err
+	return awaitReceive(t, startReceive(root, frame, limits))
 }
 
 func dir(name string) archiveItem {
@@ -543,12 +576,14 @@ func TestReceiveWorkspaceRemovesAReadOnlyMaterialization(t *testing.T) {
 
 // materializationsLocked reports whether a receive holds the lock on the
 // materializations under root. A flock on another open of the directory
-// conflicts with it in this process too.
+// conflicts with it in this process too. It reports an error with t.Errorf,
+// so a receive hook may call it off the test goroutine.
 func materializationsLocked(t *testing.T, root string) bool {
 	t.Helper()
 	dir, err := os.Open(filepath.Join(root, "materializations"))
 	if err != nil {
-		t.Fatal(err)
+		t.Errorf("open the materializations: %v", err)
+		return false
 	}
 	defer dir.Close()
 	err = syscall.Flock(int(dir.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
@@ -556,7 +591,7 @@ func materializationsLocked(t *testing.T, root string) bool {
 		return false
 	}
 	if !errors.Is(err, syscall.EWOULDBLOCK) {
-		t.Fatal(err)
+		t.Errorf("probe the materializations lock: %v", err)
 	}
 	return true
 }
@@ -572,24 +607,21 @@ func TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive(t *testing.T) {
 	failing := frameArchive("m1", buildTestArchive(t, file("f", "first"), link("l", "missing")))
 	frame := frameArchive("m1", buildTestArchive(t, file("f", "second")))
 	var fired, locked atomic.Bool
-	var ack string
-	var secondErr error
-	finished := make(chan struct{})
+	second := make(chan (<-chan receiveResult), 1)
 	beforeReceiverOpen = func(opened string) {
 		if opened != worktree || !fired.CompareAndSwap(false, true) {
 			return
 		}
 		locked.Store(materializationsLocked(t, root))
-		go func() {
-			defer close(finished)
-			ack, secondErr = receiveFrame(t, root, frame, defaultWorkspaceLimits)
-		}()
+		second <- startReceive(root, frame, defaultWorkspaceLimits)
 	}
 	t.Cleanup(func() { beforeReceiverOpen = func(string) {} })
 	if _, err := receiveFrame(t, root, failing, defaultWorkspaceLimits); err == nil || !fired.Load() || !locked.Load() {
 		t.Fatalf("first receive = %v, second started = %v, lock held = %v; want a late failure under the lock", err, fired.Load(), locked.Load())
 	}
-	<-finished
+	// The second receive waits for the lock, so it finishes only if the
+	// failed first receive ended it.
+	ack, secondErr := awaitReceive(t, <-second)
 	if content, err := os.ReadFile(filepath.Join(worktree, "f")); secondErr != nil || !strings.HasPrefix(ack, "ok ") || string(content) != "second" {
 		t.Fatalf("second receive = %q, %v; its copy = %q, %v", ack, secondErr, content, err)
 	}
