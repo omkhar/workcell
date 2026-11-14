@@ -16,6 +16,11 @@
       "local_mode": "none",
       "github_only_reason": "scheduled read-only flake report; it reads GitHub-hosted workflow-run history and the tracked flaky-test issue list to surface flake candidates in the job summary, so it depends on GitHub-hosted metadata and never gates a PR or release"
     },
+    "claude-mention.yml/claude": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "owner-only @claude responder; it runs only on a new issue or issue comment written by the repository owner, needs the claude-mention environment secret and the Claude GitHub App, and never gates a PR or release"
+    },
     "ci.yml/container-smoke": {
       "profiles": ["repo-core", "pr-parity", "release-preflight"],
       "authority": "repo-core",
