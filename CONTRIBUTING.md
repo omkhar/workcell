@@ -195,7 +195,8 @@ credential. After a full check of a pin passes, the check keeps the release
 metadata in `~/.cache/workcell/upstream-releases`. The next local run of the
 same pin reads that metadata and makes no GitHub API call. If the quota is
 spent, a local run stops the check with a notice and does not fail. CI runs
-the full check with a token, and a spent quota fails it there.
+the full check with a token, and a spent quota fails it there. The check of
+pins that `scripts/update-provider-pins.sh` just wrote always runs in full.
 
 ## Good first contributions
 

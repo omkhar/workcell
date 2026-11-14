@@ -191,7 +191,8 @@ print_summary() {
 verify_provider_releases() {
   "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
-  WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
+  # The pins were just written, so the check never reads the cache or skips.
+  WORKCELL_UPSTREAM_RELEASE_REQUIRE_FULL_CHECK=1 WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-opencode-release.sh"
   "${ROOT_DIR}/scripts/verify-upstream-amp-release.sh"

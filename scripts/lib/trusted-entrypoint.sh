@@ -12,6 +12,9 @@
 #                                WORKCELL_KEEP_VALIDATOR_IMAGE without each
 #                                script enumerating its own forwarded set
 #   - WORKCELL_SANITIZED_ENTRYPOINT=1   sentinel that breaks the re-exec loop
+#   - WORKCELL_GITHUB_ACTIONS=1  when GITHUB_ACTIONS=true, so a GitHub Actions
+#                                run stays known after this and each nested
+#                                re-exec; a caller cannot clear it
 #
 # After re-exec the preamble exports PATH=TRUSTED_HOST_PATH and defines
 # require_tool().  Scripts that need additional path entries (for example
@@ -36,6 +39,10 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     fi
     workcell_trusted_exec_args+=("${workcell_trusted_env_line}")
   done < <(/usr/bin/env)
+  # After the forwarded names, so that it wins over any value the caller set.
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    workcell_trusted_exec_args+=("WORKCELL_GITHUB_ACTIONS=1")
+  fi
   workcell_trusted_exec_args+=(/bin/bash -p "$0" "$@")
   exec "${workcell_trusted_exec_args[@]}"
 fi

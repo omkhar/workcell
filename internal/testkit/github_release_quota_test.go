@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -39,7 +40,11 @@ curl() {
 ` + body
 	cmd := exec.Command("bash", "-c", script, "bash",
 		filepath.Join(repoRoot(t), "scripts/lib/github-release-quota.sh"), dir)
-	cmd.Env = append(os.Environ(), "HOME="+dir, "TMPDIR="+dir)
+	tmp := filepath.Join(dir, "tmp")
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(withoutEnv(os.Environ(), "WORKCELL_GITHUB_ACTIONS", "WORKCELL_UPSTREAM_RELEASE_REQUIRE_FULL_CHECK", "GITHUB_ACTIONS"), "HOME="+dir, "TMPDIR="+tmp)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -146,5 +151,154 @@ echo done
 	}
 	if out != "{\"pin\":1}\ndone\n" {
 		t.Fatalf("output = %q; want only the stored entry and done", out)
+	}
+}
+
+func withoutEnv(env []string, names ...string) []string {
+	kept := env[:0:0]
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if !slices.Contains(names, name) {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}
+
+// TestGitHubReleaseLocalRunFailsClosed proves that only a run with no token,
+// outside GitHub Actions and not asked for a full check may read the cache or
+// skip the check on a spent quota.
+func TestGitHubReleaseLocalRunFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	out, err := runGitHubReleaseQuotaScript(t, dir, `check() { if github_release_local_run "$1"; then echo "$2=local"; else echo "$2=full"; fi; }
+check 0 plain
+check 1 token
+WORKCELL_GITHUB_ACTIONS=1 check 0 actions
+WORKCELL_UPSTREAM_RELEASE_REQUIRE_FULL_CHECK=1 check 0 fresh-pins
+check "" empty-token-state
+`)
+	if err != nil {
+		t.Fatalf("script: %v\n%s", err, out)
+	}
+	if want := "plain=local\ntoken=full\nactions=full\nfresh-pins=full\nempty-token-state=full\n"; out != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+}
+
+// TestTrustedEntrypointKeepsAGitHubActionsRunKnown starts a sanitized script
+// in GitHub Actions that starts another one, as update-provider-pins.sh starts
+// the release checks. The inner script must still know the run is in GitHub
+// Actions, even when the caller set WORKCELL_GITHUB_ACTIONS=0.
+func TestTrustedEntrypointKeepsAGitHubActionsRunKnown(t *testing.T) {
+	dir := t.TempDir()
+	entrypoint := filepath.Join(repoRoot(t), "scripts", "lib", "trusted-entrypoint.sh")
+	inner := filepath.Join(dir, "inner.sh")
+	outer := filepath.Join(dir, "outer.sh")
+	for path, body := range map[string]string{
+		inner: "#!/bin/bash -p\nsource \"" + entrypoint + "\"\necho \"actions=${WORKCELL_GITHUB_ACTIONS:-unset} raw=${GITHUB_ACTIONS:-unset}\"\n",
+		outer: "#!/bin/bash -p\nsource \"" + entrypoint + "\"\nexec /bin/bash -p \"" + inner + "\"\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		env  []string
+		want string
+	}{
+		"in GitHub Actions":                 {env: []string{"GITHUB_ACTIONS=true", "WORKCELL_GITHUB_ACTIONS=0"}, want: "actions=1 raw=unset\n"},
+		"outside GitHub Actions":            {env: nil, want: "actions=unset raw=unset\n"},
+		"a GITHUB_ACTIONS that is not true": {env: []string{"GITHUB_ACTIONS=false"}, want: "actions=unset raw=unset\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command("/bin/bash", "-p", outer)
+			cmd.Env = append(withoutEnv(os.Environ(), "WORKCELL_GITHUB_ACTIONS", "GITHUB_ACTIONS", "WORKCELL_SANITIZED_ENTRYPOINT"), tc.env...)
+			out, err := cmd.CombinedOutput()
+			if err != nil || string(out) != tc.want {
+				t.Fatalf("output = %q, %v; want %q", out, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitHubReleaseCacheEntryBindsTheVerifiedDigests proves that a cache entry
+// matches only its own version and the exact pins that its full check
+// verified, and only when its release metadata names each asset once with
+// that digest.
+func TestGitHubReleaseCacheEntryBindsTheVerifiedDigests(t *testing.T) {
+	dir := t.TempDir()
+	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	out, err := runGitHubReleaseQuotaScript(t, dir, `a=`+a+` b=`+b+` c=`+c+`
+release() { jq -n --arg tag "$1" --arg da "$2" --arg db "$3" '{tag_name: $tag, prerelease: false, assets: [{name: "x.tgz", digest: ("sha256:" + $da)}, {name: "y.tgz", digest: ("sha256:" + $db)}]}' >"${stub}/release.json"; }
+check() { if github_release_cache_entry_matches "${stub}/entry.json" "$@"; then echo hit; else echo miss; fi; }
+release v1.0.0 "$a" "$b"
+github_release_cache_entry_write "${stub}/entry.json" 1.0.0 "${stub}/release.json" "x.tgz=$a" "y.tgz=$b"
+check 1.0.0 "x.tgz=$a" "y.tgz=$b"
+check 1.0.0 "y.tgz=$b" "x.tgz=$a"
+check 1.0.1 "x.tgz=$a" "y.tgz=$b"
+check 1.0.0 "x.tgz=$a" "y.tgz=$c"
+check 1.0.0 "x.tgz=$a"
+check 1.0.0 "x.tgz=$a" "y.tgz=$b" "z.tgz=$c"
+check 1.0.0 "x.tgz=$a" "y.tgz=nothex"
+jq '.verified_assets = {}' "${stub}/entry.json" >"${stub}/e" && mv "${stub}/e" "${stub}/entry.json"
+check 1.0.0 "x.tgz=$a" "y.tgz=$b"
+release v1.0.0 "$a" "$c"
+github_release_cache_entry_write "${stub}/entry.json" 1.0.0 "${stub}/release.json" "x.tgz=$a" "y.tgz=$b"
+check 1.0.0 "x.tgz=$a" "y.tgz=$b"
+jq '.assets += [{name: "x.tgz", digest: ("sha256:" + "'"$a"'")}]' "${stub}/release.json" >"${stub}/r" && mv "${stub}/r" "${stub}/release.json"
+github_release_cache_entry_write "${stub}/entry.json" 1.0.0 "${stub}/release.json" "x.tgz=$a"
+check 1.0.0 "x.tgz=$a"
+`)
+	if err != nil {
+		t.Fatalf("script: %v\n%s", err, out)
+	}
+	if want := "hit\nhit\nmiss\nmiss\nmiss\nmiss\nmiss\nmiss\nmiss\nmiss\n"; out != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+}
+
+// TestGitHubReleaseCacheRefusesASharedOrMissingHome proves that the cache is
+// never kept under a shared temporary directory or a HOME that is not an
+// absolute directory that the user owns.
+func TestGitHubReleaseCacheRefusesASharedOrMissingHome(t *testing.T) {
+	dir := t.TempDir()
+	out, err := runGitHubReleaseQuotaScript(t, dir, `printf '{}' >"${stub}/in"
+for home in /tmp /tmp/ /var/tmp "${TMPDIR}" relative "" "${stub}/missing"; do
+  if HOME="${home}" github_release_cache_store copilot-v1.json "${stub}/in" 2>/dev/null; then echo "stored under ${home}"; fi
+done
+(unset HOME; github_release_cache_store copilot-v1.json "${stub}/in" 2>/dev/null && echo "stored with no HOME") || true
+github_release_cache_store copilot-v1.json "${stub}/in" && echo "stored under the user's HOME"
+`)
+	if err != nil {
+		t.Fatalf("script: %v\n%s", err, out)
+	}
+	if want := "stored under the user's HOME\n"; out != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+}
+
+// TestCopilotReleaseCheckGuardsEachLocalOnlyBranch proves that the Copilot
+// release check reaches the spent-quota skip, the cache read and the cache
+// write only through github_release_local_run, and that a cache entry must
+// match the pins before its metadata is used.
+func TestCopilotReleaseCheckGuardsEachLocalOnlyBranch(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "verify-upstream-copilot-release.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	for _, want := range []string{
+		"    3)\n      github_release_local_run \"${RELEASE_TOKEN_AVAILABLE}\" || exit 1\n      echo \"NOTICE: skipped",
+		"  github_release_local_run \"${RELEASE_TOKEN_AVAILABLE}\" &&\n  github_release_cache_load \"${RELEASE_METADATA_CACHE_NAME}\" \"${RELEASE_CACHE_ENTRY_PATH}\" &&\n  github_release_cache_entry_matches \"${RELEASE_CACHE_ENTRY_PATH}\" \"${COPILOT_VERSION}\" \"${RELEASE_PINS[@]}\" &&\n  jq '.release'",
+		"if [[ \"${RELEASE_METADATA_FROM_CACHE}\" != \"1\" ]] && github_release_local_run \"${RELEASE_TOKEN_AVAILABLE}\"; then\n  { github_release_cache_entry_write",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("verify-upstream-copilot-release.sh does not guard a local-only branch with:\n%s", want)
+		}
+	}
+	for _, name := range []string{"github_release_cache_load", "github_release_cache_store", "exit 0"} {
+		if got := strings.Count(script, name); got != map[string]int{"github_release_cache_load": 1, "github_release_cache_store": 1, "exit 0": 2}[name] {
+			t.Errorf("verify-upstream-copilot-release.sh calls %s %d times; review each new call for the local-run guard", name, got)
+		}
 	}
 }

@@ -14,11 +14,6 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     fi
   fi
   unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_copilot_release_token
-  # The sanitized re-exec keeps only WORKCELL_* names, so record a GitHub
-  # Actions run here. Such a run never skips the check or reads the cache.
-  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-    export WORKCELL_COPILOT_RELEASE_IN_CI=1
-  fi
 fi
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
@@ -186,7 +181,7 @@ unauthenticated_github_get() {
   case "${status}" in
     0) ;;
     3)
-      [[ "${WORKCELL_COPILOT_RELEASE_IN_CI:-0}" != "1" ]] || exit 1
+      github_release_local_run "${RELEASE_TOKEN_AVAILABLE}" || exit 1
       echo "NOTICE: skipped the rest of the upstream Copilot release check for v${COPILOT_VERSION}, because the GitHub API quota for requests without a token is spent." >&2
       echo "NOTICE: CI runs this check with a token. Run it again here after the quota resets." >&2
       exit 0
@@ -200,21 +195,6 @@ github_token_available() {
 
   token="$(github_token)" || exit 1
   [[ -n "${token}" ]]
-}
-
-# cached_release_metadata_matches_pins succeeds when the cached metadata names
-# the pinned version and the pinned checksum of each asset. Only metadata that
-# a full check of the same pin stored is in the cache.
-cached_release_metadata_matches_pins() {
-  local target_arch=""
-  local platform=""
-
-  [[ "$(jq -r '.tag_name' "${RELEASE_METADATA_PATH}")" == "v${COPILOT_VERSION}" ]] || return 1
-  for target_arch in arm64:linux-arm64 amd64:linux-x64; do
-    platform="${target_arch#*:}"
-    target_arch="${target_arch%%:*}"
-    [[ "$(jq -r --arg asset_name "copilot-${platform}.tar.gz" '[.assets[] | select(.name == $asset_name) | .digest] | if length == 1 then .[0] else "" end' "${RELEASE_METADATA_PATH}")" == "sha256:$(extract_copilot_sha "${target_arch}")" ]] || return 1
-  done
 }
 
 discard_created_github_token_file() {
@@ -444,13 +424,19 @@ if [[ -z "${COPILOT_VERSION}" ]]; then
   exit 1
 fi
 RELEASE_METADATA_CACHE_NAME="copilot-v${COPILOT_VERSION}.json"
-RELEASE_METADATA_CACHEABLE=0
-if [[ "${WORKCELL_COPILOT_RELEASE_IN_CI:-0}" != "1" ]] && ! github_token_available; then
-  RELEASE_METADATA_CACHEABLE=1
+RELEASE_CACHE_ENTRY_PATH="${TMP_ROOT}/release-cache-entry.json"
+RELEASE_TOKEN_AVAILABLE=0
+if github_token_available; then
+  RELEASE_TOKEN_AVAILABLE=1
 fi
-if [[ "${RELEASE_METADATA_CACHEABLE}" == "1" && "${COPILOT_HELP_MODE}" == "checksum" ]] &&
-  github_release_cache_load "${RELEASE_METADATA_CACHE_NAME}" "${RELEASE_METADATA_PATH}" &&
-  cached_release_metadata_matches_pins; then
+RELEASE_ARM64_SHA="$(extract_copilot_sha arm64)"
+RELEASE_AMD64_SHA="$(extract_copilot_sha amd64)"
+RELEASE_PINS=("copilot-linux-arm64.tar.gz=${RELEASE_ARM64_SHA}" "copilot-linux-x64.tar.gz=${RELEASE_AMD64_SHA}")
+if [[ "${COPILOT_HELP_MODE}" == "checksum" ]] &&
+  github_release_local_run "${RELEASE_TOKEN_AVAILABLE}" &&
+  github_release_cache_load "${RELEASE_METADATA_CACHE_NAME}" "${RELEASE_CACHE_ENTRY_PATH}" &&
+  github_release_cache_entry_matches "${RELEASE_CACHE_ENTRY_PATH}" "${COPILOT_VERSION}" "${RELEASE_PINS[@]}" &&
+  jq '.release' "${RELEASE_CACHE_ENTRY_PATH}" >"${RELEASE_METADATA_PATH}"; then
   RELEASE_METADATA_FROM_CACHE=1
   echo "Using the cached release metadata of a full check of Copilot v${COPILOT_VERSION} and its pinned checksums; this run makes no GitHub API call." >&2
 else
@@ -468,8 +454,11 @@ fi
 
 verify_asset arm64 linux-arm64 "$(extract_copilot_sha arm64)"
 verify_asset amd64 linux-x64 "$(extract_copilot_sha amd64)"
-if [[ "${RELEASE_METADATA_CACHEABLE}" == "1" && "${RELEASE_METADATA_FROM_CACHE}" != "1" ]]; then
-  github_release_cache_store "${RELEASE_METADATA_CACHE_NAME}" "${RELEASE_METADATA_PATH}" ||
+# Both assets passed sha256sum against the pins above, so the entry binds the
+# metadata to digests that this run computed.
+if [[ "${RELEASE_METADATA_FROM_CACHE}" != "1" ]] && github_release_local_run "${RELEASE_TOKEN_AVAILABLE}"; then
+  { github_release_cache_entry_write "${RELEASE_CACHE_ENTRY_PATH}" "${COPILOT_VERSION}" "${RELEASE_METADATA_PATH}" "${RELEASE_PINS[@]}" &&
+    github_release_cache_store "${RELEASE_METADATA_CACHE_NAME}" "${RELEASE_CACHE_ENTRY_PATH}"; } ||
     echo "Could not keep the Copilot v${COPILOT_VERSION} release metadata in the local cache; the next run reads it from GitHub again." >&2
 fi
 
