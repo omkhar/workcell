@@ -132,13 +132,32 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
 	staged.Manifest.ArchiveSHA256 = digest
+	// A broker command that cannot run sends nothing, so it must fail before
+	// the manifest records a send.
+	argv, err := b.brokerArgv(targetID)
+	if err != nil {
+		return "", err
+	}
 	staged.Manifest.GuestTransfer = GuestTransferUnconfirmed
 	if err := writeJSON(staged.ManifestPath, staged.Manifest); err != nil {
 		return "", err
 	}
-	return runBroker(ctx, b.Command(targetID), func(conn io.ReadWriter) (string, error) {
+	return runBroker(ctx, argv, func(conn io.ReadWriter) (string, error) {
 		return sendWorkspaceArchive(conn, staged.Manifest.MaterializationID, archive, size, digest)
 	})
+}
+
+// brokerArgv returns the broker argv for targetID, and an error for a zero
+// Command or an empty argv.
+func (b BrokeredTarget) brokerArgv(targetID string) ([]string, error) {
+	var argv []string
+	if b.Command != nil {
+		argv = b.Command(targetID)
+	}
+	if len(argv) == 0 {
+		return nil, errors.New("broker command is empty")
+	}
+	return argv, nil
 }
 
 // runBroker runs the broker argv without a shell and gives its stdio to

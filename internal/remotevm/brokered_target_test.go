@@ -212,6 +212,24 @@ func TestBrokeredTargetPropagatesTheBrokerExitStatus(t *testing.T) {
 	}
 }
 
+// TestBrokeredTargetRefusesAnEmptyBrokerCommandBeforeTheRecord: a zero or an
+// empty broker command sends nothing, so it must fail without a panic before
+// the unconfirmed manifest records a send.
+func TestBrokeredTargetRefusesAnEmptyBrokerCommandBeforeTheRecord(t *testing.T) {
+	t.Parallel()
+
+	for _, command := range []func(string) []string{nil, func(string) []string { return []string{} }} {
+		req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+		_, err := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: command}.MaterializeWorkspace(context.Background(), req)
+		if err == nil || !strings.Contains(err.Error(), "broker command is empty") {
+			t.Fatalf("MaterializeWorkspace() = %v, want the empty broker command", err)
+		}
+		if _, err := os.Lstat(hostManifestPath(req)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("host manifest after an empty broker command: %v; want no record of a send", err)
+		}
+	}
+}
+
 func hostManifestPath(req MaterializeRequest) string {
 	return filepath.Join(req.StateRoot, "targets", TargetKind, GCPVMProvider, req.TargetID, "materializations", req.MaterializationID, MaterializationFile)
 }
