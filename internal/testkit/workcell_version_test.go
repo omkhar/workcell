@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -85,12 +86,10 @@ func writeWorkcellVersionFixture(tb testing.TB, changelog *string) string {
 	fixtureWorkcellPath := filepath.Join(fixtureScriptsDir, "workcell")
 	writeExecFile(tb, fixtureWorkcellPath, launcher, 0o755)
 
-	if err := os.Symlink(filepath.Join(sourceRoot, "scripts", "lib"), filepath.Join(fixtureScriptsDir, "lib")); err != nil {
-		tb.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(sourceRoot, "runtime"), filepath.Join(fixtureRoot, "runtime")); err != nil {
-		tb.Fatal(err)
-	}
+	// The launcher's entry guard refuses a symlink at a helper directory or
+	// among its direct entries, so those are real here and only deeper paths
+	// link back to the checkout.
+	mirrorEntryHelpers(tb, sourceRoot, fixtureRoot)
 
 	if changelog != nil {
 		if err := os.WriteFile(filepath.Join(fixtureRoot, "CHANGELOG.md"), []byte(*changelog), 0o644); err != nil {
@@ -110,4 +109,65 @@ func runWorkcellVersion(tb testing.TB, workcellPath string) string {
 		tb.Fatalf("%s --version failed: %v\n%s", workcellPath, err, output)
 	}
 	return string(output)
+}
+
+// entryHelperDirs are the helper directories whose direct entries the entry
+// guard checks.
+var entryHelperDirs = []string{"scripts/lib", "scripts/lib/launcher", "runtime/container"}
+
+// mirrorEntryHelpers gives fixtureRoot the checkout's runtime and scripts/lib
+// as the entry guard accepts them: each helper directory and its direct
+// entries are real, with files copied, and everything else links back to
+// sourceRoot.
+func mirrorEntryHelpers(tb testing.TB, sourceRoot, fixtureRoot string) {
+	tb.Helper()
+	mirror := func(rel string) {
+		src, dst := filepath.Join(sourceRoot, rel), filepath.Join(fixtureRoot, rel)
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			tb.Fatal(err)
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			child := rel + "/" + name
+			switch {
+			case slices.Contains(entryHelperDirs, child):
+				// Mirrored on its own below.
+			case rel == "runtime":
+				if err := os.Symlink(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+					tb.Fatal(err)
+				}
+			case entry.IsDir():
+				if err := os.Mkdir(filepath.Join(dst, name), 0o755); err != nil {
+					tb.Fatal(err)
+				}
+				inner, err := os.ReadDir(filepath.Join(src, name))
+				if err != nil {
+					tb.Fatal(err)
+				}
+				for _, deeper := range inner {
+					if err := os.Symlink(filepath.Join(src, name, deeper.Name()), filepath.Join(dst, name, deeper.Name())); err != nil {
+						tb.Fatal(err)
+					}
+				}
+			default:
+				data, err := os.ReadFile(filepath.Join(src, name))
+				if err != nil {
+					tb.Fatal(err)
+				}
+				info, err := entry.Info()
+				if err != nil {
+					tb.Fatal(err)
+				}
+				writeExecFile(tb, filepath.Join(dst, name), data, info.Mode().Perm())
+			}
+		}
+	}
+	mirror("runtime")
+	for _, rel := range entryHelperDirs {
+		mirror(rel)
+	}
 }

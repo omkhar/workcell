@@ -41,6 +41,7 @@ internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unrevie
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
 internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ShellInvocations	271020c4,309ab859,d01d658c	the comparisons find the entry guard's fixed assignment line and any use of workcell_entry_root other than its plain expansion, which the reader keeps no words for
 internal/metadatautil	claudeMentionPin	4a5debeb	test helper: finds the one pinned action reference so each test rewrites the real pin
 internal/metadatautil	TestClaudeMentionWorkflowRejectsChanges	f0b79fb3	test fixture: locates the text each negative row rewrites
 internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,7c7b6223	test reads decoded YAML fields: the gate expression and the claude_args value
@@ -221,7 +222,7 @@ internal/metadatautil	pinnedInputsCheck.validateSecurityWorkflowDispatch	34f2f10
 internal/metadatautil	pinnedInputsCheck.validateValidatorBuildkit	3b54b641,7e8fd525	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateWorkflowPolicy	20114f66,729ab531,aa1b7dd5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	preloadAssignments	46f1dfca,cd8fdbb9,cd8fdbb9	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	preludeSafe	7d62ff7e,85178304,c256efb6,e008b096	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	preludeSafe	6e6cff88,7ad76984,7d62ff7e,85178304,c256efb6,ca623b3a,e008b096	the searches read the words of one shell command that the reader already split, not script text; the new ones refuse a redirection or a substitution in an exit or an echo before a reviewed source
 internal/metadatautil	TestLauncherSetsNoReturnTrap	e64b7df9	the search lists the source lines of scripts/workcell to find the libraries it loads; the trap check itself reads parsed commands
 internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a line break in a token file
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
@@ -352,6 +353,9 @@ internal/testkit	TestCopilotReleaseCheckGuardsEachLocalOnlyBranch	6a60f3ff,b059b
 internal/testkit	TestGitHubUnauthenticatedGetNamesTheSpentQuota	3288323f,b0624deb,c60f58bc	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestToolPinImageConsumersRejectOtherRepositories	55750ef1	a test assertion on the refusal text that the script under test prints
 internal/testkit	TestUninstallRefusesSymlinkedScript	d2735c1b	the search checks the output of an uninstall run through a symlink, not script text
+internal/testkit	TestEntryScriptGuardAnchorsTheTree	20e6c84d,3db87680,8f1e5420,a3044b32,d71b6a1e	the searches check the output of an entry script run from a copy, a link or a fake group file, not script text
+internal/testkit	TestUninstallRefusesCopyBesideHostileHelper	1be2b7e5,b02cc340	the searches check the output of an entry script run from a copy or a link, not script text
+internal/testkit	TestWorkcellLauncherAnchorsItsTree	05527b2f,eca3e407	the searches check the output of an entry script run from a copy or a link, not script text
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
 internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
 internal/testkit	RequireEncodedFieldIsInert	31229c8f	unreviewed debt: review the subject, then port or justify
@@ -560,6 +564,7 @@ internal/testkit	launcherFunction	79450fdc,c39af2db	finds a function header in s
 internal/testkit	mutateContainerSmokeHarness	67e5a80e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	parseExecBaseline	74c9b8ef	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	prepareHostedControlCommandGraphFixture	1079268e	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	privateGroup	620cdeed	the checks read one getent group record, name and members, and the getent passwd primary groups, as the entry guard does
 internal/testkit	recordedIdentityRegexp	b2f033fa	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	requireCIPlanError	6a938e6b	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	requireHostedControlGitHubLog	d35dd47e	unreviewed debt in a test: review the subject, then port or justify

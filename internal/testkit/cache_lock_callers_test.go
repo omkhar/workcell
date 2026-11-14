@@ -167,13 +167,20 @@ func TestCacheLockSessionMonitorHoldsNoLock(t *testing.T) {
 	prelude := cacheLockPrelude(t)
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "monitor.pid")
+	// The launcher starts the monitor as scripts/workcell under the root its
+	// entry guard checked, with "session monitor --state-file FILE"; the
+	// stand-in there marks itself ready and sleeps.
+	entryRoot := filepath.Join(dir, "root")
+	if err := os.MkdirAll(filepath.Join(entryRoot, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	standIn := "if [[ \"${1:-}\" == session ]]; then\n  : >\"${4%/*}/session-monitor.ready\"\n  exec sleep 300\nfi\nexit 3\n"
+	if err := os.WriteFile(filepath.Join(entryRoot, "scripts", "workcell"), []byte(standIn), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	var b strings.Builder
-	// The launcher starts the monitor as this script with "session monitor
-	// --state-file FILE"; the stand-in marks itself ready and sleeps.
-	b.WriteString(`if [[ "${1:-}" == session ]]; then
-  : >"${4%/*}/session-monitor.ready"
-  exec sleep 300
-fi
+	// A monitor started from this probe instead of the entry root fails.
+	b.WriteString(`[[ $# -eq 0 ]] || exit 3
 `)
 	b.WriteString(prelude)
 	// start_detached_session_monitor has an indented brace, where
@@ -184,6 +191,7 @@ fi
 	b.WriteString(`load_session_runtime_metadata() { :; }
 write_session_monitor_env_file() { :; }
 mark_detached_session_running() { :; }
+workcell_entry_root=` + ShellQuote(entryRoot) + `
 SESSION_AUDIT_DIR=` + ShellQuote(dir) + ` SESSION_ID=s DEBUG_LOG_PATH="" TRUSTED_HOST_PATH=/usr/bin:/bin REAL_HOME=/nonexistent
 ensure_go_run_env
 start_detached_session_monitor

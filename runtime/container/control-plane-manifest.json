@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "f90c42266cfac749137c216b6f5d1284953628ba8f471fd94998b0f7e4db241e"
+      "sha256": "2894dfdea304e08441f64acb64b57c5e2b3ba7e5653abdd5459c72fcea6a6444"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -10,7 +10,7 @@
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
-      "sha256": "b7dc19f58db225fb695b87ada176c65be9b13edc5ecf43138eda8d01aa6eb879"
+      "sha256": "e8b3f63c8275fd999d9e02d86c5eea0e1ab2f0115f99428527c5061888e6ca7b"
     },
     {
       "repo_path": "scripts/lib/launcher/host-detect.sh",
@@ -34,7 +34,7 @@
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle",
-      "sha256": "f1057951d6f65e12d82a7bc2b5002afde5664670d8f4ed7d9bc289bbec5f5901"
+      "sha256": "38ea70f54fadd89a5070f82dde00d87edccf12428f84c3a795d2a3580f28651d"
     },
     {
       "repo_path": "scripts/lib/sessionctl-shim.sh",
