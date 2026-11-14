@@ -5,6 +5,7 @@ package metadatautil_test
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -265,6 +266,144 @@ func TestLaneScriptsBoundsPathologicalText(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Where this reader cannot read eval or trap text, or reads past its work
+// bound, it fails closed with an error that names it, and a definition in the
+// text an eval or a trap runs, quoted or escaped eval included, counts.
+func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
+	t.Parallel()
+	const (
+		gate    = "bash \"${ROOT_DIR}/scripts/gate.sh\"\n"
+		source  = "source \"${ROOT_DIR}/scripts/lib/l.sh\"\n"
+		library = "scripts/lib/l.sh"
+		shadows = "defines a function named"
+	)
+	cases := []struct {
+		name, lane string
+		files      map[string]string
+		want       string // wired, unwired, or an error substring
+	}{
+		{"chained command eval", strings.Repeat("command eval ", 32) + "true\n" + gate, nil, "nests eval or trap text"},
+		{"eval within a command eval", "command eval command eval 'bash() { :; }'\n" + gate, nil, shadows},
+		{"eval after then", "if true; then eval 'bash() { :; }'; fi\n" + gate, nil, shadows},
+		{"escaped eval", "\\eval 'bash() { :; }'\n" + gate, nil, shadows},
+		{"quoted eval", "\"eval\" 'bash() { :; }'\n" + gate, nil, shadows},
+		{"eval after command -p", "command -p eval 'bash() { :; }'\n" + gate, nil, shadows},
+		{"debug trap defines a function", "trap 'bash() { :; }' DEBUG\n" + gate, nil, shadows},
+		{"builtin trap -- defines a function", "builtin trap -- 'bash() { :; }' ERR\n" + gate, nil, shadows},
+		{"library trap defines a function", source + gate, map[string]string{library: "trap 'bash() { :; }' DEBUG\n"}, shadows},
+		{"exit trap action of an expansion", "trap 'rm -f \"${tmp}\"' EXIT\n" + gate, nil, "wired"},
+		{"long library substitution", source + gate, map[string]string{library: "x=\"$(printf %s " + strings.Repeat("y", 5000) + ")\"\n"}, "wired"},
+		{"a long quoted run of continued lines", "echo \"" + strings.Repeat("a \\\n", 20000) + "b\"\n" + gate, nil, "than this reader parses"},
+		{"a long run of continued lines", "echo " + strings.Repeat("a \\\n", 20000) + "b\n" + gate, nil, "wired"},
+		{"eval after a redirection", ">/dev/null eval 'bash() { :; }'\n" + gate, nil, shadows},
+		{"eval after a redirection and its target", "> /dev/null 2>&1 eval 'bash() { :; }'\n" + gate, nil, shadows},
+		{"trap after a named descriptor", "{fd}</dev/null trap 'bash() { :; }' DEBUG\n" + gate, nil, shadows},
+		// Only the first eval of a command is read: reading each eval of
+		// eight chained ones reads the long tail 2^8 times, past the bound.
+		{"eight chained command evals", strings.Repeat("command eval ", 8) + "true " + strings.Repeat("x", 4000) + "\n" + gate, nil, "wired"},
+		{"calls that fan out past the reader's bound", fanOut(20) + gate, nil, "past the shell reader's work bound"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			files := map[string]string{"scripts/validate-repo.sh": "#!/bin/bash\nset -euo pipefail\n" + laneRoot + "\n" + tc.lane, "scripts/ci/job-x.sh": "true\n", ".github/workflows/w.yml": "name: w\n"}
+			maps.Copy(files, tc.files)
+			writeLaneTree(t, root, files)
+			type result struct {
+				got []string
+				err error
+			}
+			done := make(chan result, 1)
+			go func() { got, err := metadatautil.LaneScripts(root); done <- result{got, err} }()
+			var got []string
+			var err error
+			select {
+			case each := <-done:
+				got, err = each.got, each.err
+			case <-time.After(20 * time.Second):
+				t.Fatal("LaneScripts() did not finish within 20s")
+			}
+			switch tc.want {
+			case "wired", "unwired":
+				if err != nil {
+					t.Fatal(err)
+				}
+				if wired := slices.Contains(got, "scripts/gate.sh"); wired != (tc.want == "wired") {
+					t.Fatalf("LaneScripts() = %q, want scripts/gate.sh %s", got, tc.want)
+				}
+			default:
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("LaneScripts() = %q, %v, want an error with %q", got, err, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestLaneScriptsWorkGrowsLinearly times LaneScripts on lanes of each shape
+// at two sizes, the second four times the first, and fails when the larger
+// takes more than eight times as long, so a reader that is quadratic or worse
+// on a shape fails, whether it reads the text or fails closed on it. Each size
+// is timed three times and the fastest kept, and the first size grows until it
+// takes long enough to time. A shape fails only when three attempts in a row
+// exceed the ratio.
+func TestLaneScriptsWorkGrowsLinearly(t *testing.T) {
+	shapes := map[string]func(n int) (lane, library string){
+		"command eval":    func(n int) (string, string) { return strings.Repeat("command eval ", n) + "true\n", "" },
+		"then eval":       func(n int) (string, string) { return strings.Repeat("if true; then eval ", n) + "true\n", "" },
+		"trap in trap":    func(n int) (string, string) { return strings.Repeat("trap ", n) + "true DEBUG\n", "" },
+		"continued lines": func(n int) (string, string) { return "echo " + strings.Repeat("a \\\n", n) + "b\n", "" },
+		"quoted continued lines": func(n int) (string, string) {
+			return "echo \"" + strings.Repeat("a \\\n", n) + "b\"\n", ""
+		},
+		"forwarded calls": func(n int) (string, string) {
+			return "source \"${ROOT_DIR}/scripts/lib/l.sh\"\n" + strings.Repeat("run make\n", n), "run() { \"$@\"; }\n"
+		},
+		"function calls": func(n int) (string, string) { return "f() { g; g; }\ng() { :; }\n" + strings.Repeat("f\n", n), "" },
+		"brace words":    func(n int) (string, string) { return strings.Repeat("echo {a,b}{c,d}{e,f}\n", n), "" },
+	}
+	for name, shape := range shapes {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			measure := func(n int) time.Duration {
+				lane, library := shape(n)
+				writeLaneTree(t, root, map[string]string{"scripts/validate-repo.sh": "#!/bin/bash\n" + laneRoot + "\n" + lane, "scripts/lib/l.sh": library, "scripts/ci/job-x.sh": "true\n", ".github/workflows/w.yml": "name: w\n"})
+				best := time.Duration(1 << 62)
+				for range 3 {
+					start := time.Now()
+					_, _ = metadatautil.LaneScripts(root)
+					best = min(best, time.Since(start))
+				}
+				return best
+			}
+			n := 64
+			for ; measure(n) < 20*time.Millisecond && len(func() string { lane, library := shape(4 * n); return lane + library }()) < 1<<19; n *= 2 {
+			}
+			// A busy machine can slow one size more than the other, so a
+			// shape fails only when three attempts in a row exceed the ratio.
+			for range 3 {
+				small, large := measure(n), measure(4*n)
+				if large <= 8*small {
+					return
+				}
+				t.Logf("LaneScripts() took %v at %d and %v at %d", small, n, large, 4*n)
+			}
+			t.Fatalf("LaneScripts() took more than eight times as long for four times the text in three attempts")
+		})
+	}
+}
+
+// fanOut returns n functions, each of which calls the next twice, and a call
+// of the first, so reading every call reads the last body 2^n times.
+func fanOut(n int) string {
+	var text strings.Builder
+	for at := range n {
+		fmt.Fprintf(&text, "f%d() { f%d; f%d; }\n", at, at+1, at+1)
+	}
+	return text.String() + "f0\n"
 }
 
 // writeLaneTree writes each file under root, keyed by its repository path.

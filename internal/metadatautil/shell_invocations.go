@@ -1809,17 +1809,43 @@ func shadowsByAlias(args []string, name string) bool {
 // as a script when the reader can spell them; otherwise the command stays,
 // for a lint to fail closed on. A function body is read after each call, with
 // the last definition before it, and a trap action runs once at the end.
+// Every text it reads, a body read again at each call, an eval's words and a
+// child shell's program included, is charged to one budget, shellReadLimit of
+// the script, so no script costs more than a fixed multiple of its length;
+// past it, each text it would read is shellReadBound instead.
 // PR 804's ShellCommandWords has a similar intent; merge the two when both land.
 func EveryShellCommand(script string) [][]string {
-	return everyShellCommand(script)
+	left := shellReadLimit(script)
+	return everyShellCommand(script, &left)
+}
+
+// shellReadLimit is the number of bytes the reader may read for text: a fixed
+// multiple of its length, and a floor for a short text.
+func shellReadLimit(text string) int {
+	return 64*len(text) + 1<<20
+}
+
+// shellReadBound is the command the reader returns in place of text past its
+// budget: an eval of text it cannot spell, which every lint of what may run
+// fails closed on.
+var shellReadBound = []string{"eval", "${_:?past the shell reader's work bound}"}
+
+// shellReadCharge charges text to the budget left and reports whether the
+// reader may still read it.
+func shellReadCharge(text string, left *int) bool {
+	*left -= len(text) + 1
+	return *left >= 0
 }
 
 // everyShellCommand is EveryShellCommand for a script a child shell runs, such
 // as a sh -c body, which has its own definitions and traps.
-func everyShellCommand(script string) [][]string {
+func everyShellCommand(script string, left *int) [][]string {
+	if !shellReadCharge(script, left) {
+		return [][]string{shellReadBound}
+	}
 	traps := trapState{map[string]string{}, map[string]bool{}}
 	bodies := map[string]string{}
-	found := readScript(flattenSubstitutions(heredocsAsHereStrings(script)), bodies, nil, traps)
+	found := readScript(flattenSubstitutions(heredocsAsHereStrings(script)), bodies, nil, traps, left)
 	// An action can set another trap, so read until every action is read.
 	for read := map[string]bool{}; ; {
 		for _, action := range traps.set {
@@ -1831,20 +1857,23 @@ func everyShellCommand(script string) [][]string {
 			return found
 		}
 		read[actions[at]] = true
-		found = append(found, expandCalls(flattenedCommands(actions[at]), bodies, nil, traps)...)
+		found = append(found, expandCalls(readCommands(actions[at], left), bodies, nil, traps, left)...)
 	}
 }
 
 // readScript returns the commands text runs. A function definition in text
 // runs nothing: it binds the name for the calls after it, as bash does.
-func readScript(text string, bodies map[string]string, calling []string, traps trapState) [][]string {
+func readScript(text string, bodies map[string]string, calling []string, traps trapState, left *int) [][]string {
+	if !shellReadCharge(text, left) {
+		return [][]string{shellReadBound}
+	}
 	var found [][]string
 	for _, part := range functionBodies(text) {
 		if part.name != "" {
 			bodies[part.name] = part.text
 			continue
 		}
-		found = append(found, expandCalls(flattenedCommands(part.text), bodies, calling, traps)...)
+		found = append(found, expandCalls(readCommands(part.text, left), bodies, calling, traps, left)...)
 	}
 	return found
 }
@@ -1861,7 +1890,7 @@ type trapState struct {
 // calls it, so a cd in the body moves the commands after the call. calling
 // holds the functions being expanded, so a recursive call is read once. Each
 // trap command updates traps.
-func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps trapState) [][]string {
+func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps trapState, left *int) [][]string {
 	var found [][]string
 	for _, words := range commands {
 		found = append(found, words)
@@ -1873,7 +1902,7 @@ func expandCalls(commands [][]string, bodies map[string]string, calling []string
 			}
 		}
 		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
-			found = append(found, readScript(body, bodies, append(calling, words[0]), traps)...)
+			found = append(found, readScript(body, bodies, append(calling, words[0]), traps, left)...)
 		}
 	}
 	return found
@@ -1911,6 +1940,15 @@ func setTrap(args []string, traps map[string]string) {
 
 // flattenedCommands returns the words of every command in text, which flattenSubstitutions has rewritten; a here-string is its command's stdin.
 func flattenedCommands(text string) [][]string {
+	left := shellReadLimit(text)
+	return readCommands(text, &left)
+}
+
+// readCommands is flattenedCommands within the budget left.
+func readCommands(text string, left *int) [][]string {
+	if !shellReadCharge(text, left) {
+		return [][]string{shellReadBound}
+	}
 	var found [][]string
 	var command []string
 	dropTarget, readStdin, stdin := false, false, "$_"
@@ -1935,11 +1973,11 @@ func flattenedCommands(text string) [][]string {
 		program, shell, _ := shellProgram(words, stdin)
 		script, spelled := spelledProgram(program)
 		if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
-			found = append(found, flattenedCommands(text)...) // eval runs its words as a script
+			found = append(found, readCommands(text, left)...) // eval runs its words as a script
 		} else if shell && spelled {
 			// A shell runs its program as a script in a child shell with its
 			// own definitions and traps, so an uncalled function in it runs nothing.
-			found = append(found, everyShellCommand(script)...)
+			found = append(found, everyShellCommand(script, left)...)
 		} else {
 			found = append(found, words)
 		}
@@ -1990,15 +2028,24 @@ func flattenedCommands(text string) [][]string {
 			dropTarget = shellRedirect.FindString(piece[at:]) == piece[at:]
 		}
 	}
-	joined, test, closer := "", false, ""
+	var joined strings.Builder
+	clean, test, closer := true, false, ""
 	for line := range strings.Lines(text) {
-		words, _, _, _, continues, _ := shellWords(joined+strings.TrimSuffix(line, "\n"), nil)
-		if continues {
-			joined += strings.TrimSuffix(line, "\n")
-			joined = joined[:len(joined)-1]
+		line = strings.TrimSuffix(line, "\n")
+		continues, stillClean, ok := shellContinues(joined.String(), line, clean, left)
+		if ok && continues {
+			joined.WriteString(line[:len(line)-1])
+			clean = stillClean
 			continue
 		}
-		joined = ""
+		joined.WriteString(line)
+		if !ok || !shellReadCharge(joined.String(), left) {
+			end()
+			return append(found, shellReadBound)
+		}
+		words, _, _, _, _, _ := shellWords(joined.String(), nil)
+		joined.Reset()
+		clean = true
 		for _, each := range words {
 			each.text = strings.ReplaceAll(each.text, string(quotedNewline), "\n")
 			// An array member, the words from name=( up to ), and an arithmetic
