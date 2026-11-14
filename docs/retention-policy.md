@@ -16,6 +16,7 @@ The local `pr-parity` gate and the `Security` workflow run this check.
 | --- | --- | ---: |
 | `bench.yml` | `exec-guard-bench-results` | 14 |
 | `ci.yml` | `workcell-ci-install-candidate` | 7 |
+| `dependabot-follow-up.yml` | `dependabot-follow-up` | 7 |
 | `fuzz.yml` | `fuzz-reproducers` | 14 |
 | `fuzz.yml` | `rust-fuzz-reproducers` | 14 |
 | `fuzz.yml` | `rust-fuzz-lockfile` | 14 |

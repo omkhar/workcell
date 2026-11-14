@@ -8,6 +8,9 @@
       "workcell-ci-install-candidate": 7,
       "workcell-validator-image": 1
     },
+    "dependabot-follow-up.yml": {
+      "dependabot-follow-up": 7
+    },
     "fuzz.yml": {
       "fuzz-reproducers": 14,
       "rust-fuzz-reproducers": 14,
