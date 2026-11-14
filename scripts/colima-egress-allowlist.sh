@@ -41,6 +41,7 @@ Usage:
   colima-egress-allowlist.sh plan <profile> "<host:port ...>"
   colima-egress-allowlist.sh apply <profile> "<host:port ...>"
   colima-egress-allowlist.sh clear <profile>
+  colima-egress-allowlist.sh guest-script "<host:port ...>"
 EOF
 }
 
@@ -261,7 +262,8 @@ PROFILE="${2:-}"
   exit 1
 }
 
-[[ -n "${PROFILE}" ]] || {
+# guest-script takes no profile: a remote broker, not limactl, carries its output.
+[[ -n "${PROFILE}" || "${COMMAND}" == "guest-script" ]] || {
   usage
   exit 1
 }
@@ -291,6 +293,11 @@ lima_instance() {
   fi
 }
 
+# guest_script_stdin prints the exact bytes a guest shell reads for script.
+guest_script_stdin() {
+  printf 'set -euo pipefail\n%s\n' "$1"
+}
+
 run_in_vm() {
   local script="$1"
   local colima_home=""
@@ -314,7 +321,7 @@ EOF
   colima_home="${COLIMA_HOME:-${REAL_HOME}/.colima}"
   (
     cd / &&
-      printf 'set -euo pipefail\n%s\n' "${script}" |
+      guest_script_stdin "${script}" |
       HOME="${REAL_HOME}" \
         COLIMA_HOME="${colima_home}" \
         LIMA_HOME="${colima_home}/_lima" \
@@ -508,6 +515,24 @@ sudo ip6tables-restore --noflush <<<"${IPV6_RESTORE}"
 EOF
 }
 
+# deliver_apply_plan sends the guest apply plan through a transport. limactl
+# runs it in the Colima VM. stdout prints the exact input of that VM shell, so
+# a remote_vm broker (IAP or SSM) can run the same plan on its guest.
+deliver_apply_plan() {
+  case "$1" in
+    limactl)
+      run_in_vm "$(render_allowlist_apply_plan)"
+      ;;
+    stdout)
+      guest_script_stdin "$(render_allowlist_apply_plan)"
+      ;;
+    *)
+      echo "Unknown guest transport: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
 case "${COMMAND}" in
   clear)
     clear_rules
@@ -531,7 +556,16 @@ case "${COMMAND}" in
     }
     ENDPOINTS="${3}"
     validate_endpoints "${ENDPOINTS}"
-    run_in_vm "$(render_allowlist_apply_plan)"
+    deliver_apply_plan limactl
+    ;;
+  guest-script)
+    [[ $# -ge 2 ]] || {
+      echo "Missing endpoint list argument for guest-script" >&2
+      exit 1
+    }
+    ENDPOINTS="${2}"
+    validate_endpoints "${ENDPOINTS}"
+    deliver_apply_plan stdout
     ;;
   *)
     usage
