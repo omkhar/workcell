@@ -24,7 +24,7 @@ const claudeMentionWorkflowName = "claude-mention.yml"
 // pin bump keeps the digest. The owner-id gate, the triggers, the permissions,
 // the fork refusal and the tool deny list are all inside it: any change to
 // them is a reviewed change to this constant.
-const claudeMentionContractSHA256 = "0902b84bf84fdb7786e06320154adc6e61f2c56d11d7b243d3e751a497e56e5c"
+const claudeMentionContractSHA256 = "0f941bc8cdbcd02c2d61f7ce034001ad4a35c5c3821791f08daadfded923065a"
 
 const claudeMentionContractError = "claude-mention.yml must match the reviewed owner-gated contract"
 
