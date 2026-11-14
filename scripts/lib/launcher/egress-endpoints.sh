@@ -123,7 +123,9 @@ build_runtime_host_aliases() {
   [[ "${NETWORK_POLICY}" == "allowlist" ]] || return 0
   if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
     # The proxy refuses an endpoint set it cannot route. Say so before launch.
-    go_hostutil helper validate-egress-proxy-allowlist "${endpoint_list}" || return 1
+    # The helper prints the rest as the proxy spells them (lower case, no
+    # trailing dot), so each host alias matches the name the agent looks up.
+    endpoint_list="$(go_hostutil helper validate-egress-proxy-allowlist "${endpoint_list}")" || return 1
     egress_proxy_agent_network_args "${endpoint_list}"
     return 0
   fi
