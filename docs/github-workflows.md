@@ -431,6 +431,9 @@ The job runs these two commands on the bump checkout:
 - `refresh-action-inputs`, which fetches `action.yml` only for a new pin
 - `flag-inventory restamp`
 
+Then `fixture-patch` writes the patch. It includes new fixture files, and it
+fails if the tree changed but the patch is empty
+(`internal/metadatautil/fixture_patch_test.go`).
 The job uploads the result as the `dependabot-follow-up` artifact.
 If the patch is not empty, the job fails and shows the patch in the step summary (`.github/workflows/dependabot-follow-up.yml`).
 

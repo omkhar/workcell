@@ -65,7 +65,9 @@ jobs:
           /usr/local/go/bin/go run -trimpath ./cmd/workcell-citools refresh-action-inputs ../head
           /usr/local/go/bin/go run -trimpath ./cmd/workcell-citools flag-inventory restamp ../head
           mkdir -p "${RUNNER_TEMP}/follow-up"
-          git -C ../head diff --no-ext-diff --no-textconv -- tests/fixtures/actions/inputs.tsv tests/fixtures/flags \
+          # New fixture files are in the patch too; a tree that differs with
+          # an empty patch fails here instead of passing as clean.
+          /usr/local/go/bin/go run -trimpath ./cmd/workcell-citools fixture-patch ../head \
             >"${RUNNER_TEMP}/follow-up/dependabot-follow-up.patch"
           echo "::${stop_token}::"
 

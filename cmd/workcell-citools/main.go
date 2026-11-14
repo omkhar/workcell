@@ -108,6 +108,7 @@ func subcommands() []subcommand {
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"flag-inventory", "plan|check|restamp ROOT | compare|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
 		{"refresh-action-inputs", "[--check] ROOT", 1, 2, cmdRefreshActionInputs},
+		{"fixture-patch", "ROOT", 1, 1, cmdFixturePatch},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
@@ -607,6 +608,17 @@ func cmdRefreshActionInputs(args []string) error {
 		return &cliexit.ExitCodeError{Code: 1, Message: "tests/fixtures/actions/inputs.tsv is out of date; run workcell-citools refresh-action-inputs ROOT"}
 	}
 	return nil
+}
+
+// cmdFixturePatch prints the git patch of the regenerated fixtures in ROOT,
+// new files included, and fails when the tree differs but the patch is empty.
+func cmdFixturePatch(args []string) error {
+	patch, err := metadatautil.FixturePatch(args[0])
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(patch)
+	return err
 }
 
 func cmdFlagInventory(args []string) error {
