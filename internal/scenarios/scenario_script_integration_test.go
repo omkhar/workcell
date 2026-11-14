@@ -423,18 +423,25 @@ func TestRunScenarioTestsPrintsAFailedScenarioOutput(t *testing.T) {
 }
 
 // TestRunScenarioTestsPrintsAStoppedScenarioOutput stops the runner while a
-// scenario hangs, as a CI timeout does. The runner must print the captured
-// tail of the hung scenario before it exits.
+// scenario hangs, as a CI timeout or a Ctrl-C does. The runner must print the
+// captured tail of the hung scenario, and stop the scenario and its children.
 func TestRunScenarioTestsPrintsAStoppedScenarioOutput(t *testing.T) {
 	t.Parallel()
 
-	for _, jobs := range []string{"1", "2"} {
-		t.Run("jobs "+jobs, func(t *testing.T) {
+	for _, tc := range []struct {
+		jobs   string
+		signal syscall.Signal
+		name   string
+		code   int
+	}{{"1", syscall.SIGTERM, "SIGTERM", 143}, {"2", syscall.SIGTERM, "SIGTERM", 143}, {"1", syscall.SIGINT, "SIGINT", 130}, {"2", syscall.SIGINT, "SIGINT", 130}} {
+		jobs := tc.jobs
+		t.Run("jobs "+jobs+" "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			scenarioRoot := t.TempDir()
 			ready := filepath.Join(scenarioRoot, "ready")
+			child := filepath.Join(scenarioRoot, "child")
 			writeScenarioScript(t, scenarioRoot, "shared/test-passing.sh", "#!/bin/sh\necho passing-noise\n")
-			writeScenarioScript(t, scenarioRoot, "shared/test-hung.sh", "#!/bin/sh\necho hung-line-1\necho hung-line-2\necho hung-cause >&2\n: >\"$HUNG_READY\"\nexec sleep 30\n")
+			writeScenarioScript(t, scenarioRoot, "shared/test-hung.sh", "#!/bin/sh\necho hung-line-1\necho hung-line-2\necho hung-cause >&2\nsleep 30 &\necho \"$!\" >\"$HUNG_CHILD\"\n: >\"$HUNG_READY\"\nwait\n")
 			scenarios := []map[string]any{}
 			for _, name := range []string{"passing", "hung"} {
 				scenarios = append(scenarios, map[string]any{
@@ -451,7 +458,8 @@ func TestRunScenarioTestsPrintsAStoppedScenarioOutput(t *testing.T) {
 				"WORKCELL_SCENARIO_ROOT="+scenarioRoot,
 				"WORKCELL_SCENARIO_MANIFEST="+manifestPath,
 				"WORKCELL_SCENARIO_JOBS="+jobs,
-				"HUNG_READY="+ready)
+				"HUNG_READY="+ready,
+				"HUNG_CHILD="+child)
 			var out strings.Builder
 			cmd.Stdout, cmd.Stderr = &out, &out
 			if err := cmd.Start(); err != nil {
@@ -471,20 +479,36 @@ func TestRunScenarioTestsPrintsAStoppedScenarioOutput(t *testing.T) {
 				time.Sleep(20 * time.Millisecond)
 			}
 			time.Sleep(100 * time.Millisecond)
-			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+			if err := cmd.Process.Signal(tc.signal); err != nil {
 				t.Fatal(err)
 			}
 			select {
 			case err := <-done:
 				var exitErr *exec.ExitError
-				if !errors.As(err, &exitErr) || exitErr.ExitCode() != 143 {
-					t.Fatalf("runner exit = %v, want 143; output %q", err, out.String())
+				if !errors.As(err, &exitErr) || exitErr.ExitCode() != tc.code {
+					t.Fatalf("runner exit = %v, want %d; output %q", err, tc.code, out.String())
 				}
 			case <-time.After(10 * time.Second):
 				_ = cmd.Process.Kill()
-				t.Fatalf("the runner did not stop on SIGTERM: %q", out.String())
+				t.Fatalf("the runner did not stop on %s: %q", tc.name, out.String())
 			}
-			want := "--- shared/hung output (stopped by SIGTERM; 3 lines) ---\nhung-line-1\nhung-line-2\nhung-cause\n--- end shared/hung output ---\n"
+			raw, err := os.ReadFile(child)
+			if err != nil {
+				t.Fatal(err)
+			}
+			childPID := strings.TrimSpace(string(raw))
+			for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+				// A killed child that init has not reaped yet shows as Z.
+				state, _ := exec.Command("ps", "-o", "stat=", "-p", childPID).Output()
+				if s := strings.TrimSpace(string(state)); s == "" || strings.HasPrefix(s, "Z") {
+					break
+				}
+				if time.Now().After(deadline) {
+					_ = exec.Command("kill", "-9", childPID).Run()
+					t.Fatalf("the hung scenario's child %s still runs after %s", childPID, tc.name)
+				}
+			}
+			want := "--- shared/hung output (stopped by " + tc.name + "; 3 lines) ---\nhung-line-1\nhung-line-2\nhung-cause\n--- end shared/hung output ---\n"
 			if got := out.String(); !strings.Contains(got, want) || strings.Contains(got, "passing-noise") {
 				t.Fatalf("output %q, want the hung scenario block %q and no passing output", got, want)
 			}

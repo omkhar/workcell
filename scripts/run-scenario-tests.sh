@@ -174,11 +174,15 @@ run_scenario() {
 
   local scenario_exit=0
   local scenario_pid=""
-  # The scenario runs in the background so that its PID is known: a runner
-  # stopped by a signal stops the scenario and prints its output.
+  # The scenario runs in the background in its own process group, so that a
+  # runner stopped by a signal prints its output and stops the scenario with
+  # all of its children. Job control is on only for the launch: a background
+  # job started without it would ignore SIGINT.
   printf '%s\n' "${scenario_id}" >"${output_file%.output}.id"
+  set -m
   bash "${full_test_path}" </dev/null >"${output_file}" 2>&1 &
   scenario_pid="$!"
+  set +m
   printf '%d\n' "${scenario_pid}" >"${output_file%.output}.pid"
   wait "${scenario_pid}" || scenario_exit="$?"
   if [[ "${scenario_exit}" -eq 0 ]]; then
@@ -227,7 +231,8 @@ stop_on_signal() {
     print_failed_output "$(<"${prefix}.id")" "stopped by SIG${signal}" "${prefix}.output"
     if [[ -f "${prefix}.pid" ]]; then
       pid="$(<"${prefix}.pid")"
-      [[ "${pid}" =~ ^[1-9][0-9]*$ ]] && kill -TERM "${pid}" 2>/dev/null || true
+      # The scenario PID is also its process group ID.
+      [[ "${pid}" =~ ^[1-9][0-9]*$ ]] && kill -TERM -- "-${pid}" 2>/dev/null || true
     fi
   done
   for pid in ${pids[@]+"${pids[@]}"}; do
