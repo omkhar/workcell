@@ -300,7 +300,6 @@ shell_files=(
   "${ROOT_DIR}/runtime/container/bin/git"
   "${ROOT_DIR}/runtime/container/bin/node"
   "${ROOT_DIR}/runtime/container/home-control-plane.sh"
-  "${ROOT_DIR}/runtime/container/provider-policy.sh"
   "${ROOT_DIR}/runtime/container/provider-wrapper.sh"
   "${ROOT_DIR}/runtime/container/runtime-user.sh"
   "${ROOT_DIR}/scripts/run-scenario-tests.sh"
