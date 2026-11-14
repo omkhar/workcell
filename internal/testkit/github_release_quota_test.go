@@ -175,12 +175,14 @@ check 0 plain
 check 1 token
 WORKCELL_GITHUB_ACTIONS=1 check 0 actions
 WORKCELL_UPSTREAM_RELEASE_REQUIRE_FULL_CHECK=1 check 0 fresh-pins
+GITHUB_ACTIONS=true check 0 raw-actions
+CI=true check 0 ci
 check "" empty-token-state
 `)
 	if err != nil {
 		t.Fatalf("script: %v\n%s", err, out)
 	}
-	if want := "plain=local\ntoken=full\nactions=full\nfresh-pins=full\nempty-token-state=full\n"; out != want {
+	if want := "plain=local\ntoken=full\nactions=full\nfresh-pins=full\nraw-actions=full\nci=full\nempty-token-state=full\n"; out != want {
 		t.Fatalf("output = %q, want %q", out, want)
 	}
 }
@@ -209,6 +211,7 @@ func TestTrustedEntrypointKeepsAGitHubActionsRunKnown(t *testing.T) {
 		"in GitHub Actions":                 {env: []string{"GITHUB_ACTIONS=true", "WORKCELL_GITHUB_ACTIONS=0"}, want: "actions=1 raw=unset\n"},
 		"outside GitHub Actions":            {env: nil, want: "actions=unset raw=unset\n"},
 		"a GITHUB_ACTIONS that is not true": {env: []string{"GITHUB_ACTIONS=false"}, want: "actions=unset raw=unset\n"},
+		"a preset sanitized marker":         {env: []string{"GITHUB_ACTIONS=true", "WORKCELL_SANITIZED_ENTRYPOINT=1", "WORKCELL_GITHUB_ACTIONS=0"}, want: "actions=1 raw=true\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.Command("/bin/bash", "-p", outer)
@@ -263,7 +266,8 @@ check 1.0.0 "x.tgz=$a"
 func TestGitHubReleaseCacheRefusesASharedOrMissingHome(t *testing.T) {
 	dir := t.TempDir()
 	out, err := runGitHubReleaseQuotaScript(t, dir, `printf '{}' >"${stub}/in"
-for home in /tmp /tmp/ /var/tmp "${TMPDIR}" relative "" "${stub}/missing"; do
+ln -s /tmp "${stub}/tmp-link"
+for home in /tmp /tmp/ /tmp// /tmp/. //tmp /var/tmp "${TMPDIR}" "${TMPDIR}/" "${TMPDIR}/." "${stub}/tmp-link" relative "" "${stub}/missing"; do
   if HOME="${home}" github_release_cache_store copilot-v1.json "${stub}/in" 2>/dev/null; then echo "stored under ${home}"; fi
 done
 (unset HOME; github_release_cache_store copilot-v1.json "${stub}/in" 2>/dev/null && echo "stored with no HOME") || true

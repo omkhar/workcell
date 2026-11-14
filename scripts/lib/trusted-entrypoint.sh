@@ -46,6 +46,11 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   workcell_trusted_exec_args+=(/bin/bash -p "$0" "$@")
   exec "${workcell_trusted_exec_args[@]}"
 fi
+# A caller can preset the sentinel and skip the re-exec, so GITHUB_ACTIONS
+# can still be here: record it the same way.
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  export WORKCELL_GITHUB_ACTIONS=1
+fi
 set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
 

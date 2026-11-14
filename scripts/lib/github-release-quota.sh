@@ -14,7 +14,11 @@
 # WORKCELL_UPSTREAM_RELEASE_REQUIRE_FULL_CHECK=1.
 github_release_local_run() {
   [[ "$1" == "0" ]] || return 1
-  [[ "${WORKCELL_GITHUB_ACTIONS:-0}" != "1" ]] || return 1
+  [[ "${WORKCELL_GITHUB_ACTIONS:-0}" != "1" && "${GITHUB_ACTIONS:-}" != "true" ]] || return 1
+  case "${CI:-}" in
+    "" | false | 0) ;;
+    *) return 1 ;;
+  esac
   [[ "${WORKCELL_UPSTREAM_RELEASE_REQUIRE_FULL_CHECK:-0}" != "1" ]]
 }
 
@@ -74,15 +78,25 @@ github_response_header() {
 # absolute directory that the user owns, or is a shared temporary directory
 # such as the /tmp fallback of a sanitized entry.
 github_release_cache_dir() {
+  local home=""
+  local tmp=""
+
   case "${HOME:-}" in
     /*) ;;
     *) return 1 ;;
   esac
-  case "${HOME%/}" in
-    "" | /tmp | /var/tmp | /private/tmp | /private/var/tmp | "${TMPDIR%/}") return 1 ;;
+  # Compare canonical paths, so /tmp//, /tmp/., //tmp and a symlink to
+  # /tmp are all /tmp.
+  home="$(cd -P -- "${HOME}" && pwd -P)" || return 1
+  tmp="$(cd -P -- "${TMPDIR:-/tmp}" && pwd -P)" || tmp="/tmp"
+  # pwd keeps a leading // as POSIX allows.
+  while [[ "${home}" == //* ]]; do home="${home#/}"; done
+  while [[ "${tmp}" == //* ]]; do tmp="${tmp#/}"; done
+  case "${home}" in
+    / | /tmp | /var/tmp | /private/tmp | /private/var/tmp | "${tmp}") return 1 ;;
   esac
-  [[ -d "${HOME}" && ! -L "${HOME}" && -O "${HOME}" ]] || return 1
-  printf '%s\n' "${HOME}/.cache/workcell/upstream-releases"
+  [[ -O "${home}" ]] || return 1
+  printf '%s\n' "${home}/.cache/workcell/upstream-releases"
 }
 
 # github_release_cache_name_ok NAME succeeds when NAME is a plain file name.
