@@ -5,6 +5,7 @@ package remotevm
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/workspacelimit"
+	"golang.org/x/sys/unix"
 )
 
 type WorkspaceEntry struct {
@@ -181,14 +183,15 @@ func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeRes
 	if strings.TrimSpace(req.SourceWorkspace) == "" {
 		return MaterializeResult{}, fmt.Errorf("source workspace is required")
 	}
-	targetRoot := targetRoot(req.StateRoot, targetProvider, targetID)
-	materializationRoot := filepath.Join(targetRoot, "materializations", materializationID)
-	workspaceRoot := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.WorkspaceDir)
-	manifestPath := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.ManifestName)
-	if err := removeAllNoFollow(workspaceRoot); err != nil {
+	workspaceDir, err := statePathSegment("workspace dir", contract.WorkspaceMaterialization.WorkspaceDir)
+	if err != nil {
 		return MaterializeResult{}, err
 	}
-	if err := mkdirAllSynced(workspaceRoot); err != nil {
+	targetRoot := targetRoot(req.StateRoot, targetProvider, targetID)
+	materializationRoot := filepath.Join(targetRoot, "materializations", materializationID)
+	workspaceRoot := filepath.Join(materializationRoot, workspaceDir)
+	manifestPath := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.ManifestName)
+	if err := mkdirAllSynced(materializationRoot); err != nil {
 		return MaterializeResult{}, err
 	}
 	// The copy keeps the source file modes, so the directory above it must
@@ -196,7 +199,7 @@ func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeRes
 	if err := restrictToOwner(materializationRoot); err != nil {
 		return MaterializeResult{}, err
 	}
-	entries, err := copyWorkspaceTree(req.SourceWorkspace, workspaceRoot, contract.WorkspaceMaterialization.ExcludedPaths)
+	entries, err := stageWorkspaceCopy(req.SourceWorkspace, materializationRoot, workspaceDir, contract.WorkspaceMaterialization.ExcludedPaths)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
@@ -219,6 +222,79 @@ func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeRes
 		MaterializedWorkspace: workspaceRoot,
 		Manifest:              manifest,
 	}, nil
+}
+
+// stageWorkspaceCopy copies the source workspace into a new sibling of the
+// workspace directory and replaces the host copy of an earlier run only after
+// the copy succeeds. A failed copy removes the sibling and leaves the earlier
+// host copy, which a kept manifest of that run still describes.
+func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir string, excluded []string) ([]WorkspaceEntry, error) {
+	// The parent of a name in materializationRoot is that root, opened
+	// without a follow.
+	parent, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(materializationRoot, workspaceDir))
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	staged, err := mkdirTempAt(parent, "."+workspaceDir+"-staging-")
+	if err != nil {
+		return nil, err
+	}
+	entries, err := copyWorkspaceTree(sourceWorkspace, filepath.Join(materializationRoot, staged), excluded)
+	if err == nil {
+		err = replaceWorkspaceAt(parent, staged, workspaceDir)
+	}
+	if err != nil {
+		return nil, errors.Join(err, rootio.RemoveAllAtNoFollow(parent, staged))
+	}
+	return entries, parent.Sync()
+}
+
+// replaceWorkspaceAt moves the earlier host copy aside, moves staged into its
+// place, and only then removes the earlier copy. A crash at any step leaves
+// the earlier copy whole under its own name or under a sibling name.
+func replaceWorkspaceAt(parent *os.File, staged, workspaceDir string) error {
+	fd := int(parent.Fd())
+	previous, err := mkdirTempAt(parent, "."+workspaceDir+"-previous-")
+	if err != nil {
+		return err
+	}
+	// Renaming onto the new empty directory replaces it in one step. A
+	// non-directory in the workspace place is no host copy, so it goes.
+	err = unix.Renameat(fd, workspaceDir, fd, previous)
+	switch {
+	case errors.Is(err, unix.ENOENT):
+		err = nil
+	case errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENOTDIR):
+		err = rootio.RemoveAllAtNoFollow(parent, workspaceDir)
+	}
+	if err != nil {
+		return errors.Join(err, rootio.RemoveAllAtNoFollow(parent, previous))
+	}
+	if err := unix.Renameat(fd, staged, fd, workspaceDir); err != nil {
+		return errors.Join(err, unix.Renameat(fd, previous, fd, workspaceDir))
+	}
+	return rootio.RemoveAllAtNoFollow(parent, previous)
+}
+
+// mkdirTempAt creates a new owner-only directory under parent with a random
+// name that starts with prefix, and returns that name.
+func mkdirTempAt(parent *os.File, prefix string) (string, error) {
+	for range 32 {
+		var suffix [8]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return "", err
+		}
+		name := prefix + hex.EncodeToString(suffix[:])
+		err := unix.Mkdirat(int(parent.Fd()), name, 0o700)
+		if err == nil {
+			return name, nil
+		}
+		if !errors.Is(err, unix.EEXIST) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("cannot create a staging directory under %q", parent.Name())
 }
 
 func (f FakeTarget) BootstrapTarget(_ context.Context, req BootstrapRequest) (BootstrapResult, error) {
@@ -627,20 +703,6 @@ func (s *workspaceDestinationState) reserve(path string) error {
 	}
 	s.paths[key] = fmt.Sprintf("%q", path)
 	return nil
-}
-
-// removeAllNoFollow removes path and everything below it. It refuses a
-// symlinked parent before it removes anything. A missing path is not an error.
-func removeAllNoFollow(path string) error {
-	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	defer parent.Close()
-	return rootio.RemoveAllAtNoFollow(parent, filepath.Base(cleaned))
 }
 
 // mkdirAllSynced creates dir and its missing ancestors. From the deepest
