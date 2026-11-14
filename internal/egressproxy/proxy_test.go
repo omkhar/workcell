@@ -145,6 +145,18 @@ func TestPeekSNI(t *testing.T) {
 	}
 }
 
+func TestPeekSNIStopsAtTheHelloCap(t *testing.T) {
+	t.Parallel()
+	// Full-size handshake records that open a ClientHello of the largest length and never finish it.
+	record := append([]byte{0x16, 0x03, 0x01, 0x40, 0x00}, make([]byte, 1<<14)...)
+	copy(record[5:], []byte{0x01, 0x00, 0xff, 0xff})
+	conn := feed(bytes.Repeat(record, 8))
+	defer conn.Close()
+	if sni, read, ok := peekSNI(conn); ok || len(read) > 16<<10 {
+		t.Fatalf("peekSNI = (%q, %d bytes read, ok=%v), want failure within 16 KiB", sni, len(read), ok)
+	}
+}
+
 func FuzzPeekSNI(f *testing.F) {
 	f.Add(clientHello(f, "api.example.com"))
 	f.Add(clientHello(f, ""))
@@ -289,6 +301,25 @@ func TestProxyRefusesBlockedResolution(t *testing.T) {
 
 	if _, err := httpsGet("example.com", addr, roots); err == nil {
 		t.Fatal("GET to a host that resolves to a metadata address succeeded, want refusal")
+	}
+	p.mu.Lock()
+	n := len(*dialed)
+	p.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("proxy dialed %d times, want 0", n)
+	}
+	want := denyLine{Host: "example.com", Port: 443, Reason: "blocked_address", Count: 1, Seq: 1}
+	if d := denies(t, p, log); len(d) != 1 || d[0] != want {
+		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
+	}
+}
+
+func TestProxyRefusesOwnNetwork(t *testing.T) {
+	t.Parallel()
+	p, log, dialed := testProxy(t, "example.com:443", []netip.Addr{netip.MustParseAddr("::ffff:8.8.8.8")}, "127.0.0.1:1")
+	p.local = func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}, nil }
+	if _, err := httpsGet("example.com", listen(t, p, 443), nil); err == nil {
+		t.Fatal("GET to a host that resolves into the host's own network succeeded, want refusal")
 	}
 	p.mu.Lock()
 	n := len(*dialed)
@@ -475,6 +506,43 @@ func TestServeShedsConnectionsOverTheLimit(t *testing.T) {
 	}
 	if len(d) != 1 || d[0] != want {
 		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
+	}
+}
+
+func TestServeCountsShedConnectionsPastTheLogQueue(t *testing.T) {
+	t.Parallel()
+	p, log, _ := testProxy(t, "example.com:443", nil, "127.0.0.1:1")
+	p.slots = make(chan struct{}) // no slot: every connection is shed
+	addr := listen(t, p, 443)
+	flood := uint64(cap(p.shed) + 20)
+	p.mu.Lock() // stall the log writer so the queue fills
+	for range flood {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			p.mu.Unlock()
+			t.Fatal(err)
+		}
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, _ = c.Read(make([]byte, 1)) // returns once the proxy has shed it
+		_ = c.Close()
+	}
+	p.mu.Unlock()
+	var listed, counted uint64
+	for deadline := time.Now().Add(5 * time.Second); listed+counted < flood && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		listed, counted = 0, 0
+		for _, d := range denies(t, p, log) {
+			if d.Reason != "overloaded" {
+				t.Fatalf("deny line = %+v, want reason overloaded", d)
+			}
+			if d.Port == 0 {
+				counted = d.Count
+			} else {
+				listed = d.Count
+			}
+		}
+	}
+	if listed+counted != flood || counted == 0 {
+		t.Fatalf("listed %d + counted %d refusals, want %d in all with some counted", listed, counted, flood)
 	}
 }
 

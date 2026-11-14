@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
 readonly ROOT_DIR
-readonly MARKDOWNLINT_VERSION="0.49.1"
+readonly MARKDOWNLINT_VERSION="0.50.0"
 readonly MARKDOWNLINT_DIR="${ROOT_DIR}/tools/markdownlint"
 readonly MARKDOWNLINT_BIN="${MARKDOWNLINT_DIR}/node_modules/.bin/markdownlint"
 readonly MARKDOWNLINT_LOCK_STAMP="${MARKDOWNLINT_DIR}/node_modules/.workcell-package-lock.json"

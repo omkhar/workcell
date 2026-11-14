@@ -51,7 +51,7 @@ func FetchGitHubReleaseAssetClass(ctx context.Context, releaseJSON io.Reader, re
 
 func newGitHubReleaseAssetClient() *http.Client {
 	return &http.Client{
-		Transport: newUpstreamHTTPTransport(),
+		Transport: newUpstreamRetryTransport(newUpstreamHTTPTransport()),
 		Timeout:   githubReleaseAssetTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse

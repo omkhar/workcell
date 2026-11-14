@@ -301,13 +301,19 @@ func CheckProviderBumpPolicy(policyPath, dockerfilePath, providersPackageJSONPat
 	return nil
 }
 
+// newProviderBumpHTTPClient keeps the default redirect policy and adds the
+// bounded upstream retries, so one 503 from a registry does not stop the plan.
+func newProviderBumpHTTPClient() *http.Client {
+	return &http.Client{Transport: newUpstreamRetryTransport(newUpstreamHTTPTransport()), Timeout: providerBumpHTTPTimeout}
+}
+
 func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath string, now time.Time, sources ProviderBumpSources, client *http.Client) (*ProviderBumpPlan, error) {
 	policy, err := LoadProviderBumpPolicy(policyPath)
 	if err != nil {
 		return nil, err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: providerBumpHTTPTimeout}
+		client = newProviderBumpHTTPClient()
 	}
 	cutoff := now.UTC().Add(-time.Duration(policy.CooloffHours) * time.Hour)
 
@@ -617,7 +623,7 @@ func VerifyGooseReleasePin(dockerfilePath, releaseURLFormat string, client *http
 		return err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: providerBumpHTTPTimeout}
+		client = newProviderBumpHTTPClient()
 	}
 	var release githubReleaseMetadata
 	if _, err := fetchJSONResponse(client, fmt.Sprintf(releaseURLFormat, version), &release); err != nil {

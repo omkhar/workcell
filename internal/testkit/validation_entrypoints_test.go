@@ -1909,6 +1909,17 @@ func TestDebianSnapshotFreshnessDefaultsToSixtyDays(t *testing.T) {
 	}
 }
 
+// debianSnapshotPlanFunctions returns the snapshot walk and the probe and
+// candidate functions that it calls, with the globals they read. The current
+// pin is older than every probed stamp, so the rollback floor stays out of the way.
+func debianSnapshotPlanFunctions(t *testing.T, script string) string {
+	t.Helper()
+	return "CURL_HEAD_GUARDS=()\nDEBIAN_ARCHIVE_UNAVAILABLE_STATUS=75\ncurrent_debian_snapshot=20260101T000000Z\n" +
+		extractShellFunction(t, script, "debian_release_probe") + "\n" +
+		extractShellFunction(t, script, "debian_snapshot_candidate") + "\n" +
+		extractShellFunction(t, script, "latest_debian_bootstrap_plan")
+}
+
 func TestLatestDebianSnapshotFallsBackWhenNewestBootstrapPlanIsUnsuitable(t *testing.T) {
 	t.Parallel()
 
@@ -1920,12 +1931,12 @@ func TestLatestDebianSnapshotFallsBackWhenNewestBootstrapPlanIsUnsuitable(t *tes
 	script := string(content)
 
 	code, output := runBashProbe(t, `set -euo pipefail
-`+extractShellFunction(t, script, "latest_debian_bootstrap_plan")+`
+`+debianSnapshotPlanFunctions(t, script)+`
 
 date_stamp_for_offset() {
   [[ "$1" == "0" ]] && printf '%s\n' 20260526T000000Z || printf '%s\n' 20260525T000000Z
 }
-curl() { return 0; }
+curl() { printf '200'; }
 resolve_debian_bootstrap_pins() {
   [[ "$1" != "20260526T000000Z" ]] || return 1
   printf '%s\n' '{"snapshot":"20260525T000000Z"}'
@@ -1951,7 +1962,7 @@ func TestLatestDebianSnapshotHonorsPinnedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	function := extractShellFunction(t, string(content), "latest_debian_bootstrap_plan")
+	function := debianSnapshotPlanFunctions(t, string(content))
 	probe := func(pin string, maxAgeDays int) (int, string, string) {
 		resolutionLog := filepath.Join(t.TempDir(), "resolution.log")
 		code, output := runBashProbe(t, `set -euo pipefail
@@ -1960,7 +1971,7 @@ func TestLatestDebianSnapshotHonorsPinnedSnapshot(t *testing.T) {
 date_stamp_for_offset() {
   printf '202605%02dT000000Z\n' "$((26 - $1))"
 }
-curl() { return 0; }
+curl() { printf '200'; }
 resolve_debian_bootstrap_pins() {
   printf '%s\n' "$1" >>"${WORKCELL_RESOLUTION_LOG}"
   printf '{"snapshot":"%s"}\n' "$1"
@@ -2009,12 +2020,12 @@ func TestLatestDebianSnapshotBoundsLookbackByConfiguredMaximumAge(t *testing.T) 
 	}
 	resolutionLog := filepath.Join(t.TempDir(), "resolution.log")
 	code, output := runBashProbe(t, `set -euo pipefail
-`+extractShellFunction(t, string(content), "latest_debian_bootstrap_plan")+`
+`+debianSnapshotPlanFunctions(t, string(content))+`
 
 date_stamp_for_offset() {
   printf '202605%02dT000000Z\n' "$((26 - $1))"
 }
-curl() { return 0; }
+curl() { printf '200'; }
 resolve_debian_bootstrap_pins() {
   printf '%s\n' "$1" >>"${WORKCELL_RESOLUTION_LOG}"
   return 1
