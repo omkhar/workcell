@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -225,6 +226,63 @@ func TestLauncherSourcesOnlyPinnedLibraries(t *testing.T) {
 			t.Errorf("%s: no failure", name)
 		}
 	}
+}
+
+// TestLauncherSetsNoReturnTrap covers scripts/workcell: a RETURN trap runs its
+// text when a function returns, so it could redefine the command that the
+// caller runs next, after the library pins. No function sets one.
+func TestLauncherSetsNoReturnTrap(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "workcell"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failures := returnTrapFailures(string(data)); len(failures) > 0 {
+		t.Errorf("scripts/workcell:\n%s", strings.Join(failures, "\n"))
+	}
+	// A library that the launcher sources runs in the launcher's shell, so a
+	// RETURN trap there fires on the launcher's own function returns too.
+	libraries := launcherLibrarySource.FindAllStringSubmatch(string(data), -1)
+	if len(libraries) < 8 {
+		t.Fatalf("found %d libraries that scripts/workcell sources; the source lines changed form", len(libraries))
+	}
+	for _, library := range libraries {
+		text, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(library[1])))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if failures := returnTrapFailures(string(text)); len(failures) > 0 {
+			t.Errorf("%s:\n%s", library[1], strings.Join(failures, "\n"))
+		}
+	}
+	for name, script := range map[string]string{
+		"a RETURN trap in a function": "f() {\n  trap 'rm -f x' RETURN\n}\nf\n",
+		"a lower-case signal name":    "trap 'rm -f x' return\n",
+		"RETURN among other signals":  "trap 'rm -f x' EXIT RETURN\n",
+	} {
+		if len(returnTrapFailures(script)) == 0 {
+			t.Errorf("%s: no failure", name)
+		}
+	}
+	if failures := returnTrapFailures("trap 'rm -f x' EXIT\ntrap - RETURN\n"); len(failures) > 0 {
+		t.Errorf("an EXIT trap and a reset: %v", failures)
+	}
+}
+
+// launcherLibrarySource matches each top-level source of a repository library
+// in scripts/workcell.
+var launcherLibrarySource = regexp.MustCompile(`(?m)^source "\$\{ROOT_DIR\}/([^"$]+)"$`)
+
+func returnTrapFailures(script string) []string {
+	var failures []string
+	for _, words := range EveryShellCommand(script) {
+		if len(words) < 3 || words[0] != "trap" || words[1] == "-" {
+			continue
+		}
+		if slices.ContainsFunc(words[2:], func(signal string) bool { return strings.EqualFold(signal, "RETURN") }) {
+			failures = append(failures, fmt.Sprintf("%q: remove the file on each path out instead", words))
+		}
+	}
+	return failures
 }
 
 func launcherSourceFailures(script string) []string {

@@ -4062,7 +4062,8 @@ publish_pr_main() {
   # scripts/verify-invariants.sh static scan.
   local stderr_file=""
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-publish-pr-stderr.XXXXXX")"
-  trap 'rm -f "${stderr_file}"' RETURN
+  # No RETURN trap removes the file: it could redefine the command that the
+  # caller runs next. The rm below runs on the one path out.
   local rc=0
   go_hostutil_publish_pr publish-pr-cli \
     "--bash-root-dir=${ROOT_DIR}" \
@@ -4075,7 +4076,6 @@ publish_pr_main() {
   local stderr_capture=""
   stderr_capture="$(cat "${stderr_file}")"
   rm -f "${stderr_file}"
-  trap - RETURN
   # Detect AND strip via the same end-of-string anchored regex.  The
   # legacy form `*"exit status 2"` is unanchored, so a payload that
   # merely mentioned that phrase (or had `exit status 25` somewhere in
@@ -5865,13 +5865,13 @@ auth_main() {
   # the user-visible stderr stays byte-identical to the legacy bash.
   local stderr_file=""
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-auth-stderr.XXXXXX")"
-  trap 'rm -f "${stderr_file}"' RETURN
+  # No RETURN trap removes the file: it could redefine the command that the
+  # caller runs next. The rm below runs on the one path out.
   local rc=0
   go_hostutil auth-cli "--base=$(pwd -P)" "$@" 2>"${stderr_file}" || rc=$?
   local stderr_capture=""
   stderr_capture="$(cat "${stderr_file}")"
   rm -f "${stderr_file}"
-  trap - RETURN
   if [[ ${rc} -eq 1 ]] && [[ "${stderr_capture}" == *"exit status 2" ]]; then
     rc=2
   fi
