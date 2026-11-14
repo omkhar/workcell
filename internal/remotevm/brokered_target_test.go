@@ -37,9 +37,15 @@ func TestFakeBrokerProcess(t *testing.T) {
 		io.Writer
 	}{os.Stdin, os.Stdout}
 	switch args[0] {
-	case "receive", "umask077":
+	case "receive", "umask077", "resolved":
 		if args[0] == "umask077" {
 			unix.Umask(0o077)
+		}
+		// The broker must run as the file that PATH resolved to, not as
+		// its bare name.
+		if want := filepath.Join(os.Getenv("PATH"), fakeBrokerName); args[0] == "resolved" && os.Args[0] != want {
+			fmt.Fprintf(os.Stderr, "broker argv[0] = %q, want %q\n", os.Args[0], want)
+			os.Exit(5)
 		}
 		if err := receiveWorkspace(stdio, args[1], defaultWorkspaceLimits); err != nil {
 			os.Exit(3)
@@ -74,6 +80,10 @@ func TestFakeBrokerProcess(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// fakeBrokerName is the bare name under which a test puts the fake broker on
+// PATH.
+const fakeBrokerName = "workcell-fake-broker"
 
 func fakeBrokerTarget(t *testing.T, mode, guestRoot string, started *bool) BrokeredTarget {
 	t.Helper()
@@ -259,6 +269,33 @@ func TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord(t *testing.T
 	}
 	if _, err := os.Lstat(hostManifestPath(req)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("host manifest after an ended context: %v; want no record of a send", err)
+	}
+}
+
+// TestBrokeredTargetStartsTheResolvedBrokerProgram names the broker by a bare
+// name that PATH resolves. runBroker must start the file that brokerArgv
+// resolved, so the broker sees that path as its argv[0]. Not parallel: it
+// sets PATH.
+func TestBrokeredTargetStartsTheResolvedBrokerProgram(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.Symlink(self, filepath.Join(bin, fakeBrokerName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	guestRoot := t.TempDir()
+	target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string {
+		return []string{fakeBrokerName, "-test.run=^TestFakeBrokerProcess$", "--", "resolved", guestRoot}
+	}}
+	result, err := target.MaterializeWorkspace(t.Context(), brokeredRequest(t, filepath.Join("testdata", "source-workspace")))
+	if err != nil {
+		t.Fatalf("MaterializeWorkspace() = %v, want the broker started as the resolved file", err)
+	}
+	if want := filepath.Join(guestRoot, "materializations", "m1", MaterializedWorktree); result.MaterializedWorkspace != want {
+		t.Fatalf("materialized workspace = %q, want %q", result.MaterializedWorkspace, want)
 	}
 }
 
