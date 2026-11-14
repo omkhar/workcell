@@ -43,7 +43,14 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
     workcell_trusted_exec_args+=("WORKCELL_GITHUB_ACTIONS=1")
   fi
-  workcell_trusted_exec_args+=(/bin/bash -p "$0" "$@")
+  # Re-run the caller from the physical root that its entry guard checked, not
+  # from $0, whose directories a symlink could have moved since. Every caller
+  # sits directly in scripts/.
+  workcell_trusted_self="$0"
+  if [[ -n "${workcell_entry_root:-}" ]]; then
+    workcell_trusted_self="${workcell_entry_root}/scripts/${0##*/}"
+  fi
+  workcell_trusted_exec_args+=(/bin/bash -p "${workcell_trusted_self}" "$@")
   exec "${workcell_trusted_exec_args[@]}"
 fi
 # A caller can preset the sentinel and skip the re-exec, so GITHUB_ACTIONS
