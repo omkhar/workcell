@@ -334,6 +334,8 @@ func helperSubcommands() []helperSubcommand {
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
 		{"ensure-owner-only-directory", 1, 1, cmdHelperEnsureOwnerOnlyDirectory},
+		{"clone-session-workspace", 4, 4, cmdHelperCloneSessionWorkspace},
+		{"run-in-directory-fd", 1, -1, cmdHelperRunInDirectoryFD},
 		{"egress-deny-audit-records", 1, 1, cmdHelperEgressDenyAuditRecords},
 		{"credential-broker-audit-records", 1, 1, cmdHelperCredentialBrokerAuditRecords},
 		{"credential-broker-plan", 2, 2, cmdHelperCredentialBrokerPlan},

@@ -244,8 +244,20 @@ fsyncs the directory and its parent before Workcell clones into it.
 `ensure_session_clone_dir` calls it through the `ensure-owner-only-directory`
 helper, and the shadow setup adds the mask. Both are in `scripts/workcell`.
 
-Workcell refuses a safe-path workspace in these cases. Each case can make Git
-read config and hooks from a directory that the masks do not cover.
+`CloneSessionWorkspace` in `internal/host/hoststate` keeps `workcell-sessions`
+on a no-follow descriptor from that check through the clone. It makes the
+session directory with `mkdirat` from that descriptor. Git then runs with that
+directory as its working directory, which a child sets with `fchdir`. After the
+clone, the path must lead with no symlink to the same session directory. The
+`clone-session-workspace` helper runs it for `create_isolated_session_workspace`.
+
+The later Git steps and the Docker mount of the clone use its path. A process
+of the same user can change `workcell-sessions` after the clone. That process
+can also write the clone itself, so the residual risk is the same-user process
+that `docs/threat-model.md` excludes.
+
+`scripts/workcell` refuses a safe-path workspace in these cases. Each case can
+make Git read config and hooks from a directory that the masks do not cover.
 
 - A Git `commondir` file is beside a `HEAD` file or `HEAD` symlink. The scan
   skips `worktrees` and the top-level `refs`, `logs` and `objects`. A dangling
