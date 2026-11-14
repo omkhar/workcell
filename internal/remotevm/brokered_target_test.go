@@ -230,6 +230,38 @@ func TestBrokeredTargetRefusesAnEmptyBrokerCommandBeforeTheRecord(t *testing.T) 
 	}
 }
 
+// TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord: a broker
+// program that is missing or not executable, and a context that has ended,
+// start no broker and send nothing, so the send must fail before the
+// unconfirmed manifest records it.
+func TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord(t *testing.T) {
+	t.Parallel()
+
+	notExecutable := filepath.Join(t.TempDir(), "gcloud")
+	if err := os.WriteFile(notExecutable, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, program := range []string{"/nonexistent/gcloud", notExecutable} {
+		req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+		target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string { return []string{program, "compute"} }}
+		if _, err := target.MaterializeWorkspace(t.Context(), req); err == nil || !strings.Contains(err.Error(), "broker command cannot run") {
+			t.Fatalf("%s: MaterializeWorkspace() = %v, want a broker command that cannot run", program, err)
+		}
+		if _, err := os.Lstat(hostManifestPath(req)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s: host manifest: %v; want no record of a send", program, err)
+		}
+	}
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)).MaterializeWorkspace(ctx, req); !errors.Is(err, context.Canceled) {
+		t.Fatalf("MaterializeWorkspace() = %v, want the ended context", err)
+	}
+	if _, err := os.Lstat(hostManifestPath(req)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("host manifest after an ended context: %v; want no record of a send", err)
+	}
+}
+
 func hostManifestPath(req MaterializeRequest) string {
 	return filepath.Join(req.StateRoot, "targets", TargetKind, GCPVMProvider, req.TargetID, "materializations", req.MaterializationID, MaterializationFile)
 }

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +18,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
-	"time"
 )
 
 type archiveItem struct {
@@ -501,7 +501,13 @@ func TestReceiveWorkspaceRemovesAReadOnlyMaterialization(t *testing.T) {
 		if err != nil {
 			t.Skip("needs a non-root user or setpriv to drop DAC override")
 		}
-		rerun := exec.Command(setpriv, "--bounding-set=-dac_override,-dac_read_search", os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+		drop := "--bounding-set=-dac_override,-dac_read_search"
+		// Dropping a bounding capability needs CAP_SETPCAP, which a root in a
+		// container can lack.
+		if out, err := exec.Command(setpriv, drop, "true").CombinedOutput(); err != nil {
+			t.Skipf("setpriv cannot drop DAC override here (it needs CAP_SETPCAP): %v: %s", err, out)
+		}
+		rerun := exec.Command(setpriv, drop, os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
 		rerun.Env = append(os.Environ(), "WORKCELL_TEST_NO_DAC=1")
 		if out, err := rerun.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("--- PASS: "+t.Name())) {
 			t.Fatalf("rerun without DAC override: %v\n%s", err, out)
@@ -510,12 +516,17 @@ func TestReceiveWorkspaceRemovesAReadOnlyMaterialization(t *testing.T) {
 	}
 	root := t.TempDir()
 	materialization := filepath.Join(root, "materializations", "m1")
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(materialization, MaterializedWorktree, "ro"), 0o755) })
-	readOnly, sealed := dir("ro"), dir("sealed")
-	readOnly.header.Mode, sealed.header.Mode = 0o555, 0o100
-	frame := frameArchive("m1", buildTestArchive(t, readOnly, file("ro/f", "x")))
+	t.Cleanup(func() {
+		_ = os.Chmod(filepath.Join(materialization, MaterializedWorktree, "ro"), 0o755)
+		_ = os.Chmod(filepath.Join(materialization, MaterializedWorktree, "ro", "inner"), 0o755)
+	})
+	// The inner read-only directory is reached only through the outer one, so
+	// the walk must give a directory owner rwx before it lists it.
+	readOnly, inner, sealed := dir("ro"), dir("ro/inner"), dir("sealed")
+	readOnly.header.Mode, inner.header.Mode, sealed.header.Mode = 0o555, 0o555, 0o100
+	frame := frameArchive("m1", buildTestArchive(t, readOnly, inner, file("ro/inner/f", "x")))
 	// The sync opens each directory, which a 0100 directory refuses.
-	late := frameArchive("m1", buildTestArchive(t, readOnly, file("ro/f", "x"), sealed))
+	late := frameArchive("m1", buildTestArchive(t, readOnly, inner, file("ro/inner/f", "x"), sealed))
 	if _, err := receiveFrame(t, root, frame, defaultWorkspaceLimits); err != nil {
 		t.Fatal(err)
 	}
@@ -530,16 +541,37 @@ func TestReceiveWorkspaceRemovesAReadOnlyMaterialization(t *testing.T) {
 	}
 }
 
+// materializationsLocked reports whether a receive holds the lock on the
+// materializations under root. A flock on another open of the directory
+// conflicts with it in this process too.
+func materializationsLocked(t *testing.T, root string) bool {
+	t.Helper()
+	dir, err := os.Open(filepath.Join(root, "materializations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	err = syscall.Flock(int(dir.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		return false
+	}
+	if !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatal(err)
+	}
+	return true
+}
+
 // TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive starts a second receive
-// of an ID while the first unpacks it, and the first then fails. The failure
-// must not remove the copy that the second receive acks. Not parallel: it
-// replaces beforeReceiverOpen.
+// of an ID while the first unpacks it, and the first then fails. The first
+// must hold the lock while it unpacks, and its failure must not remove the
+// copy that the second receive acks. Not parallel: it replaces
+// beforeReceiverOpen.
 func TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive(t *testing.T) {
 	root := t.TempDir()
 	worktree := filepath.Join(root, "materializations", "m1", MaterializedWorktree)
 	failing := frameArchive("m1", buildTestArchive(t, file("f", "first"), link("l", "missing")))
 	frame := frameArchive("m1", buildTestArchive(t, file("f", "second")))
-	var fired atomic.Bool
+	var fired, locked atomic.Bool
 	var ack string
 	var secondErr error
 	finished := make(chan struct{})
@@ -547,22 +579,52 @@ func TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive(t *testing.T) {
 		if opened != worktree || !fired.CompareAndSwap(false, true) {
 			return
 		}
+		locked.Store(materializationsLocked(t, root))
 		go func() {
 			defer close(finished)
 			ack, secondErr = receiveFrame(t, root, frame, defaultWorkspaceLimits)
 		}()
-		// Without a lock the second receive acks here, inside the first.
-		select {
-		case <-finished:
-		case <-time.After(time.Second):
-		}
 	}
 	t.Cleanup(func() { beforeReceiverOpen = func(string) {} })
-	if _, err := receiveFrame(t, root, failing, defaultWorkspaceLimits); err == nil || !fired.Load() {
-		t.Fatalf("first receive = %v, second started = %v; want a late failure", err, fired.Load())
+	if _, err := receiveFrame(t, root, failing, defaultWorkspaceLimits); err == nil || !fired.Load() || !locked.Load() {
+		t.Fatalf("first receive = %v, second started = %v, lock held = %v; want a late failure under the lock", err, fired.Load(), locked.Load())
 	}
 	<-finished
 	if content, err := os.ReadFile(filepath.Join(worktree, "f")); secondErr != nil || !strings.HasPrefix(ack, "ok ") || string(content) != "second" {
 		t.Fatalf("second receive = %q, %v; its copy = %q, %v", ack, secondErr, content, err)
+	}
+}
+
+// lockCheckingWriter records whether the materializations lock is held when
+// the receiver writes its ack.
+type lockCheckingWriter struct {
+	t      *testing.T
+	root   string
+	ack    bytes.Buffer
+	locked bool
+}
+
+func (w *lockCheckingWriter) Write(p []byte) (int, error) {
+	w.locked = materializationsLocked(w.t, w.root)
+	return w.ack.Write(p)
+}
+
+// TestReceiveWorkspaceAcksBeforeItEndsTheLock: a receive must write its ok ack
+// while it still holds the lock, so a later receive of the same ID cannot
+// replace the copy before the ack names it.
+func TestReceiveWorkspaceAcksBeforeItEndsTheLock(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writer := &lockCheckingWriter{t: t, root: root}
+	err := receiveWorkspace(struct {
+		io.Reader
+		io.Writer
+	}{bytes.NewReader(frameArchive("m1", buildTestArchive(t, file("f", "x")))), writer}, root, defaultWorkspaceLimits)
+	if err != nil || !strings.HasPrefix(writer.ack.String(), "ok ") || !writer.locked {
+		t.Fatalf("receive = %q, %v; lock held at the ack = %v", writer.ack.String(), err, writer.locked)
+	}
+	if materializationsLocked(t, root) {
+		t.Fatal("the lock outlived the receive")
 	}
 }

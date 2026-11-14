@@ -138,6 +138,10 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 	if err != nil {
 		return "", err
 	}
+	// A send whose context has ended starts no broker.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	staged.Manifest.GuestTransfer = GuestTransferUnconfirmed
 	if err := writeJSON(staged.ManifestPath, staged.Manifest); err != nil {
 		return "", err
@@ -147,8 +151,9 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 	})
 }
 
-// brokerArgv returns the broker argv for targetID, and an error for a zero
-// Command or an empty argv.
+// brokerArgv returns the broker argv for targetID with its program resolved
+// to the file that runBroker starts, and an error for a zero Command, an
+// empty argv, or a program that is missing or not executable.
 func (b BrokeredTarget) brokerArgv(targetID string) ([]string, error) {
 	var argv []string
 	if b.Command != nil {
@@ -157,7 +162,11 @@ func (b BrokeredTarget) brokerArgv(targetID string) ([]string, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("broker command is empty")
 	}
-	return argv, nil
+	program, err := exec.LookPath(argv[0])
+	if err != nil {
+		return nil, fmt.Errorf("broker command cannot run: %w", err)
+	}
+	return append([]string{program}, argv[1:]...), nil
 }
 
 // runBroker runs the broker argv without a shell and gives its stdio to
