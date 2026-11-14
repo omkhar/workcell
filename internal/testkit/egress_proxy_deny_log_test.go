@@ -315,13 +315,25 @@ if build_runtime_host_aliases "a.example:5432 b.example:5432"; then echo accepte
 }
 
 // TestSessionStopOfAFailedSessionStopsTheProxyBeforeTheSeal stops a detached
-// session whose record turns failed and whose monitor is gone. The stop seals
-// the session itself, so the proxy stop that appends the deny records and the
-// broker summary must come first; a no-audit stop after the seal would leave
-// them out of the sealed chain (issue 823).
+// session whose record turns failed. Whoever seals the session must first stop
+// the proxy with audit, which appends the deny records and the broker summary;
+// a no-audit stop before an unsealed seal would leave them out of the sealed
+// chain (issue 823). The monitor can be gone from the start, or alive when
+// the stop writes the terminal record and gone before its own proxy stop and
+// seal: then the proxy network is still up and the fallback runs. With no
+// network left, the monitor already stopped the proxy, and only the recheck
+// seals.
 func TestSessionStopOfAFailedSessionStopsTheProxyBeforeTheSeal(t *testing.T) {
-	got := runOrderProbe(t, launcherFunction(t, "session_stop_main")+launcherFunction(t, "finish_stopped_session_fallback")+`
+	cases := []struct{ name, liveCalls, network, want string }{
+		{"monitor gone", "0", "wc-S", "record stop-request\nproxy prof S\nrecord exit\nterminal 7\nseal\nproxy prof S no-audit\n"},
+		{"monitor dies before its proxy stop", "1", "wc-S", "record stop-request\nterminal 7\nproxy prof S\nrecord exit\nterminal 7\nseal\n"},
+		{"monitor dies after its proxy stop", "1", "", "record stop-request\nterminal 7\nproxy prof S no-audit\nseal\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := runOrderProbe(t, launcherFunction(t, "session_stop_main")+launcherFunction(t, "finish_stopped_session_fallback")+`
 DIR="$(dirname "$STEPS")"
+LIVE_CALLS=`+c.liveCalls+` NETWORK=`+c.network+`
 session_run_cli_with_roots() { printf 'session_id=S\nforce=0\nprofile=prof\ncontainer_name=c\n'; }
 shellproto_field() { case "$2" in session_id) printf 'S\n' ;; force) printf '0\n' ;; *) printf '%s\n' "${3:-}" ;; esac; }
 resolve_host_tool() { :; }
@@ -334,7 +346,14 @@ load_session_runtime_metadata() {
   [[ ! -e "$DIR/S.audit-sig" ]] || SESSION_META_STATUS=failed
 }
 session_container_live_state() { printf 'running\n'; }
-session_monitor_pid_is_live() { return 1; }
+# The monitor answers live for its first LIVE_CALLS checks, then is gone.
+session_monitor_pid_is_live() {
+  local n=0
+  [[ ! -e "$DIR/live-checks" ]] || n="$(cat "$DIR/live-checks")"
+  printf '%s\n' "$((n + 1))" >"$DIR/live-checks"
+  [[ "$n" -lt "$LIVE_CALLS" ]]
+}
+egress_proxy_network_for_session() { [[ -z "$NETWORK" ]] || printf '%s\n' "$NETWORK"; }
 session_record_stop_request_marker() { :; }
 session_clear_stop_request_marker() { :; }
 emit_loaded_session_control_summary() { :; }
@@ -347,8 +366,9 @@ session_write_stop_requested_terminal_record() { printf 'terminal %s\n' "$2" >>"
 sign_session_audit_head_explicit() { printf 'seal\n' >>"$STEPS"; touch "$DIR/S.audit-sig"; }
 session_stop_main --id S >/dev/null
 `)
-	want := "record stop-request\nproxy prof S\nrecord exit\nterminal 7\nseal\nproxy prof S no-audit\n"
-	if got != want {
-		t.Fatalf("stop steps = %q, want %q", got, want)
+			if got != c.want {
+				t.Fatalf("stop steps = %q, want %q", got, c.want)
+			}
+		})
 	}
 }

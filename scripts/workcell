@@ -3644,7 +3644,12 @@ write_profile_image_marker() {
   marker_path="$(profile_image_marker_path "${profile}")"
   mkdir -p "$(dirname "${marker_path}")"
   umask 077
-  staged="$(mktemp "${TMPDIR:-/tmp}/workcell-image-marker.XXXXXX")" || return 1
+  # Stage beside the marker, in profile state this user owns: a shared TMPDIR
+  # could let another user swap the staged bytes before the publish reads them.
+  staged="$(mktemp "$(dirname "${marker_path}")/.workcell-image-marker.XXXXXX")" || {
+    echo "Workcell could not record the prepared runtime image for profile ${profile}." >&2
+    return 1
+  }
   if ! printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\nbuild_inputs_sha256=%s\n' \
     "${IMAGE_TAG}" "${image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${staged}" ||
     ! go_hostutil helper publish-session-capture-file "${staged}" "${marker_path}" >/dev/null; then
@@ -4370,6 +4375,8 @@ session_stop_main() {
   local stop_exit_status=""
   local container_state=""
   local current_live_status=""
+  local stop_fallback=1
+  local proxy_network=""
 
   set +e
   plan="$(session_run_cli_with_roots session-stop-cli "$@")"
@@ -4492,16 +4499,27 @@ session_stop_main() {
   if ! session_monitor_pid_is_live; then
     # The monitor's own cleanup is gone with it: save the deny log and remove
     # the sidecar and network here, or a stopped session would leave them. A
-    # terminal session is sealed already, so its stop appends no records.
+    # sealed session has its records already, so its stop appends none. A
+    # terminal record with no seal and the proxy network still up means the
+    # monitor died after the terminal write and before its own proxy stop, so
+    # the fallback stops the proxy with audit before it seals. With no network
+    # left the monitor stopped the proxy, and the recheck below seals.
+    stop_fallback=1
     case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
       stopped | exited | failed | aborted)
-        stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" no-audit || exit 1
-        ;;
-      *)
-        finish_stopped_session_fallback "${SESSION_META_PROFILE}" "${session_id}" "${record_path}" || exit 1
-        load_session_runtime_metadata "${session_id}"
+        if [[ -e "${record_path%.json}.audit-sig" ]] ||
+          ! proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" ||
+          [[ -z "${proxy_network}" ]]; then
+          stop_fallback=0
+        fi
         ;;
     esac
+    if [[ "${stop_fallback}" -eq 1 ]]; then
+      finish_stopped_session_fallback "${SESSION_META_PROFILE}" "${session_id}" "${record_path}" || exit 1
+      load_session_runtime_metadata "${session_id}"
+    else
+      stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" no-audit || exit 1
+    fi
   fi
   # Seal-missing recheck (TOCTOU coverage): once the record is terminal, guarantee
   # it is sealed even if the monitor was observed live at the checks above but
