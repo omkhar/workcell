@@ -149,9 +149,9 @@ jobs:
           persist-credentials: false
 
       - name: Answer the mention
-        # TODO(owner): replace the placeholder with the commit of the v1 tag:
-        #   gh api repos/anthropics/claude-code-action/commits/v1 --jq .sha
-        # Then add its tests/fixtures/actions/inputs.tsv row.
+        id: claude
+        # The commit of the v1 tag. A bump also needs its
+        # tests/fixtures/actions/inputs.tsv row.
         uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -167,3 +167,23 @@ jobs:
             --max-turns 30
             --disallowedTools
             "Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Read(//proc/**),Read(//tmp/claude*/**),Read(//home/runner/work/_temp/**),Read(~/.claude/**),Read(~/.claude.json),Read(./.git/**)"
+
+      # The action hides Claude's output, which can hold what Claude read, so a
+      # failed run says only "is_error". Print a few fixed fields of the final
+      # result, never its text: an HTTP status and short codes such as
+      # "api_error". A rejected token shows as 401.
+      - name: Show why Claude failed
+        if: failure() && steps.claude.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          [[ "${EXECUTION_FILE}" == "${RUNNER_TEMP}/"* && -f "${EXECUTION_FILE}" && ! -L "${EXECUTION_FILE}" ]] || exit 0
+          reason="$(jq -r '
+            def code: if type == "string" and test("^[a-z_]{1,40}$") then . else "-" end;
+            def status: if type == "number" and . == floor and . >= 100 and . <= 599 then tostring else "-" end;
+            [.[] | select(type == "object" and .type == "result")] | last
+            | select(. != null and .is_error == true)
+            | "status=\(.api_error_status | status) subtype=\(.subtype | code) reason=\(.terminal_reason | code) stop=\(.stop_reason | code)"
+          ' "${EXECUTION_FILE}" 2>/dev/null || true)"
+          [[ -n "${reason}" ]] || exit 0
+          echo "::error::Claude stopped with an error: ${reason}. A 401 means CLAUDE_CODE_OAUTH_TOKEN was rejected."
