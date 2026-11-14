@@ -270,6 +270,13 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/egressproxy/proxy.go",
+		original:     `		if slices.ContainsFunc(local, func(n netip.Prefix) bool { return n.Contains(a.Unmap()) }) {`,
+		replacement:  `		if false {`,
+		label:        "egress proxy refuses addresses on the host's own networks",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestProxyRefusesOwnNetwork", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/proxy.go",
 		original:     `	if len(lower) != len(sni) || !p.allow.sni[lower] {`,
 		replacement:  `	if len(lower) != len(sni) {`,
 		label:        "egress proxy SNI allowlist",
