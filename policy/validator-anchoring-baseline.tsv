@@ -383,7 +383,6 @@ internal/testkit	TestCheckPRShapeIgnoresAmbientGitConfig	f21dd743	unreviewed deb
 internal/testkit	TestCheckPublicRepoHygieneAllowsPortableExamples	1c1e97a6	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCheckPublicRepoHygieneRejectsLeakedHomePaths	73ab8e93,a9e2a42f	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCheckRustVendorRejectsTamper	a2ce3ac1	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestCodexDeniesTunnelAndMCPServerSubcommands	34d7ef31	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCodexManagedConfigKeepsWorkspaceWriteOutsideBreakglass	4838b561,5e8bd789,a060796c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCommitMsgHookKeepsCommentedBodyWhenNormalizing	4dff92b9	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCommitMsgHookKeepsCommentedBodyWhenSubjectIsFirst	b308fb37	unreviewed debt in a test: review the subject, then port or justify

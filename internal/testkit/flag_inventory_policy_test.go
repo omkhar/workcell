@@ -6,13 +6,13 @@ package testkit
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/providerpolicy"
 )
 
 const flagInventoryProbeValue = "workcell-flag-probe"
@@ -41,41 +41,33 @@ func camelCaseFlag(flag string) string {
 	return "--" + strings.Join(parts, "")
 }
 
-// policyExitCodes runs reject_unsafe_<id>_args once per argv in its own bash
-// process, with each argv element as one argument, and returns each exit code
-// (0 accepted, 2 rejected by workcell_die).
+// policyExitCodes runs the runtime policy of provider id once per argv in a
+// strict session and returns each exit code of workcell-provider-policy (0
+// accepted, 2 refused).
 func policyExitCodes(t *testing.T, id string, argvs [][]string) []string {
 	t.Helper()
-	const script = `source "$1"; fn="$2"; shift 2; "${fn}" "$@"`
-	policy := filepath.Join(repoRoot(t), "runtime", "container", "provider-policy.sh")
 	codes := make([]string, len(argvs))
 	for i, argv := range argvs {
-		args := append([]string{"-c", script, "bash", policy, "reject_unsafe_" + id + "_args"}, argv...)
-		err := exec.Command("bash", args...).Run()
-		var exit *exec.ExitError
-		switch {
-		case err == nil:
-			codes[i] = "0"
-		case errors.As(err, &exit):
-			codes[i] = fmt.Sprint(exit.ExitCode())
-		default:
-			t.Fatalf("%s policy harness: %v", id, err)
+		codes[i] = "0"
+		if err := providerpolicy.Check(id, argv, providerpolicy.Session{}, providerpolicy.Adapters); err != nil {
+			var refusal *providerpolicy.Refusal
+			if !errors.As(err, &refusal) {
+				t.Fatalf("%s policy harness: %v", id, err)
+			}
+			codes[i] = "2"
 		}
 	}
 	return codes
 }
 
 // TestFlagInventoryEntriesMatchProviderPolicy runs every [flags] allow, deny,
-// and subcommands entry of each certified manifest through
-// reject_unsafe_<id>_args, so a manifest classification cannot drift from the
-// runtime policy. It owns the Copilot unsafe-flag set that the former
+// and subcommands entry of each certified manifest through the runtime
+// policy of internal/providerpolicy, so a manifest classification cannot
+// drift from the runtime policy. It owns the Copilot unsafe-flag set that the former
 // CheckCopilotUnsafeFlags text probes held.
 func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 	t.Parallel()
 
-	if out, err := exec.Command("bash", "-c", "((BASH_VERSINFO[0] >= 4))").CombinedOutput(); err != nil {
-		t.Fatalf("provider-policy.sh needs bash 4 or later on PATH: %v %s", err, out)
-	}
 	manifests, err := adapters.LoadManifests(filepath.Join(repoRoot(t), "adapters"))
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +144,7 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 		}
 		for i, got := range policyExitCodes(t, m.ID, argvs) {
 			if got != probes[i].want {
-				t.Errorf("%s: reject_unsafe_%s_args %s exited %s, want %s", m.ID, m.ID, strings.Join(probes[i].argv, " "), got, probes[i].want)
+				t.Errorf("%s: policy of %s %s exited %s, want %s", m.ID, m.ID, strings.Join(probes[i].argv, " "), got, probes[i].want)
 			}
 		}
 	}

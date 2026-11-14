@@ -12,7 +12,6 @@ internal/testkit/git_hooks_test.go	2	resolved system tool binary (git, bash, ssh
 internal/testkit/hosted_controls_token_isolation_test.go	2	execs a repo or fixture script directly; migrate to execRetryETXTBSY
 internal/testkit/install_release_e2e_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
 internal/testkit/local_docker_parity_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
-internal/testkit/provider_policy_projects_test.go	1	resolved system tool binary (git, bash, ssh-keygen), not a written fixture
 internal/testkit/release_verify_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
 internal/testkit/upstream_refresh_publish_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
 internal/testkit/upstream_refresh_scope_guard_test.go	3	execs a repo or fixture script directly; migrate to execRetryETXTBSY
