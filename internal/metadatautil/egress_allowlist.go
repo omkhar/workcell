@@ -15,7 +15,7 @@ import (
 // colimaEgressScriptDigest is the SHA-256 of the reviewed
 // scripts/colima-egress-allowlist.sh. Regenerate it only after a review of the
 // change and a pass of the replay in scripts/verify-invariants.sh.
-const colimaEgressScriptDigest = "b83e6890426b29d98e49b1e04614cf72a02802bee08abae0034ddaf53854ac0c"
+const colimaEgressScriptDigest = "c4aed8dc1054d41b6ed310ab12e786cee8492cceceb67ef4e4d8aca4b3f16a02"
 
 // ValidateColimaEgressAtomicSwap requires scripts/colima-egress-allowlist.sh to
 // replace each chain in one iptables-restore --noflush transaction, to keep the
