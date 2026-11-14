@@ -322,21 +322,33 @@ if build_runtime_host_aliases "a.example:5432 b.example:5432"; then echo accepte
 // the stop writes the terminal record and gone before its own proxy stop and
 // seal, either before the dead-monitor cleanup or before the seal recheck:
 // then the proxy network is still up and the fallback runs. With no network
-// left, the monitor already stopped the proxy, and only the recheck seals.
+// left, the monitor already stopped the proxy, and only the recheck seals. A
+// network lookup that fails takes the fallback, whose own proxy stop then
+// fails, so nothing seals; a session already sealed takes no fallback. A
+// stopped container whose monitor is gone at the second look seals nothing.
 func TestSessionStopOfAFailedSessionStopsTheProxyBeforeTheSeal(t *testing.T) {
-	cases := []struct{ name, liveCalls, network, want string }{
-		{"monitor gone", "0", "wc-S", "record stop-request\nproxy prof S\nrecord exit\nterminal 7\nseal\nproxy prof S no-audit\n"},
-		{"monitor dies before its proxy stop", "1", "wc-S", "record stop-request\nterminal 7\nproxy prof S\nrecord exit\nterminal 7\nseal\n"},
-		{"monitor dies after its proxy stop", "1", "", "record stop-request\nterminal 7\nproxy prof S no-audit\nseal\n"},
-		{"monitor dies before the seal recheck", "2", "wc-S", "record stop-request\nterminal 7\nproxy prof S\nrecord exit\nterminal 7\nseal\n"},
-		{"monitor dies after its proxy stop, before the seal recheck", "2", "", "record stop-request\nterminal 7\nseal\n"},
-		{"monitor live throughout", "9", "wc-S", "record stop-request\nterminal 7\nseal\n"},
+	const stopped = "record stop-request\nterminal 7\n"
+	const fallback = "proxy prof S\nrecord exit\nterminal 7\nseal\n"
+	cases := []struct{ name, liveCalls, network, container, sealed, want string }{
+		{"monitor gone", "0", "wc-S", "running", "", "record stop-request\n" + fallback + "proxy prof S no-audit\n"},
+		{"monitor dies before its proxy stop", "1", "wc-S", "running", "", stopped + fallback},
+		{"monitor dies after its proxy stop", "1", "", "running", "", stopped + "proxy prof S no-audit\nseal\n"},
+		{"monitor dies before the seal recheck", "2", "wc-S", "running", "", stopped + fallback},
+		{"monitor dies after its proxy stop, before the seal recheck", "2", "", "running", "", stopped + "seal\n"},
+		{"monitor live throughout", "9", "wc-S", "running", "", stopped + "seal\n"},
+		{"network lookup fails after the monitor dies", "1", "fail", "running", "", stopped + "proxy prof S\nexit 1\n"},
+		{"network lookup fails before the seal recheck", "2", "fail", "running", "", stopped + "proxy prof S\nexit 1\n"},
+		{"monitor dies before the seal recheck of a sealed session", "2", "wc-S", "running", "1", stopped},
+		{"stopped container, monitor gone at the second look", "1", "wc-S", "stopped", "", "exit 1\n"},
+		{"stopped container, monitor live", "9", "wc-S", "stopped", "", "seal\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := runOrderProbe(t, launcherFunction(t, "session_stop_main")+launcherFunction(t, "finish_stopped_session_fallback")+`
 DIR="$(dirname "$STEPS")"
-LIVE_CALLS=`+c.liveCalls+` NETWORK=`+c.network+`
+LIVE_CALLS=`+c.liveCalls+` NETWORK=`+c.network+` CONTAINER=`+c.container+`
+[[ -z "`+c.sealed+`" ]] || touch "$DIR/S.audit-sig"
+[[ "$CONTAINER" == running ]] || touch "$DIR/stopped"
 session_run_cli_with_roots() { printf 'session_id=S\nforce=0\nprofile=prof\ncontainer_name=c\n'; }
 shellproto_field() { case "$2" in session_id) printf 'S\n' ;; force) printf '0\n' ;; *) printf '%s\n' "${3:-}" ;; esac; }
 resolve_host_tool() { :; }
@@ -348,7 +360,7 @@ load_session_runtime_metadata() {
   else SESSION_META_STATUS=running SESSION_META_LIVE_STATUS=running; fi
   [[ ! -e "$DIR/S.audit-sig" ]] || SESSION_META_STATUS=failed
 }
-session_container_live_state() { printf 'running\n'; }
+session_container_live_state() { printf '%s\n' "$CONTAINER"; }
 # The monitor answers live for its first LIVE_CALLS checks, then is gone.
 session_monitor_pid_is_live() {
   local n=0
@@ -356,7 +368,10 @@ session_monitor_pid_is_live() {
   printf '%s\n' "$((n + 1))" >"$DIR/live-checks"
   [[ "$n" -lt "$LIVE_CALLS" ]]
 }
-egress_proxy_network_for_session() { [[ -z "$NETWORK" ]] || printf '%s\n' "$NETWORK"; }
+egress_proxy_network_for_session() {
+  [[ "$NETWORK" != fail ]] || return 1
+  [[ -z "$NETWORK" ]] || printf '%s\n' "$NETWORK"
+}
 session_record_stop_request_marker() { :; }
 session_clear_stop_request_marker() { :; }
 emit_loaded_session_control_summary() { :; }
@@ -364,10 +379,14 @@ write_session_record() { :; }
 run_profile_docker_command() { touch "$DIR/stopped"; }
 session_container_exit_code() { printf '7\n'; }
 append_session_control_audit_record() { printf 'record %s\n' "$3" >>"$STEPS"; }
-stop_egress_proxy_for_session() { printf 'proxy %s\n' "$*" >>"$STEPS"; }
+stop_egress_proxy_for_session() { printf 'proxy %s\n' "$*" >>"$STEPS"; [[ "$NETWORK" != fail ]]; }
 session_write_stop_requested_terminal_record() { printf 'terminal %s\n' "$2" >>"$STEPS"; }
 sign_session_audit_head_explicit() { printf 'seal\n' >>"$STEPS"; touch "$DIR/S.audit-sig"; }
-session_stop_main --id S >/dev/null
+set +e
+(session_stop_main --id S >/dev/null 2>&1)
+status=$?
+set -e
+[[ "$status" -eq 0 ]] || printf 'exit %s\n' "$status" >>"$STEPS"
 `)
 			if got != c.want {
 				t.Fatalf("stop steps = %q, want %q", got, c.want)

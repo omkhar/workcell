@@ -4510,12 +4510,15 @@ session_stop_main() {
     # unreadable once the sidecar is gone) after the monitor's complete one, an
     # exit record, and rewrites the terminal record as exited. The chain gains
     # records but loses and forges none, and the seal covers all of them.
+    # A network lookup that fails cannot show the proxy gone, so it takes the
+    # fallback too, whose own lookup then stops it before the seal.
     stop_fallback=1
     case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
       stopped | exited | failed | aborted)
-        if [[ -e "${record_path%.json}.audit-sig" ]] ||
-          ! proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" ||
-          [[ -z "${proxy_network}" ]]; then
+        if [[ -e "${record_path%.json}.audit-sig" ]] || {
+          proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" &&
+            [[ -z "${proxy_network}" ]]
+        }; then
           stop_fallback=0
         fi
         ;;
@@ -4526,14 +4529,20 @@ session_stop_main() {
   else
     # The monitor was live just now, but it can die before its own proxy stop.
     # Look once more before the recheck below seals: an unsealed terminal
-    # record, no monitor and the proxy network still up take the same
-    # auditing fallback, so the seal never lands before the deny records.
+    # record, no monitor and the proxy network still up, or a lookup that
+    # fails, take the same auditing fallback, so the seal never lands before
+    # the deny records. A monitor still live here owns its proxy stop and its
+    # seal, which replaces the recheck's; if it dies after this look and
+    # before its proxy stop, the proxy stays up, and the next session stop
+    # finds a stopped container with no monitor and runs the fallback, which
+    # appends the deny records and seals again over the whole chain.
     case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
       stopped | exited | failed | aborted)
-        if [[ ! -e "${record_path%.json}.audit-sig" ]] && ! session_monitor_pid_is_live &&
-          proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" &&
-          [[ -n "${proxy_network}" ]]; then
-          stop_fallback=1
+        if [[ ! -e "${record_path%.json}.audit-sig" ]] && ! session_monitor_pid_is_live; then
+          if ! proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" ||
+            [[ -n "${proxy_network}" ]]; then
+            stop_fallback=1
+          fi
         fi
         ;;
     esac
