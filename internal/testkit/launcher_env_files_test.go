@@ -50,6 +50,45 @@ echo done
 	}
 }
 
+// TestSessionMonitorStateFileRoundTripsEachByteBeforeDigits writes each byte
+// from 1 to 255 between two plain characters and before the digits 0 to 9,
+// alone and twice in a row, and reads it back: printf %q writes a control
+// byte as a three-digit octal escape, and a digit after it is a plain digit,
+// not a fourth octal digit.
+func TestSessionMonitorStateFileRoundTripsEachByteBeforeDigits(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	code, output := runLauncherFunctionsProbe(t, `cd "${PROBE_DIR}"
+values=()
+for byte in $(seq 1 255); do
+  printf -v octal '%03o' "${byte}"
+  printf -v char "\\${octal}"
+  values+=("p${char}0123456789" "${char}${char}7" "${char}")
+done
+# Each file holds one value in each state variable, as many as fit.
+session_monitor_env_vars
+names=("${SESSION_MONITOR_ENV_VARS[@]}")
+for ((start = 0; start < ${#values[@]}; start += ${#names[@]})); do
+  for i in "${!names[@]}"; do printf -v "${names[i]}" '%s' "${values[start + i]-}"; done
+  write_session_monitor_env_file "${PROBE_DIR}/state.env"
+  for name in "${names[@]}"; do unset "${name}"; done
+  if ! read_session_monitor_env_file "${PROBE_DIR}/state.env"; then
+    printf 'refused values from %s:\n' "${start}"
+    cat -v "${PROBE_DIR}/state.env"
+    continue
+  fi
+  for i in "${!names[@]}"; do
+    [[ "${!names[i]}" == "${values[start + i]-}" ]] || printf 'changed value %s\n' "$((start + i))"
+  done
+done
+echo done
+`, map[string]string{"PROBE_DIR": dir})
+	if code != 0 || strings.TrimSpace(output) != "done" {
+		t.Fatalf("exit %d:\n%s", code, output)
+	}
+}
+
 // TestSessionMonitorStateFileRefusesOtherText covers a state file that holds
 // more than the writer writes: code, an unknown or repeated name, a word that
 // printf %q does not give back, and a cut last line. Each stops the read, and

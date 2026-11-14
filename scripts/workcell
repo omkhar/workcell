@@ -2690,7 +2690,7 @@ write_session_monitor_env_file() {
 # output is refused and not guessed.
 session_monitor_decode_word() {
   local word="$1"
-  local rest="" char="" escaped="" encoded=""
+  local rest="" char="" escaped="" encoded="" octal=""
   local LC_ALL=C
 
   SESSION_MONITOR_DECODED=""
@@ -2698,11 +2698,18 @@ session_monitor_decode_word() {
     :
   elif [[ "${#word}" -ge 3 && "${word}" == "\$'"*"'" ]]; then
     # An ANSI-C word. printf %b decodes its escapes except the quotes, which
-    # %q writes with a backslash and %b keeps as two characters.
+    # %q writes with a backslash and %b keeps as two characters, and an octal
+    # escape: ANSI-C reads at most three digits after the backslash, but %b
+    # reads three after \0, so \0017 would take the 7. Each one goes to %b as
+    # \0 and exactly three digits.
     rest="${word:2:${#word}-3}"
     while [[ -n "${rest}" ]]; do
       char="${rest:0:1}"
-      if [[ "${char}" == "\\" ]]; then
+      if [[ "${char}" == "\\" && "${rest:1:3}" =~ ^[0-7]{1,3} ]]; then
+        octal="00${BASH_REMATCH[0]}"
+        escaped+="\\0${octal:${#octal}-3}"
+        rest="${rest:1+${#BASH_REMATCH[0]}}"
+      elif [[ "${char}" == "\\" ]]; then
         case "${rest:1:1}" in
           "'" | '"' | '?') escaped+="${rest:1:1}" ;;
           *) escaped+="${rest:0:2}" ;;
