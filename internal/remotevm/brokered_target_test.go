@@ -766,10 +766,14 @@ func TestMaterializeRefusesAKeptManifestThatItCannotRead(t *testing.T) {
 func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
 	noStep := swapStep
 	t.Cleanup(func() { swapStep = noStep })
-	// Every send ends before swapStep is restored, also when the test fails.
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	guestRoot := t.TempDir()
+	// Every send ends before swapStep is restored and before the test's
+	// directories are removed, also when the test fails. Cleanups run in
+	// reverse order, so this one, registered after every t.TempDir of the
+	// test, runs before their removal.
 	var sending sync.WaitGroup
 	t.Cleanup(sending.Wait)
-	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
 	paused, resume, steps := make(chan struct{}), make(chan struct{}), atomic.Int32{}
 	swapStep = func(string, *os.File) error {
 		if steps.Add(1) == 1 {
@@ -786,7 +790,7 @@ func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
 	<-paused
 	defer close(resume)
 	var started bool
-	for _, target := range []ConformanceTarget{FakeTarget{Contract: DefaultGCPVMContract()}, fakeBrokerTarget(t, "receive", t.TempDir(), &started)} {
+	for _, target := range []ConformanceTarget{FakeTarget{Contract: DefaultGCPVMContract()}, fakeBrokerTarget(t, "receive", guestRoot, &started)} {
 		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		defer cancel()
 		sending.Go(func() {
