@@ -187,6 +187,26 @@ detected_host_arch() {
   esac
 }
 
+# os_release_value KEY prints the value that /etc/os-release gives KEY, read
+# as KEY=VALUE lines and never sourced: sourced text could define or redefine
+# any launcher function. One pair of quotes around the value is removed. As
+# with sourcing, the last line for KEY wins. A missing file prints nothing.
+os_release_value() {
+  local key="$1"
+  local line=""
+  local value=""
+
+  [[ -r /etc/os-release ]] || return 0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == "${key}="* ]] || continue
+    value="${line#*=}"
+    if [[ "${#value}" -ge 2 && ("${value}" == \"*\" || "${value}" == \'*\') ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  done </etc/os-release
+  printf '%s\n' "${value}"
+}
+
 detected_host_distro() {
   local host_distro=""
 
@@ -199,11 +219,7 @@ detected_host_distro() {
     printf 'none\n'
     return 0
   fi
-  if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    host_distro="${ID:-}"
-  fi
+  host_distro="$(os_release_value ID)"
   if [[ -z "${host_distro}" ]]; then
     host_distro="unknown"
   fi
@@ -222,10 +238,9 @@ detected_host_distro_version() {
     printf 'none\n'
     return 0
   fi
-  if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    host_distro_version="${VERSION_ID:-${VERSION_CODENAME:-}}"
+  host_distro_version="$(os_release_value VERSION_ID)"
+  if [[ -z "${host_distro_version}" ]]; then
+    host_distro_version="$(os_release_value VERSION_CODENAME)"
   fi
   if [[ -z "${host_distro_version}" ]]; then
     host_distro_version="unknown"

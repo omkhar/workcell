@@ -64,7 +64,7 @@ credential_extra_endpoints() {
     fi
   fi
 
-  if ((${#endpoints[@]} == 0)); then
+  if [[ "${#endpoints[@]}" -eq 0 ]]; then
     return 0
   fi
 

@@ -2610,10 +2610,12 @@ revalidate_recorded_host_output_directory() {
   printf '%s\n' "${resolved_path}"
 }
 
-write_session_monitor_env_file() {
-  local path="$1"
-  local var_name=""
-  local -a exported_vars=(
+# session_monitor_env_vars sets SESSION_MONITOR_ENV_VARS to the variables
+# that the detached session monitor reads back from its state file. ROOT_DIR is
+# not one of them: the monitor runs this script from the same checkout, and a
+# root from the file could move every later helper path.
+session_monitor_env_vars() {
+  SESSION_MONITOR_ENV_VARS=(
     AGENT
     AGENT_AUTONOMY
     ALLOW_CONTROL_PLANE_VCS
@@ -2643,7 +2645,6 @@ write_session_monitor_env_file() {
     LOG_LEVEL
     MODE
     NETWORK_POLICY
-    ROOT_DIR
     SESSION_AUDIT_DIR
     SESSION_AUDIT_STATE_FILE
     SESSION_FILE_TRACE_CONTAINER_FILE
@@ -2664,14 +2665,95 @@ write_session_monitor_env_file() {
     XDG_STATE_HOME
     WORKSPACE
   )
+}
 
+write_session_monitor_env_file() {
+  local path="$1"
+  local var_name=""
+  # The C locale makes printf %q write each byte that is not plain ASCII as
+  # an octal escape, which read_session_monitor_env_file decodes in any locale.
+  local LC_ALL=C
+
+  session_monitor_env_vars
   mkdir -p "$(dirname "${path}")"
   umask 077
   : >"${path}"
   chmod 0600 "${path}" 2>/dev/null || true
-  for var_name in "${exported_vars[@]}"; do
+  for var_name in "${SESSION_MONITOR_ENV_VARS[@]}"; do
     printf '%s=%q\n' "${var_name}" "${!var_name-}" >>"${path}"
   done
+}
+
+# session_monitor_decode_word sets SESSION_MONITOR_DECODED to the value of one
+# printf %q word, without eval. The word is accepted only when printf %q of
+# the value gives back the same word, so a word that is not the writer's
+# output is refused and not guessed.
+session_monitor_decode_word() {
+  local word="$1"
+  local rest="" char="" escaped="" encoded=""
+  local LC_ALL=C
+
+  SESSION_MONITOR_DECODED=""
+  if [[ "${word}" == "''" ]]; then
+    :
+  elif [[ "${#word}" -ge 3 && "${word}" == "\$'"*"'" ]]; then
+    # An ANSI-C word. printf %b decodes its escapes except the quotes, which
+    # %q writes with a backslash and %b keeps as two characters.
+    rest="${word:2:${#word}-3}"
+    while [[ -n "${rest}" ]]; do
+      char="${rest:0:1}"
+      if [[ "${char}" == "\\" ]]; then
+        case "${rest:1:1}" in
+          "'" | '"' | '?') escaped+="${rest:1:1}" ;;
+          *) escaped+="${rest:0:2}" ;;
+        esac
+        rest="${rest:2}"
+      else
+        escaped+="${char}"
+        rest="${rest:1}"
+      fi
+    done
+    printf -v SESSION_MONITOR_DECODED '%b' "${escaped}"
+  else
+    rest="${word}"
+    while [[ -n "${rest}" ]]; do
+      char="${rest:0:1}"
+      if [[ "${char}" == "\\" ]]; then
+        char="${rest:1:1}"
+        rest="${rest:2}"
+      else
+        rest="${rest:1}"
+      fi
+      SESSION_MONITOR_DECODED+="${char}"
+    done
+  fi
+  printf -v encoded '%q' "${SESSION_MONITOR_DECODED}"
+  [[ "${encoded}" == "${word}" ]]
+}
+
+# read_session_monitor_env_file sets the variables that
+# write_session_monitor_env_file saved, without sourcing the file: sourced
+# text could define or redefine any launcher function. Each line must be
+# NAME=WORD for a distinct name of SESSION_MONITOR_ENV_VARS, and each WORD the
+# printf %q form of a value. Any other text stops the read with status 1.
+read_session_monitor_env_file() {
+  local path="$1"
+  local line="" name="" allowed="" seen=" "
+
+  session_monitor_env_vars
+  while IFS= read -r line; do
+    [[ "${line}" == *=* ]] || return 1
+    name="${line%%=*}"
+    for allowed in "${SESSION_MONITOR_ENV_VARS[@]}" ""; do
+      [[ "${allowed}" != "${name}" ]] || break
+    done
+    [[ -n "${allowed}" && "${seen}" != *" ${name} "* ]] || return 1
+    seen+="${name} "
+    session_monitor_decode_word "${line#*=}" || return 1
+    printf -v "${name}" '%s' "${SESSION_MONITOR_DECODED}"
+  done <"${path}"
+  # A last line with no newline is a cut file, not a value.
+  [[ -z "${line}" ]]
 }
 
 wait_for_session_monitor_ready() {
@@ -5391,8 +5473,10 @@ session_monitor_main() {
   state_file="$(shellproto_field "${plan}" state_file)"
   [[ -n "${state_file}" ]] || exit 0
 
-  # shellcheck disable=SC1090
-  source "${state_file}"
+  read_session_monitor_env_file "${state_file}" || {
+    echo "Refusing to read the detached session monitor state file: ${state_file}" >&2
+    exit 2
+  }
   if [[ -n "${WORKCELL_STATE_ROOT:-}" ]]; then
     WORKCELL_TARGET_STATE_ROOT="${WORKCELL_TARGET_STATE_ROOT:-${WORKCELL_STATE_ROOT}/targets}"
   fi
@@ -7753,6 +7837,38 @@ validate_container_memory_value() {
   }
 }
 
+# read_runtime_profile_env sets the runtime profile settings from a
+# runtime/profiles file without sourcing it: sourced text could define or
+# redefine any launcher function. Each line must be NAME=VALUE for a distinct
+# profile setting. VALUE is one plain word, or one double-quoted string of
+# words, with no quote, expansion or escape in it. Any other text stops the
+# read with status 1.
+read_runtime_profile_env() {
+  local path="$1"
+  local line="" name="" value="" seen=" "
+
+  while IFS= read -r line; do
+    [[ "${line}" == *=* ]] || return 1
+    name="${line%%=*}"
+    value="${line#*=}"
+    case "${name}" in
+      COLIMA_CPU | COLIMA_MEMORY | COLIMA_DISK | CONTAINER_MEMORY | NETWORK_POLICY | EXTRA_ENDPOINTS) ;;
+      *) return 1 ;;
+    esac
+    [[ "${seen}" != *" ${name} "* ]] || return 1
+    seen+="${name} "
+    if [[ "${value}" == \"*\" ]]; then
+      value="${value:1:${#value}-2}"
+      [[ "${value}" =~ ^[A-Za-z0-9._:/\ -]*$ ]] || return 1
+    else
+      [[ "${value}" =~ ^[A-Za-z0-9._:/-]*$ ]] || return 1
+    fi
+    printf -v "${name}" '%s' "${value}"
+  done <"${path}"
+  # A last line with no newline is a cut file, not a value.
+  [[ -z "${line}" ]]
+}
+
 profile_env_path() {
   case "$1" in
     strict)
@@ -9870,8 +9986,10 @@ PROFILE_ENV="$(profile_env_path "${MODE}")"
   exit 1
 }
 
-# shellcheck source=/dev/null
-source "${PROFILE_ENV}"
+read_runtime_profile_env "${PROFILE_ENV}" || {
+  echo "Refusing to read the runtime profile: ${PROFILE_ENV}" >&2
+  exit 1
+}
 if [[ -n "${VM_CPU_OVERRIDE}" ]]; then
   COLIMA_CPU="${VM_CPU_OVERRIDE}"
 fi

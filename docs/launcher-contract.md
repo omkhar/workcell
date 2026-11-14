@@ -4,6 +4,18 @@
 modules from `scripts/lib/launcher/`. This page records the current contract of
 those modules.
 
+The launcher sources only fixed repository libraries under its own root.
+`TestLauncherSourcesOnlyPinnedLibraries` reads each command that the launcher
+can run and fails on any other `source` or `.`. Each library is pinned by its
+SHA-256 in `reviewedShellLibraries`, except `go-run-env.sh` in `scripts/lib/`
+and `egress-endpoints.sh` in `scripts/lib/launcher/`, which the pin gate cannot
+read yet.
+The launcher reads its runtime profile, the detached session monitor state
+file and `/etc/os-release` as `NAME=VALUE` data. It does not source them,
+because sourced text can define or redefine any launcher function. An unknown
+name, a repeated name or a value that is not in the expected form stops the
+read.
+
 ## Launcher Reference
 
 Direct execution uses the launcher shebang. The shebang starts Bash with an

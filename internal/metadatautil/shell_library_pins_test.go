@@ -19,19 +19,19 @@ import (
 // not read, as the reader reads each of its commands.
 func TestReviewedShellLibrariesMatchTheirFiles(t *testing.T) {
 	for name, want := range reviewedShellLibraries {
-		data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "lib", name))
+		data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want.digest {
-			t.Errorf("scripts/lib/%s digest = %s, pinned %s; review the change and update reviewedShellLibraries", name, got, want.digest)
+			t.Errorf("%s digest = %s, pinned %s; review the change and update reviewedShellLibraries", name, got, want.digest)
 		}
 		forwarders, hidden := readLibrary(string(data))
 		if hidden != "" {
-			t.Errorf("scripts/lib/%s runs %q; a pinned library may not source, eval, rebind a name or hold a heredoc", name, hidden)
+			t.Errorf("%s runs %q; a pinned library may not source, eval, rebind a name or hold a heredoc", name, hidden)
 		}
 		if !slices.Equal(forwarders, want.forwarders) {
-			t.Errorf("scripts/lib/%s forwarders = %q, pinned %q", name, forwarders, want.forwarders)
+			t.Errorf("%s forwarders = %q, pinned %q", name, forwarders, want.forwarders)
 		}
 	}
 }
@@ -137,6 +137,11 @@ func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 		"a helper that installs a RETURN trap": {"shadow() { trap 'buildx_cmd() { :; }' RETURN; }\nshadow\nbuildx_cmd build\n", 0},
 		"a top-level builtin exit":             {"builtin exit 0\nbuildx_cmd build\n", 0},
 		"a library forwarder that evals":       {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nrun_workcell_docker_client_command eval x\nbuildx_cmd build\n", 0},
+		"a pinned launcher library":            {head + `source "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"` + "\nbuildx_cmd build\n", 1},
+		"a pinned container library":           {head + `source "${ROOT_DIR}/runtime/container/assurance.sh"` + "\nbuildx_cmd build\n", 1},
+		"a launcher library in another place":  {head + `source "${ROOT_DIR}/scripts/lib/host-exec.sh"` + "\nbuildx_cmd build\n", 0},
+		"a launcher library through a parent":  {head + `source "${ROOT_DIR}/scripts/lib/launcher/../launcher/host-exec.sh"` + "\nbuildx_cmd build\n", 0},
+		"an unpinned launcher library":         {head + `source "${ROOT_DIR}/scripts/lib/launcher/egress-endpoints.sh"` + "\nbuildx_cmd build\n", 0},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
 			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
@@ -189,4 +194,53 @@ func TestReaderReadsBodiesAndPatterns(t *testing.T) {
 	if got := len(ShellInvocations("X=1 \"${ROOT_DIR}/scripts/check.sh\"\n", "X=1 ${ROOT_DIR}/scripts/check.sh")); got != 1 {
 		t.Errorf("a search for the path call found %d, want 1", got)
 	}
+}
+
+// launcherLibrariesNotPinned are the launcher libraries that the gate cannot
+// pin yet: go-run-env.sh runs resolved tool paths as expanded command words,
+// and egress-endpoints.sh still holds a line the gate reads as hidden.
+var launcherLibrariesNotPinned = []string{"scripts/lib/go-run-env.sh", "scripts/lib/launcher/egress-endpoints.sh"}
+
+// TestLauncherSourcesOnlyPinnedLibraries reads every command that
+// scripts/workcell may run. Each source or . names one fixed repository
+// library under ROOT_DIR, and that library is pinned or named as not pinned
+// yet. A source of a state file or a profile could define or redefine any
+// launcher function, a reviewed egress function among them.
+func TestLauncherSourcesOnlyPinnedLibraries(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "workcell"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failures := launcherSourceFailures(string(data)); len(failures) > 0 {
+		t.Errorf("scripts/workcell:\n%s", strings.Join(failures, "\n"))
+	}
+	for name, script := range map[string]string{
+		"a state file":         "f() {\n  source \"${state_file}\"\n}\nf\n",
+		"a profile":            ". \"${PROFILE_ENV}\"\n",
+		"a wrapped source":     "builtin source /tmp/x.sh\n",
+		"an unpinned library":  "source \"${ROOT_DIR}/scripts/lib/other.sh\"\n",
+		"a library with words": "source \"${ROOT_DIR}/scripts/lib/shellproto.sh\" x\n",
+	} {
+		if len(launcherSourceFailures(script)) == 0 {
+			t.Errorf("%s: no failure", name)
+		}
+	}
+}
+
+func launcherSourceFailures(script string) []string {
+	var failures []string
+	for _, words := range EveryShellCommand(script) {
+		if len(words) == 0 || (words[0] != "source" && words[0] != ".") {
+			continue
+		}
+		library, fixed := "", false
+		if len(words) == 2 {
+			library, fixed = strings.CutPrefix(words[1], "${ROOT_DIR}/")
+		}
+		_, pinned := reviewedShellLibraries[library]
+		if !fixed || pinned == slices.Contains(launcherLibrariesNotPinned, library) {
+			failures = append(failures, fmt.Sprintf("%q: pin the library, or name it as not pinned yet", words))
+		}
+	}
+	return failures
 }

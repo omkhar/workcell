@@ -45,10 +45,10 @@ import (
 // MonitorMain emits the parsed state-file body on stdout one
 // state_<KEY>=<VALUE> line at a time so the bash shim can drive a read
 // loop and re-export each entry.  The bash side keeps owning the
-// file-sourcing semantics because some entries are quoted shell tokens
-// and we only forward the few keys the monitor actually consumes; the
-// shim still falls back to bash `source` when MonitorMain reports a
-// state file that exists.
+// file-reading semantics because the entries are printf %q words; the
+// shim reads the state file that MonitorMain reports with
+// read_session_monitor_env_file, which sets only the variables the
+// writer saves and never sources the file.
 //
 // Usage errors (--state-file missing, unknown flag, missing file) exit
 // with code 2 to match the bash CLI surface.  The
