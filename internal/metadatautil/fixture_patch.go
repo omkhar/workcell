@@ -10,12 +10,12 @@ import (
 	"os/exec"
 )
 
-// fixturePatchPaths are the paths that refresh-action-inputs and
-// flag-inventory restamp write.
-var fixturePatchPaths = []string{"tests/fixtures/actions/inputs.tsv", "tests/fixtures/flags"}
+// fixturePatchPaths are the paths the follow-up patch may carry: the one
+// table that refresh-action-inputs writes.
+var fixturePatchPaths = []string{workflowActionInputsPath}
 
 // FixturePatch returns a git patch of the fixture paths in the work tree at
-// rootDir against its index: changed, deleted and new files. New files are
+// rootDir against its index: a changed, deleted or new table. New files are
 // marked intent-to-add first, since a plain git diff leaves them out and a
 // missing fixture would then pass as clean. It fails when git status sees a
 // fixture change that the patch does not carry.
@@ -30,7 +30,7 @@ func FixturePatch(rootDir string) ([]byte, error) {
 			return nil, err
 		}
 	}
-	patch, err := fixtureGit(rootDir, nil, "diff", "--no-ext-diff", "--no-textconv", "--binary", "--")
+	patch, err := fixtureGit(rootDir, nil, "diff", "--no-ext-diff", "--no-textconv", "--text", "--no-renames", "--")
 	if err != nil {
 		return nil, err
 	}
@@ -44,10 +44,15 @@ func FixturePatch(rootDir string) ([]byte, error) {
 	return patch, nil
 }
 
+// emptyTreeID is the git object ID of the empty tree.
+const emptyTreeID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 // fixtureGit runs git in rootDir with the fixture paths appended after
-// args, which must end in "--" unless stdin carries the paths.
+// args, which must end in "--" unless stdin carries the paths. Git reads
+// attributes from the empty tree, so a .gitattributes in the bump tree
+// cannot mark the table binary, name a filter, or change its line endings.
 func fixtureGit(rootDir string, stdin []byte, args ...string) ([]byte, error) {
-	full := append([]string{"-C", rootDir, "-c", "core.quotePath=false"}, args...)
+	full := append([]string{"-C", rootDir, "-c", "core.quotePath=false", "-c", "attr.tree=" + emptyTreeID, "-c", "core.autocrlf=false", "-c", "core.hooksPath=/dev/null"}, args...)
 	if stdin == nil {
 		full = append(full, fixturePatchPaths...)
 	}

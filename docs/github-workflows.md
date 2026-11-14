@@ -58,7 +58,7 @@ For an approved large adapter PR, use both required options:
 | `claude-mention.yml` | Answers an `@claude` mention by the repository owner. See [Claude mention](#claude-mention). |
 | `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and required hostile-environment reruns. |
 | `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
-| `dependabot-follow-up.yml` | Makes the fixture patch that a Dependabot bump needs. See [Dependabot follow-up](#dependabot-follow-up). |
+| `dependabot-follow-up.yml` | Makes the action inputs patch that a Dependabot bump needs. See [Dependabot follow-up](#dependabot-follow-up). |
 | `docs.yml` | Checks spelling, links, contracts, and the man page. |
 | `fuzz.yml` | Runs extended Go and Rust fuzz tests. |
 | `hosted-controls.yml` | Checks GitHub controls that are outside Git. |
@@ -414,51 +414,118 @@ A new publisher requires a reviewed policy change.
 
 ## Dependabot follow-up
 
-A Dependabot bump of a GitHub Action or a provider CLI can make two fixtures stale:
+A Dependabot bump of a GitHub Action changes a `uses:` pin.
+The new pin has no row in `tests/fixtures/actions/inputs.tsv`, so `check-workflow-refs` fails with `uses-not-cached` (`internal/metadatautil/workflow_refs.go`).
 
-- `tests/fixtures/actions/inputs.tsv`, which has one row for each pinned action
-- the version stamps in `tests/fixtures/flags`
-
-`dependabot-follow-up.yml` runs on each Dependabot PR to `main`.
+`dependabot-follow-up.yml` runs on each Dependabot PR to `main` that changes a workflow file.
 It checks out the PR base commit and the bump commit in different directories.
 It runs `workcell-citools` from the base checkout, which is reviewed `main`.
 The bump checkout is only input: the job runs no script from it.
 The job has `contents: read`, no secrets, and checkouts that keep no credential.
 It pushes nothing.
 
-The job runs these two commands on the bump checkout:
+The job runs three commands on the bump checkout:
 
-- `refresh-action-inputs`, which fetches `action.yml` only for a new pin
-- `flag-inventory restamp`
+- `refresh-action-inputs`, which fetches `action.yml` only for a pin with no row
+- `refresh-action-inputs --verify`, which checks the new table against the base
+- `fixture-patch`, which writes a patch of `tests/fixtures/actions/inputs.tsv` and no other file
 
-Then `fixture-patch` writes the patch. It includes new fixture files, and it
-fails if the tree changed but the patch is empty
-(`internal/metadatautil/fixture_patch_test.go`).
-The job uploads the result as the `dependabot-follow-up` artifact.
-If the patch is not empty, the job fails and shows the patch in the step summary (`.github/workflows/dependabot-follow-up.yml`).
+`fixture-patch` fails if the table changed but the patch is empty (`internal/metadatautil/fixture_patch_test.go`).
+If the patch is not empty, the job uploads it as the `dependabot-follow-up` artifact, which holds one file, `inputs.patch`.
+The job then passes, and its summary says that a patch waits on the branch.
+The job is not a required check, but `Validate repository` fails on the stale table until the patch is on the branch.
+The job fails only on an error, such as a fetch failure or a table that `--verify` rejects (`.github/workflows/dependabot-follow-up.yml`).
 
-To apply the patch, use your own host:
+`--verify BASE ROOT` passes only when each pin in the `ROOT` workflows has one row, in order.
+A pin with a `BASE` row keeps it byte for byte; any other pin must be new.
+Its row must match the `action.yml` at that commit, which `--verify` fetches again (`internal/metadatautil/action_inputs_refresh_test.go`).
+
+### Daily Dependabot check
+
+The daily Dependabot check applies the patch with no new credential.
+
+Run these steps for each open Dependabot PR whose `Validate repository` check is red.
+Every command runs from a clean checkout of `origin/main` at `MAIN`.
+No command runs a script, a hook, or a build from the bump tree.
+
+A relative `core.hooksPath`, such as `.githooks`, would run the hooks of the worktree.
+So each `git` command that can run a hook sets `core.hooksPath=/dev/null`.
+If a check prints an unexpected line or exits with an error, stop and report the PR to the maintainer.
+
+Step 1: Read the PR.
+The author must be `dependabot[bot]`.
+The branch must start with `dependabot/github_actions/`.
+Every commit author must be `dependabot[bot]`.
 
 ```bash
-gh run download RUN_ID --name dependabot-follow-up --dir /tmp/follow-up
-git switch dependabot/BRANCH
-git apply --index /tmp/follow-up/dependabot-follow-up.patch
-go run ./cmd/workcell-citools refresh-action-inputs --check .
-git commit -S
-git push
+gh api "repos/omkhar/workcell/pulls/${PR}" --jq '.user.login, .head.ref, .head.sha, .head.repo.full_name'
+gh api "repos/omkhar/workcell/pulls/${PR}/commits" --jq '[.[].author.login] | unique | join(",")'
 ```
 
-You can also run the two commands on the bump branch yourself:
+Set `BRANCH` and `HEAD_SHA` from the output; the repository must be `omkhar/workcell`.
+
+Step 2: Check that the bump changes only `uses:` pins in workflow files.
+Each of the last three commands must print nothing.
 
 ```bash
-go run ./cmd/workcell-citools refresh-action-inputs .
-go run ./cmd/workcell-citools flag-inventory restamp .
+git -C "${MAIN}" fetch origin main "refs/heads/${BRANCH}"
+BASE_SHA="$(git -C "${MAIN}" merge-base origin/main "${HEAD_SHA}")"
+git -C "${MAIN}" diff --no-renames --summary "${BASE_SHA}" "${HEAD_SHA}"
+git -C "${MAIN}" diff --no-renames --name-only "${BASE_SHA}" "${HEAD_SHA}" | grep -Ev '^\.github/workflows/[^/]+\.ya?ml$'
+git -C "${MAIN}" diff --no-renames -U0 "${BASE_SHA}" "${HEAD_SHA}" | grep -E '^[-+]' | grep -Ev '^(\+\+\+|---) ' | grep -Ev '^[-+] *(- )?uses: [^ ]+@[0-9a-f]{40}( # [^ ]+)?$'
 ```
 
-The job does not push the patch.
-A push needs a write token, and a `GITHUB_TOKEN` push starts no CI.
-A GitHub App token on `dependabot/**` branches needs a bypass of the branch ruleset.
-That decision is for the maintainer.
+Step 3: Find the follow-up run for that exact commit, and download its artifact into an empty directory.
+If `RUN_ID` is empty, the run for that commit has not passed yet, so try again at the next check.
+If the run has no `dependabot-follow-up` artifact, the bump needs no patch.
+The `find` command must print one line, `f inputs.patch`.
+
+```bash
+RUN_ID="$(gh run list --repo omkhar/workcell --workflow dependabot-follow-up.yml --event pull_request --commit "${HEAD_SHA}" --status success --json databaseId,headSha --jq "map(select(.headSha == \"${HEAD_SHA}\"))[0].databaseId")"
+DL="$(mktemp -d)"
+gh run download "${RUN_ID}" --repo omkhar/workcell --name dependabot-follow-up --dir "${DL}"
+find "${DL}" -mindepth 1 -printf '%y %P\n'
+```
+
+Step 4: Apply the patch in new worktrees of the bump and of its base.
+`--numstat` must print one line: two numbers and `tests/fixtures/actions/inputs.tsv`.
+`--summary` must print nothing.
+`status` must print one line, `M  tests/fixtures/actions/inputs.tsv`.
+
+```bash
+WT="$(mktemp -d)"
+git -C "${MAIN}" -c core.hooksPath=/dev/null worktree add --detach "${WT}/bump" "${HEAD_SHA}"
+git -C "${MAIN}" -c core.hooksPath=/dev/null worktree add --detach "${WT}/base" "${BASE_SHA}"
+git -C "${WT}/bump" apply --numstat "${DL}/inputs.patch"
+git -C "${WT}/bump" apply --summary "${DL}/inputs.patch"
+git -C "${WT}/bump" apply --index "${DL}/inputs.patch"
+git -C "${WT}/bump" status --porcelain
+```
+
+Step 5: Verify the rows with the tools from `MAIN`.
+It must exit with status 0.
+
+```bash
+(cd "${MAIN}" && go run ./cmd/workcell-citools refresh-action-inputs --verify "${WT}/base" "${WT}/bump")
+```
+
+Step 6: Sign the commit and push it to the bump branch.
+Do not force the push. If the branch moved since step 1, Git turns the push down.
+
+```bash
+git -C "${WT}/bump" -c core.hooksPath=/dev/null commit --no-verify -S \
+  -m ".f Add action input rows for the pins that Dependabot PR #${PR} bumps (the new pins had no rows, so check-workflow-refs failed with uses-not-cached; refresh-action-inputs --verify passes against ${BASE_SHA})" \
+  -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+git -C "${WT}/bump" -c core.hooksPath=/dev/null push --no-verify origin "HEAD:refs/heads/${BRANCH}"
+git -C "${MAIN}" worktree remove --force "${WT}/bump"
+git -C "${MAIN}" worktree remove --force "${WT}/base"
+```
+
+The push starts CI again, and the next follow-up run and `Validate repository` pass.
+After a commit that Dependabot did not write, Dependabot stops rebasing the branch.
+To rebase it, comment `@dependabot recreate`, and the check applies the next patch.
+
+The job does not push: a `GITHUB_TOKEN` push starts no CI, and an App token needs a ruleset bypass.
 
 ## Validator identity
 

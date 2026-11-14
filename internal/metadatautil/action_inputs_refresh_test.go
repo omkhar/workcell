@@ -245,3 +245,88 @@ func TestFetchActionMetadataRequestsOnlyThePinnedPaths(t *testing.T) {
 		}
 	}
 }
+
+// Hostile YAML in action metadata either yields the names a YAML parser
+// reads or fails; it never puts a tab, comma or newline in a row. The alias
+// bomb is never expanded, since only the inputs keys are decoded.
+func TestActionInputNamesHandlesHostileYAML(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want string
+		fail bool
+	}{
+		{body: "inputs:\n", want: ""},
+		{body: "inputs: ~\n", want: ""},
+		{body: "x: &n real-name\ninputs:\n  *n : {}\n  b: {}\n", want: "b,real-name"},
+		{body: "base: &in\n  k: {}\ninputs: *in\n", want: "k"},
+		{body: "inputs:\n  a: {}\n  a: {}\n", want: "a"},
+		{body: "inputs:\n  <<: {k: {}}\n", fail: true},
+		{body: "inputs:\n  ? [a, b]\n  : {}\n", fail: true},
+		{body: "x: &k {a: 1}\ninputs:\n  *k : {}\n", fail: true},
+		{body: "inputs:\n  \"a\\u0009b\": {}\n", fail: true},
+		{body: "inputs:\n  \"a\\u2028b\": {}\n", fail: true},
+		{body: "- inputs\n", fail: true},
+		{body: "a: &a [\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\",\"x\"]\nb: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a]\nc: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b]\nd: &d [*c,*c,*c,*c,*c,*c,*c,*c,*c]\ne: &e [*d,*d,*d,*d,*d,*d,*d,*d,*d]\nf: &f [*e,*e,*e,*e,*e,*e,*e,*e,*e]\ng: &g [*f,*f,*f,*f,*f,*f,*f,*f,*f]\nh: &h [*g,*g,*g,*g,*g,*g,*g,*g,*g]\ni: &i [*h,*h,*h,*h,*h,*h,*h,*h,*h]\ninputs: {k: *i}\n", want: "k"},
+	} {
+		names, err := actionInputNames([]byte(tc.body))
+		if tc.fail {
+			if err == nil {
+				t.Errorf("%q: names %v, want an error", tc.body, names)
+			}
+			continue
+		}
+		if err != nil || strings.Join(names, ",") != tc.want {
+			t.Errorf("%q: names %v, %v; want %q", tc.body, names, err, tc.want)
+		}
+	}
+}
+
+// writeVerifyPair writes a base tree and a bump tree that moves o/a from
+// refreshSHA1 to refreshSHA2, with the bump table given.
+func writeVerifyPair(t *testing.T, bumpTable string) (string, string) {
+	t.Helper()
+	base := writeRefreshFixture(t, refreshWorkflow("o/a@"+refreshSHA1, "o/keep@"+refreshSHA1), "o/a@"+refreshSHA1+"\told\n"+"o/keep@"+refreshSHA1+"\tk\n")
+	bump := writeRefreshFixture(t, refreshWorkflow("o/a@"+refreshSHA2, "o/keep@"+refreshSHA1), bumpTable)
+	return base, bump
+}
+
+func TestVerifyActionInputs(t *testing.T) {
+	fetcher := func() *fakeFetcher {
+		return &fakeFetcher{files: map[string]string{
+			"o/a@" + refreshSHA2:    "inputs:\n  new: {}\n  old: {}\n",
+			"o/keep@" + refreshSHA1: "inputs:\n  other: {}\n",
+			"o/x@" + refreshSHA2:    "inputs:\n  x: {}\n",
+		}}
+	}
+	good := "o/a@" + refreshSHA2 + "\tnew,old\n" + "o/keep@" + refreshSHA1 + "\tk\n"
+	base, bump := writeVerifyPair(t, good)
+	f := fetcher()
+	if err := VerifyActionInputs(context.Background(), base, bump, f.fetch); err != nil {
+		t.Fatalf("a correct table: %v", err)
+	}
+	if strings.Join(f.calls, " ") != "o/a@"+refreshSHA2 {
+		t.Fatalf("fetch calls = %v, want only the new pin", f.calls)
+	}
+	for name, table := range map[string]string{
+		"wrong inputs for the new pin":   "o/a@" + refreshSHA2 + "\tnew\n" + "o/keep@" + refreshSHA1 + "\tk\n",
+		"a changed base row":             "o/a@" + refreshSHA2 + "\tnew,old\n" + "o/keep@" + refreshSHA1 + "\tother\n",
+		"an extra row for an unused pin": good + "o/x@" + refreshSHA2 + "\tx\n",
+		"a missing row":                  "o/keep@" + refreshSHA1 + "\tk\n",
+		"rows out of order":              "o/keep@" + refreshSHA1 + "\tk\n" + "o/a@" + refreshSHA2 + "\tnew,old\n",
+		"no final newline":               strings.TrimSuffix(good, "\n"),
+		"a blank line":                   good + "\n",
+		"a row with a CR":                "o/a@" + refreshSHA2 + "\tnew,old\r\n" + "o/keep@" + refreshSHA1 + "\tk\n",
+	} {
+		base, bump := writeVerifyPair(t, table)
+		if err := VerifyActionInputs(context.Background(), base, bump, fetcher().fetch); err == nil {
+			t.Errorf("%s: want a failure", name)
+		}
+	}
+	// A base pin is not part of the bump: a row the base table lacks is refused unfetched.
+	base = writeRefreshFixture(t, refreshWorkflow("o/a@"+refreshSHA1), "-")
+	bump = writeRefreshFixture(t, refreshWorkflow("o/a@"+refreshSHA1), "o/a@"+refreshSHA1+"\tx\n")
+	f = fetcher()
+	if err := VerifyActionInputs(context.Background(), base, bump, f.fetch); err == nil || len(f.calls) != 0 {
+		t.Fatalf("a row for a base pin the base table lacks: err = %v, calls %v", err, f.calls)
+	}
+}

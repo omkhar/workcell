@@ -107,7 +107,7 @@ func subcommands() []subcommand {
 		{"verify-goose-release", "DOCKERFILE", 1, 1, cmdVerifyGooseRelease},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"flag-inventory", "plan|check|restamp ROOT | compare|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
-		{"refresh-action-inputs", "[--check] ROOT", 1, 2, cmdRefreshActionInputs},
+		{"refresh-action-inputs", "[--check] ROOT | --verify BASE ROOT", 1, 3, cmdRefreshActionInputs},
 		{"fixture-patch", "ROOT", 1, 1, cmdFixturePatch},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
@@ -589,18 +589,24 @@ func cmdPrepareCodexSubcommandFixture(args []string) error {
 
 // cmdRefreshActionInputs rewrites tests/fixtures/actions/inputs.tsv from the
 // SHA-pinned actions in ROOT/.github/workflows. With --check it writes nothing
-// and exits 1 when the table is out of date.
+// and exits 1 when the table is out of date. With --verify BASE it writes
+// nothing and exits 1 unless ROOT's table keeps BASE's rows and adds only
+// rows for new pins that match their fetched action.yml.
 func cmdRefreshActionInputs(args []string) error {
-	check := false
-	if len(args) == 2 {
-		if args[0] != "--check" {
-			return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-citools refresh-action-inputs [--check] ROOT"}
-		}
-		check, args = true, args[1:]
-	}
+	const usage = "usage: workcell-citools refresh-action-inputs [--check] ROOT | --verify BASE ROOT"
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	changed, err := metadatautil.RefreshActionInputs(ctx, args[0], metadatautil.FetchActionMetadata, check)
+	switch {
+	case len(args) == 3 && args[0] == "--verify":
+		if err := metadatautil.VerifyActionInputs(ctx, args[1], args[2], metadatautil.FetchActionMetadata); err != nil {
+			return &cliexit.ExitCodeError{Code: 1, Message: err.Error()}
+		}
+		return nil
+	case len(args) == 3, len(args) == 2 && args[0] != "--check":
+		return &cliexit.ExitCodeError{Code: 2, Message: usage}
+	}
+	check := len(args) == 2
+	changed, err := metadatautil.RefreshActionInputs(ctx, args[len(args)-1], metadatautil.FetchActionMetadata, check)
 	if err != nil {
 		return err
 	}

@@ -1,12 +1,9 @@
 name: Dependabot follow-up
 
-# Regenerates the fixtures that a Dependabot bump leaves stale: the action
-# inputs table (a GitHub Action bump) and the flag inventory stamps (a provider
-# CLI bump). The job builds the tools from the PR base commit, which is
-# reviewed main, and reads the bump tree only as data. It holds a read-only
-# token, passes no token to any step, and has no secrets. It pushes nothing:
-# it uploads the patch for a signed host-side commit. See
-# docs/github-workflows.md.
+# Builds the action inputs patch a Dependabot action bump needs, with tools
+# from the reviewed base and the bump tree read only as data. Read-only token,
+# no secrets, no push: the daily Dependabot check verifies, signs and pushes
+# the patch. See docs/github-workflows.md.
 on:
   pull_request:
     branches:
@@ -15,6 +12,8 @@ on:
       - opened
       - synchronize
       - reopened
+    paths:
+      - .github/workflows/**
 
 permissions: {}
 
@@ -57,41 +56,51 @@ jobs:
       # The tools come from the reviewed base; the bump tree is only input.
       # Their messages can quote bump content, so the runner reads no
       # workflow command from this step.
-      - name: Regenerate the fixtures
+      - name: Regenerate the action inputs table
+        id: regenerate
         working-directory: trusted
         run: |
           stop_token="$(cat /proc/sys/kernel/random/uuid)"
           echo "::stop-commands::${stop_token}"
           /usr/local/go/bin/go run -trimpath ./cmd/workcell-citools refresh-action-inputs ../head
-          /usr/local/go/bin/go run -trimpath ./cmd/workcell-citools flag-inventory restamp ../head
+          /usr/local/go/bin/go run -trimpath ./cmd/workcell-citools refresh-action-inputs --verify . ../head
           mkdir -p "${RUNNER_TEMP}/follow-up"
-          # New fixture files are in the patch too; a tree that differs with
-          # an empty patch fails here instead of passing as clean.
+          # Only tests/fixtures/actions/inputs.tsv; an empty patch of a changed table fails.
           /usr/local/go/bin/go run -trimpath ./cmd/workcell-citools fixture-patch ../head \
-            >"${RUNNER_TEMP}/follow-up/dependabot-follow-up.patch"
+            >"${RUNNER_TEMP}/follow-up/inputs.patch"
           echo "::${stop_token}::"
+          pending=false
+          [[ -s "${RUNNER_TEMP}/follow-up/inputs.patch" ]] && pending=true
+          echo "pending=${pending}" >>"${GITHUB_OUTPUT}"
 
       - name: Upload the patch
+        if: steps.regenerate.outputs.pending == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dependabot-follow-up
           if-no-files-found: error
           retention-days: 7
-          path: ${{ runner.temp }}/follow-up/dependabot-follow-up.patch
+          path: ${{ runner.temp }}/follow-up/inputs.patch
 
+      # The job passes; Validate repository stays red until the patch is pushed.
       - name: Report the patch
+        env:
+          PENDING: ${{ steps.regenerate.outputs.pending }}
         run: |
-          patch="${RUNNER_TEMP}/follow-up/dependabot-follow-up.patch"
-          if [[ ! -s "${patch}" ]]; then
-            echo "The bump leaves no fixture stale."
+          if [[ "${PENDING}" != "true" ]]; then
+            echo "### No patch needed: the action inputs table matches the bump" >>"${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
+          patch="${RUNNER_TEMP}/follow-up/inputs.patch"
+          added="$(grep -c '^+[^+]' "${patch}" || true)"
+          removed="$(grep -c '^-[^-]' "${patch}" || true)"
           {
-            echo "### Stale fixtures"
-            echo "Apply the dependabot-follow-up artifact on the bump branch, then sign and push the commit."
-            echo '```diff'
-            cat "${patch}"
+            echo "### Patch waiting: tests/fixtures/actions/inputs.tsv"
+            echo "The \`dependabot-follow-up\` artifact adds ${added} and removes ${removed} rows."
+            echo "The daily Dependabot check verifies it, signs a commit, and pushes it to this branch."
+            echo "Added rows (each ref and input name passed the table's character check):"
+            echo '```text'
+            grep '^+[^+]' "${patch}" | cut -c2-
             echo '```'
           } >>"${GITHUB_STEP_SUMMARY}"
-          echo "::error::The bump leaves fixtures stale. Apply the dependabot-follow-up artifact, sign the commit, and push it."
-          exit 1
+          echo "::notice title=Dependabot follow-up::A patch for tests/fixtures/actions/inputs.tsv is waiting in the dependabot-follow-up artifact."

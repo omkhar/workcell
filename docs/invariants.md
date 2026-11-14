@@ -129,6 +129,10 @@ the row of a pin that no workflow uses. With `--check`, it changes nothing and
 exits with status 1 when the table is stale
 (`internal/metadatautil/action_inputs_refresh.go`).
 
+With `--verify BASE ROOT`, it changes nothing and exits with status 1 unless
+each new row matches the `action.yml` at its commit
+(`internal/metadatautil/action_inputs_refresh_test.go`).
+
 A testkit case runs each inline jq program against an empty array. A compile
 error fails the test.
 

@@ -74,30 +74,14 @@ func RefreshActionInputs(ctx context.Context, rootDir string, fetch ActionMetada
 	if err != nil {
 		return false, err
 	}
-	var rows []string
 	for _, ref := range refs {
-		if row, ok := current[ref]; ok {
-			rows = append(rows, row)
-			continue
+		if _, ok := current[ref]; check && !ok {
+			return true, nil // --check fetches nothing: a pin with no row is a change.
 		}
-		if check {
-			rows = append(rows, ref+"\t?")
-			continue
-		}
-		owner, repo, dir, sha, _ := parseActionRef(ref)
-		data, err := fetch(ctx, owner, repo, dir, sha)
-		if err != nil {
-			return false, fmt.Errorf("%s: %w", ref, err)
-		}
-		names, err := actionInputNames(data)
-		if err != nil {
-			return false, fmt.Errorf("%s: %w", ref, err)
-		}
-		rows = append(rows, ref+"\t"+strings.Join(names, ","))
 	}
-	updated := strings.Join(rows, "\n")
-	if updated != "" {
-		updated += "\n"
+	updated, err := buildActionInputsTable(ctx, refs, current, fetch)
+	if err != nil {
+		return false, err
 	}
 	existing, err := readActionInputsText(rootDir)
 	if err != nil {
@@ -119,6 +103,89 @@ func RefreshActionInputs(ctx context.Context, rootDir string, fetch ActionMetada
 		return false, err
 	}
 	return true, nil
+}
+
+// buildActionInputsTable returns the table text for refs: the row in known
+// when there is one, else a row built from the fetched action metadata.
+func buildActionInputsTable(ctx context.Context, refs []string, known map[string]string, fetch ActionMetadataFetcher) (string, error) {
+	var rows []string
+	for _, ref := range refs {
+		if row, ok := known[ref]; ok {
+			rows = append(rows, row)
+			continue
+		}
+		row, err := fetchActionInputsRow(ctx, ref, fetch)
+		if err != nil {
+			return "", err
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return strings.Join(rows, "\n") + "\n", nil
+}
+
+func fetchActionInputsRow(ctx context.Context, ref string, fetch ActionMetadataFetcher) (string, error) {
+	owner, repo, dir, sha, _ := parseActionRef(ref)
+	data, err := fetch(ctx, owner, repo, dir, sha)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ref, err)
+	}
+	names, err := actionInputNames(data)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ref, err)
+	}
+	return ref + "\t" + strings.Join(names, ","), nil
+}
+
+// VerifyActionInputs checks the inputs table in rootDir, a bump tree with
+// the follow-up patch applied, against baseDir, the reviewed commit the bump
+// starts from. The table must hold exactly one row for each pin in the
+// rootDir workflows. A pin that baseDir has a row for keeps that row byte for
+// byte. Any other pin must be new: no baseDir workflow uses it, so it is in the
+// bump's workflow diff, and its row must equal the input names of the
+// action.yml that fetch returns for that commit. It reads both trees as data.
+func VerifyActionInputs(ctx context.Context, baseDir, rootDir string, fetch ActionMetadataFetcher) error {
+	refs, err := pinnedWorkflowActionRefs(rootDir)
+	if err != nil {
+		return err
+	}
+	baseRefs, err := pinnedWorkflowActionRefs(baseDir)
+	if err != nil {
+		return fmt.Errorf("base: %w", err)
+	}
+	baseRows, err := readActionInputRows(baseDir)
+	if err != nil {
+		return fmt.Errorf("base: %w", err)
+	}
+	for _, ref := range refs {
+		if _, ok := baseRows[ref]; !ok && slices.Contains(baseRefs, ref) {
+			return fmt.Errorf("%s: the base workflows use this pin but the base table has no row for it", ref)
+		}
+	}
+	want, err := buildActionInputsTable(ctx, refs, baseRows, fetch)
+	if err != nil {
+		return err
+	}
+	got, err := readActionInputsText(rootDir)
+	if err != nil {
+		return err
+	}
+	gotLines, wantLines := strings.SplitAfter(got, "\n"), strings.SplitAfter(want, "\n")
+	for i := range max(len(gotLines), len(wantLines)) {
+		var g, w string
+		if i < len(gotLines) {
+			g = gotLines[i]
+		}
+		if i < len(wantLines) {
+			w = wantLines[i]
+		}
+		if g != w {
+			return fmt.Errorf("%s line %d is %q; the base rows and the fetched action metadata give %q", workflowActionInputsPath, i+1, g, w)
+		}
+	}
+	return nil
 }
 
 // pinnedWorkflowActionRefs returns each remote action ref that a workflow step
@@ -184,22 +251,32 @@ func actionInputNames(data []byte) ([]string, error) {
 	if err := yaml.Unmarshal(data, &metadata); err != nil {
 		return nil, fmt.Errorf("parse action metadata: %w", err)
 	}
+	inputs := resolveYAMLAlias(&metadata.Inputs)
 	var names []string
-	switch metadata.Inputs.Kind {
-	case 0:
-	case yaml.MappingNode:
-		for i := 0; i < len(metadata.Inputs.Content); i += 2 {
-			name := metadata.Inputs.Content[i].Value
-			if !actionInputNamePattern.MatchString(name) {
-				return nil, fmt.Errorf("action metadata declares an input name the table cannot hold: %q", name)
+	switch {
+	case inputs.Kind == 0:
+	case inputs.Kind == yaml.ScalarNode && inputs.Tag == "!!null":
+	case inputs.Kind == yaml.MappingNode:
+		for i := 0; i < len(inputs.Content); i += 2 {
+			key := resolveYAMLAlias(inputs.Content[i])
+			if key.Kind != yaml.ScalarNode || !actionInputNamePattern.MatchString(key.Value) {
+				return nil, fmt.Errorf("action metadata declares an input name the table cannot hold: %q", key.Value)
 			}
-			names = append(names, name)
+			names = append(names, key.Value)
 		}
 	default:
 		return nil, errors.New("action metadata inputs is not a mapping")
 	}
 	slices.Sort(names)
 	return slices.Compact(names), nil
+}
+
+// resolveYAMLAlias returns the node that an alias names, or node itself.
+func resolveYAMLAlias(node *yaml.Node) *yaml.Node {
+	if node.Kind == yaml.AliasNode && node.Alias != nil {
+		return node.Alias
+	}
+	return node
 }
 
 // FetchActionMetadata gets action.yml, then action.yaml, for one pinned
@@ -239,23 +316,15 @@ func fetchActionMetadata(ctx context.Context, client upstreamHTTPDoer, baseURL, 
 		if err != nil {
 			return nil, errors.New("unable to download action metadata")
 		}
-		if resp.StatusCode == http.StatusNotFound {
-			if resp.Body != nil {
-				resp.Body.Close()
-			}
-			continue
-		}
 		if resp.StatusCode != http.StatusOK {
-			if resp.Body != nil {
-				resp.Body.Close()
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusNotFound {
+				continue
 			}
 			return nil, fmt.Errorf("unexpected action metadata response %d", resp.StatusCode)
 		}
-		data, err := readBoundedHTTPBody(resp, actionMetadataMaxBytes, "action metadata")
-		if resp.Body != nil {
-			resp.Body.Close()
-		}
-		return data, err
+		defer resp.Body.Close()
+		return readBoundedHTTPBody(resp, actionMetadataMaxBytes, "action metadata")
 	}
 	return nil, errors.New("the action has no action.yml or action.yaml at that commit")
 }
