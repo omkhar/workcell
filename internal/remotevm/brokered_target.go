@@ -91,15 +91,18 @@ var (
 	writeManifestAt   = rootio.WriteFileAtomicAtNoFollow
 )
 
-func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (MaterializeResult, error) {
+func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (_ MaterializeResult, err error) {
 	// The target id becomes a positional broker argument.
 	if strings.HasPrefix(req.TargetID, "-") {
 		return MaterializeResult{}, fmt.Errorf("target id must not start with '-': %q", req.TargetID)
 	}
-	result, staged, err := stageInStateRoot(b.Contract, req)
+	result, staged, err := stageInStateRoot(ctx, b.Contract, req)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
+	// Closing ends the lock, also after a panic in the send, so that a later
+	// send of this ID in the same process does not wait for it.
+	defer func() { err = errors.Join(err, staged.close()) }()
 	// No error path removes the host manifest. Before the host copy is put
 	// in place, the manifest of an earlier run with this ID still describes
 	// the host copy in place. After that, the unconfirmed manifest is the
@@ -108,13 +111,13 @@ func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req Materializ
 	// for an operator to reconcile.
 	// The confirmed manifest is written before close ends the lock.
 	guestWorkspace, err := b.sendStagedWorkspace(ctx, req.TargetID, &result, staged)
-	if err == nil {
-		result.MaterializedWorkspace = guestWorkspace
-		result.Manifest.MaterializedWorkspace = guestWorkspace
-		result.Manifest.GuestTransfer = ""
-		err = writeJSON(result.ManifestPath, result.Manifest)
+	if err != nil {
+		return MaterializeResult{}, err
 	}
-	if err = errors.Join(err, staged.close()); err != nil {
+	result.MaterializedWorkspace = guestWorkspace
+	result.Manifest.MaterializedWorkspace = guestWorkspace
+	result.Manifest.GuestTransfer = ""
+	if err := writeJSON(result.ManifestPath, result.Manifest); err != nil {
 		return MaterializeResult{}, err
 	}
 	return result, nil
@@ -143,6 +146,15 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
 	result.Manifest.ArchiveSHA256 = digest
+	// The confirmed manifest records the path that the guest acks, which one
+	// ack line bounds. It must fit the limit with the longest such path, which
+	// JSON escapes to six bytes a byte, or a guest copy could never be
+	// confirmed.
+	confirmed := result.Manifest
+	confirmed.MaterializedWorkspace = strings.Repeat("\x00", archiveLineBytes)
+	if _, err := manifestContent(confirmed); err != nil {
+		return "", err
+	}
 	// A broker command that cannot run sends nothing, so it must fail before
 	// the manifest records a send.
 	argv, err := b.brokerArgv(targetID)
@@ -184,6 +196,9 @@ func (b BrokeredTarget) brokerArgv(targetID string) ([]string, error) {
 // transfer. A broker that fails reports its exit status. A timeout sends
 // SIGTERM, and SIGKILL follows after brokerStopGrace.
 func runBroker(ctx context.Context, argv []string, transfer func(io.ReadWriter) (string, error)) (string, error) {
+	if len(argv) == 0 {
+		return "", errors.New("broker command is empty")
+	}
 	ctx, cancel := context.WithTimeout(ctx, brokerTransferTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)

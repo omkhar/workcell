@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
@@ -145,14 +146,14 @@ func NewFakeTarget(contract Contract) (FakeTarget, error) {
 	return FakeTarget{Contract: contract}, nil
 }
 
-func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeRequest) (MaterializeResult, error) {
-	return materializeInStateRoot(f.Contract, req)
+func (f FakeTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (MaterializeResult, error) {
+	return materializeInStateRoot(ctx, f.Contract, req)
 }
 
 // materializeInStateRoot stages the source workspace in the host state root
 // and writes its manifest. The fake target stops here.
-func materializeInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
-	result, staged, err := stageInStateRoot(contract, req)
+func materializeInStateRoot(ctx context.Context, contract Contract, req MaterializeRequest) (MaterializeResult, error) {
+	result, staged, err := stageInStateRoot(ctx, contract, req)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
@@ -167,7 +168,7 @@ func materializeInStateRoot(contract Contract, req MaterializeRequest) (Material
 // beside the host copy of an earlier run with the same ID, and returns its
 // manifest unwritten. The caller puts the copy in place and writes the
 // manifest together through the returned stagedHostCopy, and then closes it.
-func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, *stagedHostCopy, error) {
+func stageInStateRoot(ctx context.Context, contract Contract, req MaterializeRequest) (MaterializeResult, *stagedHostCopy, error) {
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return MaterializeResult{}, nil, fmt.Errorf("state root is required")
 	}
@@ -202,7 +203,7 @@ func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeRes
 	if err := restrictToOwner(materializationRoot); err != nil {
 		return MaterializeResult{}, nil, err
 	}
-	staged, entries, err := stageWorkspaceCopy(req.SourceWorkspace, materializationRoot, workspaceDir, contract.WorkspaceMaterialization.ManifestName, contract.WorkspaceMaterialization.ExcludedPaths)
+	staged, entries, err := stageWorkspaceCopy(ctx, req.SourceWorkspace, materializationRoot, workspaceDir, contract.WorkspaceMaterialization.ManifestName, contract.WorkspaceMaterialization.ExcludedPaths)
 	if err != nil {
 		return MaterializeResult{}, nil, err
 	}
@@ -244,7 +245,7 @@ type stagedHostCopy struct {
 // copies the source workspace into a new sibling of the workspace directory.
 // A failed copy removes the sibling and leaves the earlier host copy, which a
 // kept manifest of that run still describes.
-func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir, manifestName string, excluded []string) (*stagedHostCopy, []WorkspaceEntry, error) {
+func stageWorkspaceCopy(ctx context.Context, sourceWorkspace, materializationRoot, workspaceDir, manifestName string, excluded []string) (*stagedHostCopy, []WorkspaceEntry, error) {
 	// The parent of a name in materializationRoot is that root, opened
 	// without a follow.
 	parent, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(materializationRoot, workspaceDir))
@@ -253,10 +254,16 @@ func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir, mani
 	}
 	// A second send of this ID waits for this lock on the parent, which close
 	// ends. A child that a fork starts holds the lock too until its exec, so
-	// a send that does not wait could fail with no second send running.
-	err = unix.Flock(int(parent.Fd()), unix.LOCK_EX)
-	for errors.Is(err, unix.EINTR) {
-		err = unix.Flock(int(parent.Fd()), unix.LOCK_EX)
+	// a send that does not wait could fail with no second send running. The
+	// wait polls, so that it ends with ctx.
+	err = unix.Flock(int(parent.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	for wait := time.Millisecond; errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EINTR); wait = min(2*wait, 100*time.Millisecond) {
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-time.After(wait):
+			err = unix.Flock(int(parent.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		}
 	}
 	if err != nil {
 		return nil, nil, errors.Join(err, parent.Close())

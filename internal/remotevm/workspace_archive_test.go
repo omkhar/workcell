@@ -217,7 +217,7 @@ func TestWorkspaceArchiveIsDeterministicAcrossCopies(t *testing.T) {
 
 	var archives [2]bytes.Buffer
 	for idx := range archives {
-		staged, err := materializeInStateRoot(DefaultContract(), MaterializeRequest{StateRoot: t.TempDir(), TargetID: "t", MaterializationID: "m", SourceWorkspace: filepath.Join("testdata", "source-workspace")})
+		staged, err := materializeInStateRoot(t.Context(), DefaultContract(), MaterializeRequest{StateRoot: t.TempDir(), TargetID: "t", MaterializationID: "m", SourceWorkspace: filepath.Join("testdata", "source-workspace")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -233,7 +233,7 @@ func TestWorkspaceArchiveIsDeterministicAcrossCopies(t *testing.T) {
 func TestWorkspaceArchiveRejectsAStagedFileThatDiffersFromItsManifest(t *testing.T) {
 	t.Parallel()
 
-	staged, err := materializeInStateRoot(DefaultContract(), MaterializeRequest{StateRoot: t.TempDir(), TargetID: "t", MaterializationID: "m", SourceWorkspace: filepath.Join("testdata", "source-workspace")})
+	staged, err := materializeInStateRoot(t.Context(), DefaultContract(), MaterializeRequest{StateRoot: t.TempDir(), TargetID: "t", MaterializationID: "m", SourceWorkspace: filepath.Join("testdata", "source-workspace")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestWorkspaceArchiveRefusesASwappedStagedFile(t *testing.T) {
 			return os.Truncate(path, defaultWorkspaceLimits.maxFileBytes+1)
 		},
 	} {
-		staged, err := materializeInStateRoot(DefaultContract(), MaterializeRequest{StateRoot: t.TempDir(), TargetID: "t", MaterializationID: "m", SourceWorkspace: filepath.Join("testdata", "source-workspace")})
+		staged, err := materializeInStateRoot(t.Context(), DefaultContract(), MaterializeRequest{StateRoot: t.TempDir(), TargetID: "t", MaterializationID: "m", SourceWorkspace: filepath.Join("testdata", "source-workspace")})
 		if err != nil {
 			t.Fatal(err)
 		}
