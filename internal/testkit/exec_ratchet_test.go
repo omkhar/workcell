@@ -864,7 +864,7 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 					// A keyed struct literal field such as writer{set: os.Setenv}. A
 					// map key names no field, so a map or slice literal marks none; the
 					// holder of such a literal is a writer through isPathWriter.
-					if !notStruct[literalType(n.Type)] && !isListType(n.Type) {
+					if !notStruct[localTypeName(n.Type)] && !isListType(n.Type) {
 						for _, elt := range n.Elts {
 							if kv, ok := elt.(*ast.KeyValueExpr); ok {
 								added = record([]ast.Expr{kv.Key}, []ast.Expr{kv.Value}) || added
@@ -961,6 +961,20 @@ func isListType(expr ast.Expr) bool {
 		return true
 	}
 	return false
+}
+
+// localTypeName names the type of a literal when it is a type of this package,
+// a bare name under any pointer, parentheses or type arguments, and is ""
+// otherwise. A type from another package, such as ext.Table, is never one of
+// listTypeNames, even when a list type here shares its name.
+func localTypeName(expr ast.Expr) string {
+	switch t := genericBase(expr).(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return localTypeName(t.X)
+	}
+	return ""
 }
 
 // listTypeNames lists the types declared as a map, slice or array, whose
@@ -1789,6 +1803,23 @@ func a(dir string) { var ws []func(string, string) error; ws = append(ws, os.Set
 import ("os"; "os/exec")
 func a(dir string) { for _, w := range []func(string, string) error{os.Setenv} { w("PATH", dir) }; exec.Command("git") }
 `, 1},
+		// Another package's type is never a list type of this one, whatever its name.
+		"imported_struct_named_like_a_local_list.go": {`package x
+import ("os"; "os/exec"; "example.com/ext")
+type Table []func(string, string) error
+func a(dir string) { t := ext.Table{Set: os.Setenv}; t.Set("PATH", dir); exec.Command("git") }
+`, 1},
+		"pointer_to_imported_struct_named_like_a_local_list.go": {`package x
+import ("os"; "os/exec"; "example.com/ext")
+type Table []func(string, string) error
+func a(dir string) { t := &ext.Table{Set: os.Setenv}; t.Set("PATH", dir); exec.Command("git") }
+`, 1},
+		"generic_local_list_key_is_not_a_writer.go": {`package x
+import ("os"; "os/exec"; "path/filepath")
+type table[T any] map[string]T
+func apply(key func(string) string, dir string) { _ = key(dir) }
+func a(dir string) { key := "HOME"; _ = table[func(string, string) error]{key: os.Setenv}; apply(filepath.Base, dir); exec.Command("git") }
+`, 0},
 		"struct_key_is_a_writer.go": {`package x
 import ("os"; "os/exec")
 type writer struct{ set func(string, string) error }
