@@ -41,7 +41,7 @@ internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unrevie
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
 internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	TestClaudeMentionWorkflowAcceptsPinBump	2366708b	test fixture: locates the placeholder pin to rewrite
+internal/metadatautil	claudeMentionPin	4a5debeb	test helper: finds the one pinned action reference so each test rewrites the real pin
 internal/metadatautil	TestClaudeMentionWorkflowRejectsChanges	f0b79fb3	test fixture: locates the text each negative row rewrites
 internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,7c7b6223	test reads decoded YAML fields: the gate expression and the claude_args value
 internal/metadatautil	checkClaudeMentionReach	bf0bcc67,bf0bcc67,f2e98a0c	finds expression spans and the action, secret or environment names in decoded YAML scalars; a match only rejects or adds checks
