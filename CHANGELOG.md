@@ -9,6 +9,12 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Added
 
+- `workcell-citools refresh-action-inputs [--check] ROOT | --verify BASE ROOT`
+  rewrites or checks `tests/fixtures/actions/inputs.tsv` from the pinned
+  `uses:` lines (`internal/metadatautil/action_inputs_refresh.go`).
+- `dependabot-follow-up.yml` uploads that table's patch for each Dependabot
+  workflow bump with a read-only token, for the daily Dependabot check to push
+  (`.github/workflows/dependabot-follow-up.yml`).
 - `--target apple-container` selects the preview-only
   `local_vm/apple-container/per-session-vm` target. On Apple Silicon macOS 27
   or later, `--dry-run` prints a reviewed plan and `--doctor` prints
