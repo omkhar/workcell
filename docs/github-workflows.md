@@ -382,7 +382,7 @@ The environment rule keeps the secret on `main`, so set it as step 5 says.
 Text from other people in the thread is still model input.
 It can change the answer, but it cannot run a command or change a file.
 
-### When a mention run fails
+### Mention failure output
 
 The action hides Claude's output, because that output can hold what Claude read.
 When Claude stops with an error, the step `Show why Claude failed` prints four fields of the final result.
