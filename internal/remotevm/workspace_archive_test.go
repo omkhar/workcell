@@ -54,9 +54,9 @@ func frameArchive(id string, archive []byte) []byte {
 	return append([]byte(fmt.Sprintf("%s %s %s %d\n", archiveMagic, id, hex.EncodeToString(sum[:]), len(archive))), archive...)
 }
 
-// lockWaitBound bounds how long a test waits for a receive to finish, so a
-// receive that waits for a lock that an earlier receive kept fails the test
-// instead of hanging it until the go test timeout.
+// lockWaitBound bounds how long a test waits for a receive to finish or for
+// the materializations lock to end, so a receive that keeps the lock fails
+// the test instead of hanging it until the go test timeout.
 const lockWaitBound = 15 * time.Second
 
 type receiveResult struct {
@@ -596,6 +596,23 @@ func materializationsLocked(t *testing.T, root string) bool {
 	return true
 }
 
+// materializationsUnlockedWithin reports whether the lock on the
+// materializations under root ends within lockWaitBound. Go opens the lock
+// close-on-exec, but a child that a parallel test forks for an exec shares
+// the open file description, and with it the flock, from the fork until its
+// exec. So the lock can end a moment after the receive closes it.
+func materializationsUnlockedWithin(t *testing.T, root string) bool {
+	t.Helper()
+	deadline := time.Now().Add(lockWaitBound)
+	for wait := time.Millisecond; materializationsLocked(t, root); wait = min(2*wait, 50*time.Millisecond) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(wait)
+	}
+	return true
+}
+
 // TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive starts a second receive
 // of an ID while the first unpacks it, and the first then fails. The first
 // must hold the lock while it unpacks, and its failure must not remove the
@@ -656,7 +673,7 @@ func TestReceiveWorkspaceAcksBeforeItEndsTheLock(t *testing.T) {
 	if err != nil || !strings.HasPrefix(writer.ack.String(), "ok ") || !writer.locked {
 		t.Fatalf("receive = %q, %v; lock held at the ack = %v", writer.ack.String(), err, writer.locked)
 	}
-	if materializationsLocked(t, root) {
-		t.Fatal("the lock outlived the receive")
+	if !materializationsUnlockedWithin(t, root) {
+		t.Fatalf("the lock outlived the receive by more than %v", lockWaitBound)
 	}
 }
