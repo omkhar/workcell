@@ -162,7 +162,10 @@ func TestListenAddrPicksTheOneAddressInTheSubnet(t *testing.T) {
 // bind(2) makes the socket file before listen(2) runs, so a connect in between
 // is refused although Serve is healthy. The test therefore waits until a
 // lookup connects, not until the file exists, and every failure reports
-// whether Serve has returned and with what (issue 866).
+// whether Serve has returned and with what (issue 866). The CI log behind that
+// issue shows both lookups refused, the shape of this window; Serve closes its
+// listener only when ctx ends or Accept fails, so a refusal after a lookup
+// has connected would be a real fault, and nothing retries it.
 func TestNewBrokerLooksUpThroughTheCredentialBroker(t *testing.T) {
 	token := strings.Repeat("ab", 32)
 	for _, bad := range []string{"", "ab", strings.Repeat("zz", 32)} {
