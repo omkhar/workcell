@@ -9,6 +9,14 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Added
 
+- `workcell-citools refresh-action-inputs [--check] ROOT` rewrites
+  `tests/fixtures/actions/inputs.tsv` from the pinned `uses:` lines in
+  `.github/workflows`. It fetches `action.yml` only for a new pin
+  (`internal/metadatautil/action_inputs_refresh.go`).
+- `dependabot-follow-up.yml` runs that command and `flag-inventory restamp` on
+  each Dependabot PR with tools from the base commit, and uploads the fixture
+  patch. It has a read-only token and pushes nothing
+  (`.github/workflows/dependabot-follow-up.yml`).
 - `--target apple-container` selects the preview-only
   `local_vm/apple-container/per-session-vm` target. On Apple Silicon macOS 27
   or later, `--dry-run` prints a reviewed plan and `--doctor` prints

@@ -107,6 +107,7 @@ func subcommands() []subcommand {
 		{"verify-goose-release", "DOCKERFILE", 1, 1, cmdVerifyGooseRelease},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"flag-inventory", "plan|check|restamp ROOT | compare|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
+		{"refresh-action-inputs", "[--check] ROOT", 1, 2, cmdRefreshActionInputs},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
@@ -583,6 +584,29 @@ func cmdVerifyGooseRelease(args []string) error {
 
 func cmdPrepareCodexSubcommandFixture(args []string) error {
 	return metadatautil.PrepareCodexSubcommandFixture(args[0], args[1], args[2])
+}
+
+// cmdRefreshActionInputs rewrites tests/fixtures/actions/inputs.tsv from the
+// SHA-pinned actions in ROOT/.github/workflows. With --check it writes nothing
+// and exits 1 when the table is out of date.
+func cmdRefreshActionInputs(args []string) error {
+	check := false
+	if len(args) == 2 {
+		if args[0] != "--check" {
+			return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-citools refresh-action-inputs [--check] ROOT"}
+		}
+		check, args = true, args[1:]
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	changed, err := metadatautil.RefreshActionInputs(ctx, args[0], metadatautil.FetchActionMetadata, check)
+	if err != nil {
+		return err
+	}
+	if check && changed {
+		return &cliexit.ExitCodeError{Code: 1, Message: "tests/fixtures/actions/inputs.tsv is out of date; run workcell-citools refresh-action-inputs ROOT"}
+	}
+	return nil
 }
 
 func cmdFlagInventory(args []string) error {

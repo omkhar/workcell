@@ -203,7 +203,6 @@ docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bund
 docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
 docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
 docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
-docs/invariants.md	unanchored-claim	A compile error fails the test.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	A new hit fails.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	A row with no hit also fails.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	For an unprivileged caller it hands the invocation to `workcell-apt-broker-client`, which admits the package helper and refuses every other command.	claim predates the rule; cite the enforcing path or drop the claim

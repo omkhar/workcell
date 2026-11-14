@@ -58,6 +58,7 @@ For an approved large adapter PR, use both required options:
 | `claude-mention.yml` | Answers an `@claude` mention by the repository owner. See [Claude mention](#claude-mention). |
 | `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and required hostile-environment reruns. |
 | `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
+| `dependabot-follow-up.yml` | Makes the fixture patch that a Dependabot bump needs. See [Dependabot follow-up](#dependabot-follow-up). |
 | `docs.yml` | Checks spelling, links, contracts, and the man page. |
 | `fuzz.yml` | Runs extended Go and Rust fuzz tests. |
 | `hosted-controls.yml` | Checks GitHub controls that are outside Git. |
@@ -410,6 +411,51 @@ A new publisher requires a reviewed policy change.
 [`policy/tool-pins.toml`](../policy/tool-pins.toml) records the reviewed CI and release tools.
 `check-pinned-inputs` compares each workflow copy with that policy.
 `scripts/update-upstream-pins.sh` updates the workflow and policy copies together.
+
+## Dependabot follow-up
+
+A Dependabot bump of a GitHub Action or a provider CLI can make two fixtures stale:
+
+- `tests/fixtures/actions/inputs.tsv`, which has one row for each pinned action
+- the version stamps in `tests/fixtures/flags`
+
+`dependabot-follow-up.yml` runs on each Dependabot PR to `main`.
+It checks out the PR base commit and the bump commit in different directories.
+It runs `workcell-citools` from the base checkout, which is reviewed `main`.
+The bump checkout is only input: the job runs no script from it.
+The job has `contents: read`, no secrets, and checkouts that keep no credential.
+It pushes nothing.
+
+The job runs these two commands on the bump checkout:
+
+- `refresh-action-inputs`, which fetches `action.yml` only for a new pin
+- `flag-inventory restamp`
+
+The job uploads the result as the `dependabot-follow-up` artifact.
+If the patch is not empty, the job fails and shows the patch in the step summary (`.github/workflows/dependabot-follow-up.yml`).
+
+To apply the patch, use your own host:
+
+```bash
+gh run download RUN_ID --name dependabot-follow-up --dir /tmp/follow-up
+git switch dependabot/BRANCH
+git apply --index /tmp/follow-up/dependabot-follow-up.patch
+go run ./cmd/workcell-citools refresh-action-inputs --check .
+git commit -S
+git push
+```
+
+You can also run the two commands on the bump branch yourself:
+
+```bash
+go run ./cmd/workcell-citools refresh-action-inputs .
+go run ./cmd/workcell-citools flag-inventory restamp .
+```
+
+The job does not push the patch.
+A push needs a write token, and a `GITHUB_TOKEN` push starts no CI.
+A GitHub App token on `dependabot/**` branches needs a bypass of the branch ruleset.
+That decision is for the maintainer.
 
 ## Validator identity
 
