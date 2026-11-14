@@ -14,6 +14,11 @@ if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     fi
   fi
   unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_copilot_release_token
+  # The sanitized re-exec keeps only WORKCELL_* names, so record a GitHub
+  # Actions run here. Such a run never skips the check or reads the cache.
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    export WORKCELL_COPILOT_RELEASE_IN_CI=1
+  fi
 fi
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
@@ -30,6 +35,8 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/trusted-docker-client.sh
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+# shellcheck source=scripts/lib/github-release-quota.sh
+source "${ROOT_DIR}/scripts/lib/github-release-quota.sh"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-copilot-release.XXXXXX")"
 BUILD_INPUT_MANIFEST_PATH="${TMP_ROOT}/build-input.json"
 RELEASE_METADATA_PATH="${TMP_ROOT}/release.json"
@@ -44,6 +51,7 @@ COPILOT_DOCKER_HELP_BINARY=""
 COPILOT_DOCKER_HELP_LABEL=""
 COPILOT_DOCKER_CLIENT_READY=0
 COPILOT_DOCKER_CLIENT_OWNS_SANDBOX=0
+RELEASE_METADATA_FROM_CACHE=0
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
@@ -145,11 +153,7 @@ EOF
     return
   fi
 
-  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-    --speed-limit 1024 --speed-time 60 \
-    -H "Accept: application/octet-stream" \
-    "${url}" \
-    -o "${output}"
+  unauthenticated_github_get "${url}" "${output}" "application/octet-stream"
 }
 
 github_get() {
@@ -168,10 +172,49 @@ header = "Authorization: Bearer ${token}"
 EOF
     return
   fi
-  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
-    -H "Accept: ${accept}" \
-    "${url}" \
-    -o "${output}"
+  unauthenticated_github_get "${url}" "${output}" "${accept}"
+}
+
+# unauthenticated_github_get runs only when there is no token, which is a
+# local run: CI passes a token. When the unauthenticated quota is spent, a
+# local run stops the check with a notice and does not fail the local gate.
+# A GitHub Actions run fails.
+unauthenticated_github_get() {
+  local status=0
+
+  github_unauthenticated_get "$1" "$2" "$3" || status=$?
+  case "${status}" in
+    0) ;;
+    3)
+      [[ "${WORKCELL_COPILOT_RELEASE_IN_CI:-0}" != "1" ]] || exit 1
+      echo "NOTICE: skipped the rest of the upstream Copilot release check for v${COPILOT_VERSION}, because the GitHub API quota for requests without a token is spent." >&2
+      echo "NOTICE: CI runs this check with a token. Run it again here after the quota resets." >&2
+      exit 0
+      ;;
+    *) exit 1 ;;
+  esac
+}
+
+github_token_available() {
+  local token=""
+
+  token="$(github_token)" || exit 1
+  [[ -n "${token}" ]]
+}
+
+# cached_release_metadata_matches_pins succeeds when the cached metadata names
+# the pinned version and the pinned checksum of each asset. Only metadata that
+# a full check of the same pin stored is in the cache.
+cached_release_metadata_matches_pins() {
+  local target_arch=""
+  local platform=""
+
+  [[ "$(jq -r '.tag_name' "${RELEASE_METADATA_PATH}")" == "v${COPILOT_VERSION}" ]] || return 1
+  for target_arch in arm64:linux-arm64 amd64:linux-x64; do
+    platform="${target_arch#*:}"
+    target_arch="${target_arch%%:*}"
+    [[ "$(jq -r --arg asset_name "copilot-${platform}.tar.gz" '[.assets[] | select(.name == $asset_name) | .digest] | if length == 1 then .[0] else "" end' "${RELEASE_METADATA_PATH}")" == "sha256:$(extract_copilot_sha "${target_arch}")" ]] || return 1
+  done
 }
 
 discard_created_github_token_file() {
@@ -351,6 +394,9 @@ verify_asset() {
     echo "Pinned ${target_arch} Copilot checksum does not match GitHub release metadata" >&2
     exit 1
   fi
+  # Cached metadata comes from a full check of this pin that downloaded and
+  # checked this asset, so a run from the cache makes no API call.
+  [[ "${RELEASE_METADATA_FROM_CACHE}" == "1" ]] && return 0
   github_asset_get "${asset_url}" "${work_dir}/${tarball_name}"
   echo "${expected_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null # portability-exempt: require_tool sha256sum fails closed when it is absent
   tar -tzf "${work_dir}/${tarball_name}" copilot >/dev/null
@@ -397,7 +443,19 @@ if [[ -z "${COPILOT_VERSION}" ]]; then
   echo "Build input manifest is missing the Copilot version" >&2
   exit 1
 fi
-github_api_get "https://api.github.com/repos/github/copilot-cli/releases/tags/v${COPILOT_VERSION}" "${RELEASE_METADATA_PATH}"
+RELEASE_METADATA_CACHE_NAME="copilot-v${COPILOT_VERSION}.json"
+RELEASE_METADATA_CACHEABLE=0
+if [[ "${WORKCELL_COPILOT_RELEASE_IN_CI:-0}" != "1" ]] && ! github_token_available; then
+  RELEASE_METADATA_CACHEABLE=1
+fi
+if [[ "${RELEASE_METADATA_CACHEABLE}" == "1" && "${COPILOT_HELP_MODE}" == "checksum" ]] &&
+  github_release_cache_load "${RELEASE_METADATA_CACHE_NAME}" "${RELEASE_METADATA_PATH}" &&
+  cached_release_metadata_matches_pins; then
+  RELEASE_METADATA_FROM_CACHE=1
+  echo "Using the cached release metadata of a full check of Copilot v${COPILOT_VERSION} and its pinned checksums; this run makes no GitHub API call." >&2
+else
+  github_api_get "https://api.github.com/repos/github/copilot-cli/releases/tags/v${COPILOT_VERSION}" "${RELEASE_METADATA_PATH}"
+fi
 
 if [[ "$(jq -r '.tag_name' "${RELEASE_METADATA_PATH}")" != "v${COPILOT_VERSION}" ]]; then
   echo "GitHub Copilot CLI release metadata does not match v${COPILOT_VERSION}" >&2
@@ -410,6 +468,10 @@ fi
 
 verify_asset arm64 linux-arm64 "$(extract_copilot_sha arm64)"
 verify_asset amd64 linux-x64 "$(extract_copilot_sha amd64)"
+if [[ "${RELEASE_METADATA_CACHEABLE}" == "1" && "${RELEASE_METADATA_FROM_CACHE}" != "1" ]]; then
+  github_release_cache_store "${RELEASE_METADATA_CACHE_NAME}" "${RELEASE_METADATA_PATH}" ||
+    echo "Could not keep the Copilot v${COPILOT_VERSION} release metadata in the local cache; the next run reads it from GitHub again." >&2
+fi
 
 case "${COPILOT_HELP_MODE}" in
   auto)
