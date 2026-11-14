@@ -104,13 +104,23 @@ func brokeredRequest(t *testing.T, source string) MaterializeRequest {
 	return MaterializeRequest{StateRoot: t.TempDir(), TargetID: "workcell-l4-test", MaterializationID: "m1", SourceWorkspace: source}
 }
 
+// sendContext returns the context of one host send. It ends lockWaitBound
+// after the call, so a send that waits for the lock of its ID, which an
+// earlier send of this test kept, fails the test instead of hanging it until
+// the go test timeout.
+func sendContext(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(t.Context(), lockWaitBound)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 func TestBrokeredTargetMaterializesTheWorkspaceOnTheGuest(t *testing.T) {
 	t.Parallel()
 
 	guestRoot := t.TempDir()
 	var started bool
 	source := filepath.Join("testdata", "source-workspace")
-	result, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(context.Background(), brokeredRequest(t, source))
+	result, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(sendContext(t), brokeredRequest(t, source))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +166,7 @@ func TestBrokeredTargetKeepsTheSourceModesOnTheGuest(t *testing.T) {
 		}
 	}
 	var started bool
-	result, err := fakeBrokerTarget(t, "umask077", t.TempDir(), &started).MaterializeWorkspace(context.Background(), brokeredRequest(t, source))
+	result, err := fakeBrokerTarget(t, "umask077", t.TempDir(), &started).MaterializeWorkspace(sendContext(t), brokeredRequest(t, source))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +203,7 @@ func TestBrokeredTargetRejectsHostileWorkspacesBeforeTheBrokerStarts(t *testing.
 			t.Fatal(err)
 		}
 		var started bool
-		if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), &started).MaterializeWorkspace(context.Background(), brokeredRequest(t, source)); err == nil {
+		if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), &started).MaterializeWorkspace(sendContext(t), brokeredRequest(t, source)); err == nil {
 			t.Fatalf("%s: MaterializeWorkspace() succeeded", name)
 		}
 		if started {
@@ -208,7 +218,7 @@ func TestBrokeredTargetRejectsAnOptionLikeTargetID(t *testing.T) {
 	var started bool
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
 	req.TargetID = "--project=other"
-	if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), &started).MaterializeWorkspace(context.Background(), req); err == nil || started {
+	if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), &started).MaterializeWorkspace(sendContext(t), req); err == nil || started {
 		t.Fatalf("MaterializeWorkspace() error = %v, started = %v; want rejection before the broker", err, started)
 	}
 }
@@ -218,7 +228,7 @@ func TestBrokeredTargetPropagatesTheBrokerExitStatus(t *testing.T) {
 
 	var started bool
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	_, err := fakeBrokerTarget(t, "exit7", t.TempDir(), &started).MaterializeWorkspace(context.Background(), req)
+	_, err := fakeBrokerTarget(t, "exit7", t.TempDir(), &started).MaterializeWorkspace(sendContext(t), req)
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 7 || !strings.Contains(err.Error(), "Failed to lookup instance") || strings.Count(err.Error(), "noise") > 200 {
 		t.Fatalf("MaterializeWorkspace() error = %v, want broker exit status 7 and the stderr tail", err)
@@ -237,7 +247,7 @@ func TestBrokeredTargetRefusesAnEmptyBrokerCommandBeforeTheRecord(t *testing.T) 
 
 	for _, command := range []func(string) []string{nil, func(string) []string { return []string{} }} {
 		req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-		_, err := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: command}.MaterializeWorkspace(context.Background(), req)
+		_, err := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: command}.MaterializeWorkspace(sendContext(t), req)
 		if err == nil || !strings.Contains(err.Error(), "broker command is empty") {
 			t.Fatalf("MaterializeWorkspace() = %v, want the empty broker command", err)
 		}
@@ -261,7 +271,7 @@ func TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord(t *testing.T
 	for _, program := range []string{"/nonexistent/gcloud", notExecutable} {
 		req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
 		target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string { return []string{program, "compute"} }}
-		if _, err := target.MaterializeWorkspace(t.Context(), req); err == nil || !strings.Contains(err.Error(), "broker command cannot run") {
+		if _, err := target.MaterializeWorkspace(sendContext(t), req); err == nil || !strings.Contains(err.Error(), "broker command cannot run") {
 			t.Fatalf("%s: MaterializeWorkspace() = %v, want a broker command that cannot run", program, err)
 		}
 		if _, err := os.Lstat(hostManifestPath(req)); !errors.Is(err, os.ErrNotExist) {
@@ -279,7 +289,7 @@ func TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord(t *testing.T
 	}
 	// A second send of a confirmed ID must also keep the host copy and its
 	// confirmed manifest.
-	first, err := fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)).MaterializeWorkspace(t.Context(), req)
+	first, err := fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)).MaterializeWorkspace(sendContext(t), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +329,7 @@ func TestBrokeredTargetStartsTheResolvedBrokerProgram(t *testing.T) {
 	target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string {
 		return []string{fakeBrokerName, "-test.run=^TestFakeBrokerProcess$", "--", "resolved", guestRoot}
 	}}
-	result, err := target.MaterializeWorkspace(t.Context(), brokeredRequest(t, filepath.Join("testdata", "source-workspace")))
+	result, err := target.MaterializeWorkspace(sendContext(t), brokeredRequest(t, filepath.Join("testdata", "source-workspace")))
 	if err != nil {
 		t.Fatalf("MaterializeWorkspace() = %v, want the broker started as the resolved file", err)
 	}
@@ -351,7 +361,7 @@ func TestBrokeredTargetKeepsAnUnconfirmedRecordWhenTheAckIsLost(t *testing.T) {
 	guestRoot := t.TempDir()
 	var started bool
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	if _, err := fakeBrokerTarget(t, "lostack", guestRoot, &started).MaterializeWorkspace(context.Background(), req); err == nil {
+	if _, err := fakeBrokerTarget(t, "lostack", guestRoot, &started).MaterializeWorkspace(sendContext(t), req); err == nil {
 		t.Fatal("MaterializeWorkspace() succeeded without an ack")
 	}
 	guestWorkspace := filepath.Join(guestRoot, "materializations", "m1", MaterializedWorktree)
@@ -369,7 +379,7 @@ func TestBrokeredTargetKeepsAnUnconfirmedRecordWhenTheAckIsLost(t *testing.T) {
 	if err := unix.Mkfifo(filepath.Join(hostile.SourceWorkspace, "pipe"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(context.Background(), hostile); err == nil {
+	if _, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(sendContext(t), hostile); err == nil {
 		t.Fatal("MaterializeWorkspace() accepted a hostile workspace")
 	}
 	if kept := readHostManifest(t, req); kept.GuestTransfer != GuestTransferUnconfirmed || kept.ArchiveSHA256 != manifest.ArchiveSHA256 {
@@ -377,7 +387,7 @@ func TestBrokeredTargetKeepsAnUnconfirmedRecordWhenTheAckIsLost(t *testing.T) {
 	}
 
 	// A second send that the guest acknowledges confirms the record.
-	result, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(context.Background(), req)
+	result, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(sendContext(t), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +403,7 @@ func TestBrokeredTargetKeepsAnUnconfirmedRecordWhenTheGuestRefuses(t *testing.T)
 
 	var started bool
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	_, err := fakeBrokerTarget(t, "refuse", t.TempDir(), &started).MaterializeWorkspace(context.Background(), req)
+	_, err := fakeBrokerTarget(t, "refuse", t.TempDir(), &started).MaterializeWorkspace(sendContext(t), req)
 	if err == nil || !strings.Contains(err.Error(), "guest refused the workspace archive") {
 		t.Fatalf("MaterializeWorkspace() error = %v, want the guest refusal", err)
 	}
@@ -415,7 +425,7 @@ func TestMaterializeRefusesASymlinkedStateDirectory(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(req.StateRoot, "targets")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err == nil {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); err == nil {
 		t.Fatal("materializeInStateRoot() followed a symlinked state directory")
 	}
 	if entries, err := os.ReadDir(victim); err != nil || len(entries) != 0 {
@@ -428,7 +438,7 @@ func TestMaterializeCreatesAStateRootBelowMissingParents(t *testing.T) {
 
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
 	req.StateRoot = filepath.Join(req.StateRoot, "missing", "state")
-	result, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	result, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +462,7 @@ func TestMaterializeKeepsOtherAccountsOutOfTheHostCopy(t *testing.T) {
 		if err := prepare(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err != nil {
+		if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); err != nil {
 			t.Fatal(err)
 		}
 		for _, dir := range []string{targets, materializationRoot} {
@@ -470,7 +480,7 @@ func TestMaterializeKeepsTheHostCopyThatTheKeptManifestRecords(t *testing.T) {
 	t.Parallel()
 
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +492,7 @@ func TestMaterializeKeepsTheHostCopyThatTheKeptManifestRecords(t *testing.T) {
 	if err := unix.Mkfifo(filepath.Join(hostile.SourceWorkspace, "z"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), hostile); err == nil {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), hostile); err == nil {
 		t.Fatal("materializeInStateRoot() accepted a hostile workspace")
 	}
 	kept := readHostManifest(t, req)
@@ -510,7 +520,7 @@ func TestMaterializeKeepsTheHostCopyThatTheKeptManifestRecords(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(second.SourceWorkspace, "b"), []byte("second"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), second)
+	result, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +555,7 @@ func TestMaterializeReplacesANonDirectoryHostCopy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-			first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+			first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -557,7 +567,7 @@ func TestMaterializeReplacesANonDirectoryHostCopy(t *testing.T) {
 				t.Fatal(err)
 			}
 			plant(t, first.MaterializedWorkspace, outside)
-			result, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+			result, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -630,7 +640,7 @@ func TestBrokeredTargetKeepsTheHostCopyWhenTheArchiveFails(t *testing.T) {
 	guestRoot := t.TempDir()
 	var started bool
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	first, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(context.Background(), req)
+	first, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(sendContext(t), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +648,7 @@ func TestBrokeredTargetKeepsTheHostCopyWhenTheArchiveFails(t *testing.T) {
 	t.Cleanup(func() { createArchiveFile = os.CreateTemp })
 	second := req
 	second.SourceWorkspace = secondSource(t)
-	if _, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(context.Background(), second); !errors.Is(err, unix.ENOSPC) {
+	if _, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(sendContext(t), second); !errors.Is(err, unix.ENOSPC) {
 		t.Fatalf("MaterializeWorkspace() = %v, want ENOSPC", err)
 	}
 	assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
@@ -653,7 +663,7 @@ func materializeUntilKilled(t *testing.T, req MaterializeRequest) {
 			t.Fatalf("the send was not killed: %v", recovered)
 		}
 	}()
-	_, _ = materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	_, _ = materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 }
 
 func failHostileSend(t *testing.T, req MaterializeRequest) {
@@ -663,7 +673,7 @@ func failHostileSend(t *testing.T, req MaterializeRequest) {
 	if err := unix.Mkfifo(filepath.Join(hostile.SourceWorkspace, "pipe"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), hostile); err == nil {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), hostile); err == nil {
 		t.Fatal("materializeInStateRoot() accepted a hostile workspace")
 	}
 }
@@ -683,7 +693,7 @@ func TestMaterializeRefusesToRestoreAPlantedPrevious(t *testing.T) {
 				t.Skip("needs root to give a directory to another account")
 			}
 			req := brokeredRequest(t, t.TempDir())
-			first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+			first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -725,7 +735,7 @@ func TestMaterializeRefusesAKeptManifestThatItCannotRead(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-			first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+			first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -734,7 +744,7 @@ func TestMaterializeRefusesAKeptManifestThatItCannotRead(t *testing.T) {
 			if err := os.WriteFile(first.ManifestPath, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err == nil {
+			if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); err == nil {
 				t.Fatal("materializeInStateRoot() accepted a kept manifest that it cannot read")
 			}
 			if entries, err := copyWorkspaceTree(first.MaterializedWorkspace, "", nil); err != nil || !slices.Equal(entries, first.Manifest.Entries) {
@@ -766,7 +776,7 @@ func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
 	}
 	sends := make(chan error, 4)
 	go func() {
-		_, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+		_, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 		sends <- err
 	}()
 	<-paused
@@ -789,7 +799,7 @@ func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
 		}
 	}
 	go func() {
-		_, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+		_, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 		sends <- err
 	}()
 	resume <- struct{}{}
@@ -809,7 +819,7 @@ func TestMaterializeRefusesAManifestOverTheReadLimit(t *testing.T) {
 	limit := maxManifestBytes
 	t.Cleanup(func() { maxManifestBytes = limit })
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -822,7 +832,7 @@ func TestMaterializeRefusesAManifestOverTheReadLimit(t *testing.T) {
 	mustMkdir(t, leftover)
 	second := req
 	second.SourceWorkspace = secondSource(t)
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), second); err == nil || !strings.Contains(err.Error(), "exceeds the limit") {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), second); err == nil || !strings.Contains(err.Error(), "exceeds the limit") {
 		t.Fatalf("materializeInStateRoot() = %v, want the manifest limit", err)
 	}
 	assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
@@ -830,7 +840,7 @@ func TestMaterializeRefusesAManifestOverTheReadLimit(t *testing.T) {
 		t.Fatalf("leftover copy: %v", err)
 	}
 	// A manifest of exactly the limit is written.
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err != nil {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -854,7 +864,7 @@ func TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap(t *testing.T) {
 				}
 				t.Run(fmt.Sprintf("%s change, kill=%v before %s", change, kill, step), func(t *testing.T) {
 					req := brokeredRequest(t, testSource(t, ""))
-					first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+					first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -903,7 +913,7 @@ func TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap(t *testing.T) {
 					}
 					if kill {
 						materializeUntilKilled(t, second)
-					} else if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), second); !errors.Is(err, unix.ENOSPC) {
+					} else if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), second); !errors.Is(err, unix.ENOSPC) {
 						t.Fatalf("materializeInStateRoot() = %v, want ENOSPC", err)
 					} else if assertKept(); want == nil {
 						// No manifest describes the new copy, so it is not left in place.
@@ -924,13 +934,13 @@ func TestMaterializeRecoversAnInterruptionAtEveryStepOfTheSwap(t *testing.T) {
 						}
 						return nil
 					}
-					if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), second); !errors.Is(err, unix.ENOSPC) {
+					if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), second); !errors.Is(err, unix.ENOSPC) {
 						t.Fatalf("materializeInStateRoot() = %v, want ENOSPC", err)
 					}
 					swapStep = noStep
 					assertKept()
 					assertCopiesKept(t, first.MaterializationRoot, left)
-					result, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+					result, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -983,7 +993,7 @@ func TestMaterializeKeepsTheNewCopyWhenItCannotReadBackAFailedManifest(t *testin
 	write := writeManifestAt
 	t.Cleanup(func() { writeManifestAt = write })
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -997,7 +1007,7 @@ func TestMaterializeKeepsTheNewCopyWhenItCannotReadBackAFailedManifest(t *testin
 	}
 	second := req
 	second.SourceWorkspace = secondSource(t)
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), second); !errors.Is(err, unix.EIO) {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), second); !errors.Is(err, unix.EIO) {
 		t.Fatalf("materializeInStateRoot() = %v, want EIO", err)
 	}
 	if err := os.Rename(moved, first.ManifestPath); err != nil {
@@ -1020,7 +1030,7 @@ func TestMaterializeRemovesWhatRecoveryMovesAside(t *testing.T) {
 	write := writeManifestAt
 	t.Cleanup(func() { writeManifestAt = write })
 	req := brokeredRequest(t, testSource(t, ""))
-	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1037,7 +1047,7 @@ func TestMaterializeRemovesWhatRecoveryMovesAside(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err != nil {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); err != nil {
 		t.Fatal(err)
 	}
 	if names, err := os.ReadDir(first.MaterializationRoot); err != nil || len(names) != 2 {
@@ -1054,7 +1064,7 @@ func TestBrokeredTargetRefusesASendWhoseConfirmedManifestCannotFit(t *testing.T)
 	limit := maxManifestBytes
 	t.Cleanup(func() { maxManifestBytes = limit })
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	result, staged, err := stageInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	result, staged, err := stageInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1067,7 +1077,7 @@ func TestBrokeredTargetRefusesASendWhoseConfirmedManifestCannotFit(t *testing.T)
 	guestRoot := filepath.Join(t.TempDir(), strings.Repeat("g", 200))
 	mustMkdir(t, guestRoot)
 	var started bool
-	if _, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(t.Context(), req); err == nil || started {
+	if _, err := fakeBrokerTarget(t, "receive", guestRoot, &started).MaterializeWorkspace(sendContext(t), req); err == nil || started {
 		t.Fatalf("MaterializeWorkspace() = %v, broker started = %v; want the manifest limit before the broker", err, started)
 	}
 }
@@ -1087,7 +1097,7 @@ func TestBrokeredTargetEndsTheLockWhenTheSendPanics(t *testing.T) {
 			}
 		}()
 		target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string { panic("broker lookup") }}
-		_, _ = target.MaterializeWorkspace(t.Context(), req)
+		_, _ = target.MaterializeWorkspace(sendContext(t), req)
 	}()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
@@ -1104,7 +1114,7 @@ func TestBrokeredTargetEndsTheLockWhenTheSendPanics(t *testing.T) {
 func TestMaterializeRefusesAnEndedContextBeforeTheSwap(t *testing.T) {
 	t.Cleanup(func() { createArchiveFile = os.CreateTemp })
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1138,7 +1148,7 @@ func TestMaterializeKeepsAKeptCopyThatRecoveryCannotScan(t *testing.T) {
 	write, limits := writeManifestAt, defaultWorkspaceLimits
 	t.Cleanup(func() { writeManifestAt, defaultWorkspaceLimits = write, limits })
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	first, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1149,12 +1159,12 @@ func TestMaterializeKeepsAKeptCopyThatRecoveryCannotScan(t *testing.T) {
 	req.SourceWorkspace = t.TempDir()
 	materializeUntilKilled(t, req)
 	writeManifestAt, defaultWorkspaceLimits.maxEntries = func(*os.File, string, []byte, os.FileMode, string) error { return unix.ENOSPC }, len(first.Manifest.Entries)-1
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); !errors.Is(err, unix.ENOSPC) {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); !errors.Is(err, unix.ENOSPC) {
 		t.Fatalf("materializeInStateRoot() = %v, want ENOSPC", err)
 	}
 	writeManifestAt, defaultWorkspaceLimits = write, limits
 	kept := hostCopies(t, first.MaterializationRoot)[fmt.Sprint(readHostManifest(t, req).Entries)]
-	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err != nil || !kept {
+	if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); err != nil || !kept {
 		t.Fatalf("a host copy matches the kept manifest: %v; the next send: %v", kept, err)
 	}
 }
@@ -1166,14 +1176,14 @@ func TestMaterializeKeepsAKeptCopyThatRecoveryCannotScan(t *testing.T) {
 func TestBrokeredTargetConfirmsTheLongestAckAtTheManifestLimit(t *testing.T) {
 	defer func(limit int64) { maxManifestBytes = limit }(maxManifestBytes)
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
-	first, err := fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)).MaterializeWorkspace(t.Context(), req)
+	first, err := fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)).MaterializeWorkspace(sendContext(t), req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	second := req
 	second.SourceWorkspace = secondSource(t)
 	empty := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string { return nil }}
-	if _, err := empty.MaterializeWorkspace(t.Context(), second); err == nil || !strings.Contains(err.Error(), "broker command is empty") {
+	if _, err := empty.MaterializeWorkspace(sendContext(t), second); err == nil || !strings.Contains(err.Error(), "broker command is empty") {
 		t.Fatalf("MaterializeWorkspace() = %v, want the empty broker command", err)
 	}
 	assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
@@ -1187,7 +1197,7 @@ func TestBrokeredTargetConfirmsTheLongestAckAtTheManifestLimit(t *testing.T) {
 	for _, size := range []int{len(content) - 1, len(content)} {
 		maxManifestBytes = int64(size)
 		var started bool
-		_, err := fakeBrokerTarget(t, "longack", t.TempDir(), &started).MaterializeWorkspace(t.Context(), req)
+		_, err := fakeBrokerTarget(t, "longack", t.TempDir(), &started).MaterializeWorkspace(sendContext(t), req)
 		if (err == nil) != (size == len(content)) || started != (err == nil) {
 			t.Fatalf("limit %d: MaterializeWorkspace() = %v, broker started = %v", size, err, started)
 		}
