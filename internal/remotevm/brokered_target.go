@@ -161,11 +161,11 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 	if err != nil {
 		return "", err
 	}
-	// A send whose context has ended starts no broker.
+	result.Manifest.GuestTransfer = GuestTransferUnconfirmed
+	// A send whose context has ended must not replace the host copy.
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	result.Manifest.GuestTransfer = GuestTransferUnconfirmed
 	if err := staged.commit(result.ManifestPath, result.Manifest); err != nil {
 		return "", err
 	}

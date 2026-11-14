@@ -265,6 +265,9 @@ func stageWorkspaceCopy(ctx context.Context, sourceWorkspace, materializationRoo
 			err = unix.Flock(int(parent.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		}
 	}
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		return nil, nil, errors.Join(err, parent.Close())
 	}

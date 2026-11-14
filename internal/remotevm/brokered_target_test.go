@@ -1091,3 +1091,36 @@ func TestBrokeredTargetEndsTheLockWhenTheSendPanics(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestMaterializeRefusesAnEndedContextBeforeTheSwap ends the context before a
+// free lock is taken, or after the staging. The host copy and the kept
+// manifest must stay, and the broker must not start.
+// Not parallel: it replaces createArchiveFile.
+func TestMaterializeRefusesAnEndedContextBeforeTheSwap(t *testing.T) {
+	t.Cleanup(func() { createArchiveFile = os.CreateTemp })
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := req
+	second.SourceWorkspace = secondSource(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := materializeInStateRoot(ctx, DefaultGCPVMContract(), second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("materializeInStateRoot() = %v, want the ended context", err)
+	}
+	assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
+	for _, late := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(t.Context())
+		if !late {
+			cancel()
+		}
+		createArchiveFile = func(dir, pattern string) (*os.File, error) { cancel(); return os.CreateTemp(dir, pattern) }
+		var started bool
+		if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), &started).MaterializeWorkspace(ctx, second); !errors.Is(err, context.Canceled) || started {
+			t.Fatalf("late %v: MaterializeWorkspace() = %v, broker started = %v", late, err, started)
+		}
+		assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
+	}
+}
