@@ -21,13 +21,13 @@ func TestStopEgressProxyDenyLogPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const unreadable = "prof|S1|egress_summary|status=unreadable|\n"
+	unreadable := withSID("prof|$SID|egress_summary|status=unreadable|\n")
 	for _, tc := range []struct {
 		name, logs, helper, mode string
 		want, audit              string
 		warns                    bool
 	}{
-		{"logs succeed", "logs-ok", "ok", "", "new\n", "prof|S1|egress_deny|host=new|count=1|\nprof|S1|egress_summary|status=complete|\n", false},
+		{"logs succeed", "logs-ok", "ok", "", "new\n", withSID("prof|$SID|egress_deny|host=new|count=1|\nprof|$SID|egress_summary|status=complete|\n"), false},
 		{"logs fail", "logs-fail", "ok", "", "old\n", unreadable, true},
 		{"read fails", "logs-ok", "fail", "", "new\n", unreadable, false},
 		{"no-audit", "logs-ok", "ok", "no-audit", "new\n", "", false},
@@ -36,7 +36,7 @@ func TestStopEgressProxyDenyLogPublish(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			sessions := filepath.Join(dir, "sessions")
-			final := filepath.Join(sessions, "S1.egress-deny.jsonl")
+			final := filepath.Join(sessions, brokerTestSession+".egress-deny.jsonl")
 			if err := os.MkdirAll(sessions, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +48,7 @@ func TestStopEgressProxyDenyLogPublish(t *testing.T) {
 			script := `
 set -euo pipefail
 source "$LIB"
-SESSION_ID=S1 EGRESS_PROXY_CONTAINER=side EGRESS_PROXY_NETWORK=net
+SESSION_ID="$SID" EGRESS_PROXY_CONTAINER=side EGRESS_PROXY_NETWORK=net
 profile_sessions_dir_path() { printf '%s\n' "$SESSIONS"; }
 go_hostutil() {
   case "$2" in
@@ -72,7 +72,7 @@ stop_egress_proxy prof ${MODE}
 `
 			cmd := exec.Command("bash", "-c", script)
 			cmd.Env = append(os.Environ(), "LIB="+lib, "SESSIONS="+sessions, "LOGS="+tc.logs, "REMOVED="+removed, "TMPDIR="+dir,
-				"HELPER="+tc.helper, "AUDITED="+audited, "MODE="+tc.mode)
+				"HELPER="+tc.helper, "AUDITED="+audited, "MODE="+tc.mode, "SID="+brokerTestSession)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("stop_egress_proxy failed: %v\n%s", err, out)

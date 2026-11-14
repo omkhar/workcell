@@ -4,6 +4,8 @@
 package testkit
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,35 @@ import (
 	"strings"
 	"testing"
 )
+
+// brokerTestSession is the session id of this test process's fake brokers.
+// The broker stop scans every process of this uid for a broker that serves
+// the session, so a fixed id let two go test runs on one host find and signal
+// each other's fake brokers (issue 872). Shell bodies read it as $SID, and
+// withSID puts it in place of $SID in the expected strings.
+var brokerTestSession = newBrokerTestSession()
+
+func newBrokerTestSession() string {
+	var random [8]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		panic(err)
+	}
+	return "S" + hex.EncodeToString(random[:])
+}
+
+func withSID(text string) string { return strings.ReplaceAll(text, "$SID", brokerTestSession) }
+
+// TestBrokerTestSessionIsUniquePerRun keeps the fake brokers of two runs
+// apart: the id is random hex, not the fixed S1 every run used to share.
+func TestBrokerTestSessionIsUniquePerRun(t *testing.T) {
+	random, err := hex.DecodeString(strings.TrimPrefix(brokerTestSession, "S"))
+	if brokerTestSession[0] != 'S' || err != nil || len(random) != 8 || hex.EncodeToString(random) != brokerTestSession[1:] {
+		t.Fatalf("broker test session = %q, want S and 16 lower-case hex digits", brokerTestSession)
+	}
+	if other := newBrokerTestSession(); other == brokerTestSession {
+		t.Fatalf("two broker test sessions are both %q", other)
+	}
+}
 
 // brokerLaunchProbe sources the launcher modules, stubs the host helpers and
 // runs body. It returns the combined output and the run error.
@@ -21,7 +52,7 @@ func brokerLaunchProbe(t *testing.T, dir, body string, env ...string) (string, e
 set -euo pipefail
 source "$ROOT/scripts/lib/launcher/host-detect.sh"
 source "$ROOT/scripts/lib/launcher/egress-endpoints.sh"
-SESSION_ID=S1 COLIMA_PROFILE=prof INJECTION_BUNDLE_ROOT=/bundle TRUSTED_HOST_PATH=/usr/bin:/bin REAL_HOME="$DIR"
+SESSION_ID="$SID" COLIMA_PROFILE=prof INJECTION_BUNDLE_ROOT=/bundle TRUSTED_HOST_PATH=/usr/bin:/bin REAL_HOME="$DIR"
 INJECTION_CREDENTIAL_PLACEHOLDER=wcph-0123456789abcdef0123456789abcdef
 profile_sessions_dir_path() { printf '%s\n' "$DIR/sessions"; }
 go_hostutil() {
@@ -41,7 +72,7 @@ run_host_colima() {
 }
 ` + body
 	cmd := exec.Command("bash", "-c", script)
-	cmd.Env = append(os.Environ(), append([]string{"ROOT=" + root, "DIR=" + dir, "TMPDIR=" + dir}, env...)...)
+	cmd.Env = append(os.Environ(), append([]string{"ROOT=" + root, "DIR=" + dir, "TMPDIR=" + dir, "SID=" + brokerTestSession}, env...)...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -64,7 +95,7 @@ func TestStartCredentialBrokerKeepsTheTokenOutOfArgv(t *testing.T) {
 append_session_control_audit_record() { printf 'audit %s\n' "$*" >>"$DIR/colima"; }
 start_credential_broker
 until [[ -s "$DIR/token" ]]; do sleep 0.05; done
-read -r pid _ <"$DIR/sessions/S1.broker"
+read -r pid _ <"$DIR/sessions/$SID.broker"
 kill "$pid"
 printf 'token=%s\n' "$CREDENTIAL_BROKER_TOKEN"
 printf 'docker=%s\n' "${EGRESS_PROXY_BROKER_DOCKER_ARGS[*]}"
@@ -81,12 +112,12 @@ printf 'proxy=%s\n' "${EGRESS_PROXY_BROKER_PROXY_ARGS[*]}"
 		t.Fatalf("broker read %q on fd 3, want the session token", got)
 	}
 	argv, _ := os.ReadFile(filepath.Join(dir, "argv"))
-	if strings.Contains(string(argv), token) || !strings.Contains(string(argv), "--guest-socket\n/tmp/workcell-broker-S1.sock\n") ||
+	if strings.Contains(string(argv), token) || !strings.Contains(string(argv), withSID("--guest-socket\n/tmp/workcell-broker-$SID.sock\n")) ||
 		strings.Contains(string(argv), "--keychain") {
 		t.Fatalf("broker argv = %q", argv)
 	}
 	for _, want := range []string{
-		"docker=--tmpfs /run/workcell-egress:rw,noexec,nosuid,nodev,size=64k,uid=65532,gid=65532,mode=0700 -v /tmp/workcell-broker-S1.sock:/run/workcell-broker.sock -e WORKCELL_BROKER_TOKEN\n",
+		withSID("docker=--tmpfs /run/workcell-egress:rw,noexec,nosuid,nodev,size=64k,uid=65532,gid=65532,mode=0700 -v /tmp/workcell-broker-$SID.sock:/run/workcell-broker.sock -e WORKCELL_BROKER_TOKEN\n"),
 		"proxy=-terminate api.anthropic.com=x-api-key=wcph-0123456789abcdef0123456789abcdef -ca-out /run/workcell-egress/ca.pem -ca-ttl 24h -broker-socket /run/workcell-broker.sock\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -94,10 +125,10 @@ printf 'proxy=%s\n' "${EGRESS_PROXY_BROKER_PROXY_ARGS[*]}"
 		}
 	}
 	colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
-	want := "ssh-config --profile prof\nssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n" +
-		"ssh --profile prof -- test -S /tmp/workcell-broker-S1.sock\nssh --profile prof -- sudo chown 65532:65532 -- /tmp/workcell-broker-S1.sock\n" +
-		"ssh --profile prof -- sudo chmod 0600 -- /tmp/workcell-broker-S1.sock\nssh --profile prof -- stat -c %u:%g:%a -- /tmp/workcell-broker-S1.sock\n" +
-		"audit prof S1 credential_broker_start key=claude_api_key item=workcell-claude-api-key\n"
+	want := withSID("ssh-config --profile prof\nssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-$SID.sock\n" +
+		"ssh --profile prof -- test -S /tmp/workcell-broker-$SID.sock\nssh --profile prof -- sudo chown 65532:65532 -- /tmp/workcell-broker-$SID.sock\n" +
+		"ssh --profile prof -- sudo chmod 0600 -- /tmp/workcell-broker-$SID.sock\nssh --profile prof -- stat -c %u:%g:%a -- /tmp/workcell-broker-$SID.sock\n" +
+		"audit prof $SID credential_broker_start key=claude_api_key item=workcell-claude-api-key\n")
 	if string(colima) != want {
 		t.Fatalf("colima calls = %q, want %q", colima, want)
 	}
@@ -138,16 +169,16 @@ func TestCredentialBrokerTestKeychainIsHarnessOnly(t *testing.T) {
 func TestStopCredentialBrokerSignalsOnlyThisSessionBroker(t *testing.T) {
 	const bin = "/x/workcell-hostutil-abc "
 	const serve = bin + "credential-broker-cli serve --socket $PRIVATE/b.sock "
-	const s1 = "--guest-socket /tmp/workcell-broker-$S1.sock --log l"
+	const s1 = "--guest-socket /tmp/workcell-broker-$THIS.sock --log l"
 	for _, tc := range []struct {
 		name, argv             string
 		state, killed, cleaned bool
 	}{
 		{"state this session", serve + "--token-fd 3 " + s1, true, true, true},
-		{"state other session", serve + "--guest-socket /tmp/workcell-broker-$S2.sock", true, false, true},
+		{"state other session", serve + "--guest-socket /tmp/workcell-broker-$OTHER.sock", true, false, true},
 		{"no state this session", serve + "--token-fd 3 " + s1, false, true, true},
-		{"no state other session", serve + "--guest-socket /tmp/workcell-broker-$S2.sock", false, false, false},
-		{"socket inside another argument", serve + "--ssh-host x--guest-socket /tmp/workcell-broker-$S1.sock --log l", false, false, false},
+		{"no state other session", serve + "--guest-socket /tmp/workcell-broker-$OTHER.sock", false, false, false},
+		{"socket inside another argument", serve + "--ssh-host x--guest-socket /tmp/workcell-broker-$THIS.sock --log l", false, false, false},
 		{"not a serving broker", bin + "credential-broker-cli --socket $PRIVATE/b.sock " + s1, false, false, false},
 		{"serve words inside a shell command", bin + "x credential-broker-cli serve --socket $PRIVATE/b.sock " + s1, false, false, false},
 		{"another binary", "/bin/zsh credential-broker-cli serve --socket $PRIVATE/b.sock " + s1, false, false, false},
@@ -173,8 +204,8 @@ func TestStopCredentialBrokerSignalsOnlyThisSessionBroker(t *testing.T) {
 				out, err := brokerLaunchProbe(t, dir, `
 argv="${ARGV//\$PRIVATE/$PRIVATE}"
 argv="${argv//\$DIR/$DIR}"
-argv="${argv//\$S1/$SESSION}"
-argv="${argv//\$S2/${SESSION}x}"
+argv="${argv//\$THIS/$SESSION}"
+argv="${argv//\$OTHER/${SESSION}x}"
 (exec -a "$argv" sleep 30) &
 pid=$!
 [[ "$STATE" != 1 ]] || printf '%s %s\n' "$pid" "$PRIVATE" >"$DIR/sessions/$SESSION.broker"
@@ -293,7 +324,7 @@ if grep -qF -- "fakebroker $DIR " <<<"$running"; then echo alive; fi
 				t.Fatalf("the broker still runs after the failed start\n%s", out)
 			}
 			colima, _ := os.ReadFile(filepath.Join(dir, "colima"))
-			if !strings.HasSuffix(string(colima), "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n") {
+			if !strings.HasSuffix(string(colima), withSID("ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-$SID.sock\n")) {
 				t.Fatalf("guest socket not removed last: %q", colima)
 			}
 			if left, _ := filepath.Glob(filepath.Join(dir, "wcb.*")); len(left) != 0 {
@@ -339,7 +370,7 @@ run_workcell_docker_client_command() {
 start_credential_broker
 token="$CREDENTIAL_BROKER_TOKEN"
 start_egress_proxy sha256:abc
-read -r pid _ <"$DIR/sessions/S1.broker"
+read -r pid _ <"$DIR/sessions/$SID.broker"
 kill "$pid"
 printf 'token=%s\n' "$token"
 printf 'agent=%s\n' "${DOCKER_RUN[*]}"
@@ -405,7 +436,7 @@ stop_egress_proxy prof
 stop_egress_proxy prof no-audit
 `)
 	got, _ := os.ReadFile(filepath.Join(dir, "audit"))
-	if want := "broker prof S1 audit\nprof S1 egress_summary status=unreadable\nbroker prof S1 no-audit\n"; err != nil || string(got) != want {
+	if want := withSID("broker prof $SID audit\nprof $SID egress_summary status=unreadable\nbroker prof $SID no-audit\n"); err != nil || string(got) != want {
 		t.Fatalf("stop_egress_proxy steps = %q, %v; want %q\n%s", got, err, want, out)
 	}
 }
@@ -425,8 +456,8 @@ func TestCredentialBrokerTerminateKeepsUnshapedDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := brokerLaunchProbe(t, dir, `
-credential_broker_terminate prof "" /tmp/workcell-broker-S1.sock "$DIR/keep" ""
-credential_broker_terminate prof "" /tmp/workcell-broker-S1.sock "$DIR/wcb.Sym123" ""
+credential_broker_terminate prof "" "/tmp/workcell-broker-$SID.sock" "$DIR/keep" ""
+credential_broker_terminate prof "" "/tmp/workcell-broker-$SID.sock" "$DIR/wcb.Sym123" ""
 `)
 	if err != nil {
 		t.Fatalf("credential_broker_terminate failed: %v\n%s", err, out)
@@ -459,9 +490,9 @@ func TestSessionDeleteStopsAnOrphanBrokerWithoutANetwork(t *testing.T) {
 				}
 			}
 			for name, data := range map[string]string{
-				filepath.Join(sessions, "S1.json"):         "{}\n",
-				filepath.Join(sessions, "S1.broker.jsonl"): "{}\n",
-				filepath.Join(private, "ledger.jsonl"):     "{}\n",
+				filepath.Join(sessions, brokerTestSession+".json"):         "{}\n",
+				filepath.Join(sessions, brokerTestSession+".broker.jsonl"): "{}\n",
+				filepath.Join(private, "ledger.jsonl"):                     "{}\n",
 			} {
 				if err := os.WriteFile(name, []byte(data), 0o600); err != nil {
 					t.Fatal(err)
@@ -471,19 +502,19 @@ func TestSessionDeleteStopsAnOrphanBrokerWithoutANetwork(t *testing.T) {
 source "$ROOT/scripts/lib/shellproto.sh"
 `+deleteMain+`
 if [[ "$LIVE" == 1 ]]; then
-  (exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.AbC123/b.sock --guest-socket /tmp/workcell-broker-S1.sock" sleep 30) &
+  (exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.AbC123/b.sock --guest-socket /tmp/workcell-broker-$SID.sock" sleep 30) &
   pid=$!
 else
   (exit 0) &
   pid=$!
   wait "$pid"
 fi
-printf '%s %s\n' "$pid" "$DIR/wcb.AbC123" >"$DIR/sessions/S1.broker"
+printf '%s %s\n' "$pid" "$DIR/wcb.AbC123" >"$DIR/sessions/$SID.broker"
 for _ in {1..40}; do [[ "$LIVE" == 0 || "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
-session_run_cli_with_roots() { printf 'session_id=S1\nrecord_only=0\ndry_run=%s\n' "$DRY"; }
+session_run_cli_with_roots() { printf 'session_id=%s\nrecord_only=0\ndry_run=%s\n' "$SID" "$DRY"; }
 load_session_runtime_metadata() {
   SESSION_META_PROFILE=prof SESSION_META_STATUS=failed SESSION_META_LIVE_STATUS="" SESSION_META_MONITOR_PID=""
-  SESSION_META_RECORD_PATH="$DIR/sessions/S1.json" SESSION_META_CONTAINER_NAME=c SESSION_META_SESSION_AUDIT_DIR=""
+  SESSION_META_RECORD_PATH="$DIR/sessions/$SID.json" SESSION_META_CONTAINER_NAME=c SESSION_META_SESSION_AUDIT_DIR=""
 }
 session_is_terminal_status() { return 0; }
 profile_docker_transport_available() { return 0; }
@@ -494,16 +525,16 @@ egress_proxy_network_for_session() { :; }
 session_delete_resolve_dir_artifact() { return 1; }
 session_delete_resolve_file_artifact() { return 1; }
 [[ "$STUCK" != 1 ]] || stop_credential_broker() { :; }
-if (session_delete_main --id S1); then echo deleted; else echo refused; fi
+if (session_delete_main --id "$SID"); then echo deleted; else echo refused; fi
 if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; kill "$pid"; else echo stopped; fi
 `, "DRY="+dry, "LIVE="+tc.live, "STUCK="+tc.stuck)
 			if err != nil {
 				t.Fatalf("session delete failed: %v\n%s", err, out)
 			}
-			_, stateErr := os.Stat(filepath.Join(sessions, "S1.broker"))
-			_, ledgerErr := os.Stat(filepath.Join(sessions, "S1.broker.jsonl"))
+			_, stateErr := os.Stat(filepath.Join(sessions, brokerTestSession+".broker"))
+			_, ledgerErr := os.Stat(filepath.Join(sessions, brokerTestSession+".broker.jsonl"))
 			if tc.stuck == "1" {
-				_, recordErr := os.Stat(filepath.Join(sessions, "S1.json"))
+				_, recordErr := os.Stat(filepath.Join(sessions, brokerTestSession+".json"))
 				if !strings.Contains(out, "could not confirm the credential broker cleanup") || !strings.Contains(out, "refused\n") || recordErr != nil {
 					t.Fatalf("a broker that outlived the stop did not fail the delete: record %v\n%s", recordErr, out)
 				}
@@ -537,7 +568,7 @@ if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; k
 func TestDetachedStopPathsStopTheBroker(t *testing.T) {
 	paths := map[string]struct{ body, seal string }{
 		"monitor": {launcherFunction(t, "stop_egress_proxy_then_finalize") + `
-EGRESS_PROXY_STARTED=1 EGRESS_PROXY_CONTAINER=wc-egress-S1 EGRESS_PROXY_NETWORK=wc-S1
+EGRESS_PROXY_STARTED=1 EGRESS_PROXY_CONTAINER="wc-egress-$SID" EGRESS_PROXY_NETWORK="wc-$SID"
 finalize_session_audit() { printf 'seal %s\n' "$*" >>"$DIR/audit"; }
 stop_egress_proxy_then_finalize prof path 0
 `, "seal prof path 0\n"},
@@ -547,8 +578,8 @@ egress_proxy_network_for_session() { printf 'wc-%s\n' "$2"; }
 session_container_exit_code() { printf '7\n'; }
 session_write_stop_requested_terminal_record() { :; }
 sign_session_audit_head_explicit() { printf 'seal %s\n' "$*" >>"$DIR/audit"; }
-finish_stopped_session_fallback prof S1 rec.json
-`, "prof S1 exit source=host-stop-fallback exit_status=7 final_assurance=managed-mutable\nseal prof S1 rec.json\n"},
+finish_stopped_session_fallback prof "$SID" rec.json
+`, withSID("prof $SID exit source=host-stop-fallback exit_status=7 final_assurance=managed-mutable\nseal prof $SID rec.json\n")},
 	}
 	for name, path := range paths {
 		t.Run(name, func(t *testing.T) {
@@ -562,28 +593,35 @@ finish_stopped_session_fallback prof S1 rec.json
 			if err := os.WriteFile(filepath.Join(private, "ledger.jsonl"), []byte("{}\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			// The decoy is the fake broker of a concurrent run, which has a
+			// session id of its own: the stop must never signal it.
 			out, err := brokerLaunchProbe(t, dir, `
 run_profile_docker_command() { :; }
-(exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.AbC123/b.sock --guest-socket /tmp/workcell-broker-S1.sock" sleep 30) &
+(exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.AbC123/b.sock --guest-socket /tmp/workcell-broker-$SID.sock" sleep 30) &
 pid=$!
-printf '%s %s\n' "$pid" "$DIR/wcb.AbC123" >"$DIR/sessions/S1.broker"
-for _ in {1..40}; do [[ "$(ps -p "$pid" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
+(exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.DeC0y1/b.sock --guest-socket /tmp/workcell-broker-$DECOY.sock" sleep 30) &
+decoy=$!
+printf '%s %s\n' "$pid" "$DIR/wcb.AbC123" >"$DIR/sessions/$SID.broker"
+for p in "$pid" "$decoy"; do
+  for _ in {1..40}; do [[ "$(ps -p "$p" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
+done
 `+path.body+`
+if state="$(ps -p "$decoy" -o stat=)" && [[ "$state" != *Z* ]]; then echo decoy alive; kill "$decoy"; else echo decoy signalled; fi
 if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; kill "$pid"; else echo stopped; fi
-`)
-			if err != nil || !strings.HasSuffix(out, "stopped\n") {
-				t.Fatalf("the broker outlived the stop: %v\n%s", err, out)
+`, "DECOY="+newBrokerTestSession())
+			if err != nil || !strings.HasSuffix(out, "decoy alive\nstopped\n") {
+				t.Fatalf("the stop missed this run's broker or signalled the decoy: %v\n%s", err, out)
 			}
 			got, _ := os.ReadFile(filepath.Join(dir, "audit"))
-			want := "prof S1 credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n" +
-				"prof S1 egress_summary status=unreadable\n" + path.seal
+			want := withSID("prof $SID credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n"+
+				"prof $SID egress_summary status=unreadable\n") + path.seal
 			if string(got) != want {
 				t.Fatalf("audit steps = %q, want %q", got, want)
 			}
-			if _, err := os.Stat(filepath.Join(dir, "sessions", "S1.broker")); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(dir, "sessions", brokerTestSession+".broker")); !os.IsNotExist(err) {
 				t.Fatalf("state file remains: %v", err)
 			}
-			if colima, _ := os.ReadFile(filepath.Join(dir, "colima")); string(colima) != "ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-S1.sock\n" {
+			if colima, _ := os.ReadFile(filepath.Join(dir, "colima")); string(colima) != withSID("ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-$SID.sock\n") {
 				t.Fatalf("colima calls = %q, want the guest socket removal", colima)
 			}
 		})
