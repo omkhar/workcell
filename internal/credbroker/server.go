@@ -464,11 +464,27 @@ func requireAncestryWritableOnlyBy(pinned *os.File, dir string, uid uint32) erro
 // final unlink also goes through it rather than through a pathname. dev and
 // ino identify the socket the broker bound.
 type boundSocket struct {
-	listener *net.UnixListener
+	listener *boundListener
 	parent   *os.File
 	name     string
 	dev      uint64
 	ino      uint64
+	unlink   sync.Once
+}
+
+// boundListener is the broker's listener. Its Close unlinks the socket name
+// first, while the open listener still keeps the bound inode in use, so every
+// close, whichever path runs it first (ctx's end in Serve, a failed check, or
+// the deferred cleanup), checks the name before the inode number can be
+// reused by another socket.
+type boundListener struct {
+	*net.UnixListener
+	socket *boundSocket
+}
+
+func (l *boundListener) Close() error {
+	l.socket.unlinkIfBound()
+	return l.UnixListener.Close()
 }
 
 // close unlinks the socket through the pinned parent while the name still
@@ -484,15 +500,22 @@ type boundSocket struct {
 // another occupant's entry by accident, not from a hostile same-uid process,
 // which is outside the threat model, as it is for scripts/lib/owned-root.sh.
 func (b *boundSocket) close() {
-	// The open listener keeps its inode in use, so the name is checked and
-	// unlinked first: no new socket can take the same inode number meanwhile.
-	var leaf unix.Stat_t
-	if err := unix.Fstatat(int(b.parent.Fd()), b.name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err == nil &&
-		leaf.Mode&unix.S_IFMT == unix.S_IFSOCK && b.bound(&leaf) {
-		_ = unix.Unlinkat(int(b.parent.Fd()), b.name, 0)
-	}
 	_ = b.listener.Close()
 	_ = b.parent.Close()
+}
+
+// unlinkIfBound runs once, before the first close of the listener: the open
+// listener keeps its inode in use, so no new socket can take the same inode
+// number while the name is checked and unlinked. A later close finds it done
+// and never looks at the name again.
+func (b *boundSocket) unlinkIfBound() {
+	b.unlink.Do(func() {
+		var leaf unix.Stat_t
+		if err := unix.Fstatat(int(b.parent.Fd()), b.name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err == nil &&
+			leaf.Mode&unix.S_IFMT == unix.S_IFSOCK && b.bound(&leaf) {
+			_ = unix.Unlinkat(int(b.parent.Fd()), b.name, 0)
+		}
+	})
 }
 
 // bound reports whether leaf is the socket the broker bound. The widths of
@@ -546,7 +569,8 @@ func listen(path string) (*boundSocket, error) {
 		return nil, err
 	}
 	listener.SetUnlinkOnClose(false)
-	bound := &boundSocket{listener: listener, parent: parent, name: name}
+	bound := &boundSocket{parent: parent, name: name}
+	bound.listener = &boundListener{UnixListener: listener, socket: bound}
 	fail := func(err error) (*boundSocket, error) {
 		bound.close()
 		return nil, err

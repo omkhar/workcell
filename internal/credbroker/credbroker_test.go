@@ -673,6 +673,38 @@ func TestSocketCleanupUnlinksOnlyTheSocketItBound(t *testing.T) {
 	}
 }
 
+// TestSocketCleanupAfterTheListenerClosesKeepsAForeignSocket follows Serve's
+// shutdown order: ctx's end closes the listener first, and the deferred
+// cleanup runs later. A socket bound under the name in between can reuse the
+// freed inode number, so the cleanup must not mistake it for the broker's.
+// Rounds repeat because inode reuse is likely, not certain.
+func TestSocketCleanupAfterTheListenerClosesKeepsAForeignSocket(t *testing.T) {
+	for round := range 20 {
+		path := filepath.Join(socketDir(t), "b.sock")
+		socket, err := listen(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := socket.listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		other, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		other.SetUnlinkOnClose(false)
+		socket.close()
+		_, err = os.Lstat(path)
+		_ = other.Close()
+		if err != nil {
+			t.Fatalf("round %d: cleanup after the listener closed removed a foreign socket: %v", round, err)
+		}
+	}
+}
+
 // TestRestrictRefusesASocketSwappedInAfterTheBind binds the broker socket,
 // then puts another socket under its name, as a swap between the first check
 // and the mode change would. The final check compares the inode the first
