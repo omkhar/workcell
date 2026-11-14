@@ -9,11 +9,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -156,6 +158,11 @@ func TestListenAddrPicksTheOneAddressInTheSubnet(t *testing.T) {
 // TestNewBrokerLooksUpThroughTheCredentialBroker runs a real broker on a
 // socket and checks the proxy's client end to end: the token comes from the
 // environment once, a granted pair returns the value, and a refusal is an error.
+//
+// bind(2) makes the socket file before listen(2) runs, so a connect in between
+// is refused although Serve is healthy. The test therefore waits until a
+// lookup connects, not until the file exists, and every failure reports
+// whether Serve has returned and with what (issue 866).
 func TestNewBrokerLooksUpThroughTheCredentialBroker(t *testing.T) {
 	token := strings.Repeat("ab", 32)
 	for _, bad := range []string{"", "ab", strings.Repeat("zz", 32)} {
@@ -182,6 +189,16 @@ func TestNewBrokerLooksUpThroughTheCredentialBroker(t *testing.T) {
 		served <- credbroker.Serve(ctx, credbroker.Config{SocketPath: socket, Token: []byte(token), Credentials: map[string]string{"claude_api_key": "sk-real"}, Log: log})
 	}()
 	t.Cleanup(func() { cancel(); <-served })
+	// serveState names Serve's state for a failure message without blocking.
+	serveState := func() string {
+		select {
+		case err := <-served:
+			served <- err
+			return fmt.Sprintf("Serve returned %v", err)
+		default:
+			return "Serve is running"
+		}
+	}
 
 	t.Setenv(brokerTokenEnv, token)
 	broker, err := newBroker(socket)
@@ -191,18 +208,27 @@ func TestNewBrokerLooksUpThroughTheCredentialBroker(t *testing.T) {
 	if _, set := os.LookupEnv(brokerTokenEnv); set {
 		t.Errorf("%s is still in the proxy environment", brokerTokenEnv)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for _, err := os.Stat(socket); err != nil; _, err = os.Stat(socket) {
-		if time.Now().After(deadline) {
-			t.Fatalf("broker socket never appeared: %v", err)
+	value, err := "", error(nil)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		value, err = broker.Lookup(ctx, "api.anthropic.com", "x-api-key")
+		// Only a socket that is not there yet, or not yet listening, is retried.
+		if !errors.Is(err, syscall.ENOENT) && !errors.Is(err, syscall.ECONNREFUSED) {
+			break
 		}
-		time.Sleep(10 * time.Millisecond)
+		if strings.HasPrefix(serveState(), "Serve returned") || time.Now().After(deadline) {
+			break
+		}
 	}
-	if value, err := broker.Lookup(ctx, "api.anthropic.com", "x-api-key"); err != nil || value != "sk-real" {
-		t.Errorf("granted lookup = %q, %v; want the brokered value", value, err)
+	if err != nil || value != "sk-real" {
+		t.Fatalf("granted lookup = %q, %v; want the brokered value (%s)", value, err, serveState())
 	}
+	// Once one lookup has connected, the broker listens until ctx ends, so no
+	// later lookup is retried.
 	var deny credbroker.DenyError
 	if _, err := broker.Lookup(ctx, "api.anthropic.com", "x-goog-api-key"); !errors.As(err, &deny) || deny != credbroker.ErrNotGranted {
-		t.Errorf("ungranted lookup error = %v, want %s", err, credbroker.ErrNotGranted)
+		t.Errorf("ungranted lookup error = %v, want %s (%s)", err, credbroker.ErrNotGranted, serveState())
+	}
+	if value, err := broker.Lookup(ctx, "api.anthropic.com", "authorization"); err != nil || value != "sk-real" {
+		t.Errorf("second granted lookup = %q, %v; want the brokered value (%s)", value, err, serveState())
 	}
 }
