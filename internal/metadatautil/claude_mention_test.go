@@ -6,6 +6,7 @@ package metadatautil_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -34,11 +35,11 @@ func TestClaudeMentionWorkflowMatchesContract(t *testing.T) {
 // comment, so it keeps the contract.
 func TestClaudeMentionWorkflowAcceptsPinBump(t *testing.T) {
 	workflow := readClaudeMentionWorkflow(t)
-	const placeholder = "anthropics/claude-code-action@0000000000000000000000000000000000000000 # v1"
-	if !strings.Contains(workflow, placeholder) {
-		t.Skip("the placeholder pin is already replaced")
+	pin := claudeMentionPin(t, workflow)
+	bumped := strings.Replace(workflow, pin, "anthropics/claude-code-action@0123456789abcdef0123456789abcdef01234567 # v1.2.3", 1)
+	if bumped == workflow {
+		bumped = strings.Replace(workflow, pin, "anthropics/claude-code-action@fedcba9876543210fedcba9876543210fedcba98 # v1.2.3", 1)
 	}
-	bumped := strings.Replace(workflow, placeholder, "anthropics/claude-code-action@0123456789abcdef0123456789abcdef01234567 # v1.2.3", 1)
 	if err := metadatautil.ValidateClaudeMentionWorkflow(bumped); err != nil {
 		t.Fatalf("pin bump rejected: %v", err)
 	}
@@ -46,6 +47,7 @@ func TestClaudeMentionWorkflowAcceptsPinBump(t *testing.T) {
 
 func TestClaudeMentionWorkflowRejectsChanges(t *testing.T) {
 	workflow := readClaudeMentionWorkflow(t)
+	ref := strings.Fields(claudeMentionPin(t, workflow))[0]
 	for name, change := range map[string][2]string{
 		"run actor gate removed":     {"github.actor_id == '22666538' &&\n", ""},
 		"comment author id changed":  {"github.event.comment.user.id == 22666538", "github.event.comment.user.id == 1"},
@@ -62,8 +64,8 @@ func TestClaudeMentionWorkflowRejectsChanges(t *testing.T) {
 		"tmp wholly denied":          {"Read(//tmp/claude*/**)", "Read(//tmp/**)"},
 		"Bash allowed":               {`"Bash,Edit,`, `"Edit,`},
 		"checkout keeps credentials": {"persist-credentials: false", "persist-credentials: true"},
-		"action pinned by tag":       {"anthropics/claude-code-action@0000000000000000000000000000000000000000", "anthropics/claude-code-action@v1"},
-		"action from a fork":         {"anthropics/claude-code-action@0000000000000000000000000000000000000000", "mallory/claude-code-action@0000000000000000000000000000000000000000"},
+		"action pinned by tag":       {ref, "anthropics/claude-code-action@v1"},
+		"action from a fork":         {ref, "mallory/" + strings.TrimPrefix(ref, "anthropics/")},
 		"job env added":              {"    timeout-minutes: 30\n", "    timeout-minutes: 30\n    env:\n      NODE_OPTIONS: --require /tmp/x.js\n"},
 		"secret moved to an alias":   {"claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}", "claude_code_oauth_token: &token ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"},
 	} {
@@ -197,4 +199,17 @@ func TestClaudeMentionReferencesStayInTheirWorkflow(t *testing.T) {
 	if err := metadatautil.ValidateClaudeMentionPlacement("name: x\n", ".github/workflows/claude-mention.yml"); err == nil {
 		t.Fatal("claude-mention.yml must match its contract")
 	}
+}
+
+var claudeMentionPinPattern = regexp.MustCompile(`anthropics/claude-code-action@[0-9a-f]{40} # v[0-9][0-9.]*`)
+
+// claudeMentionPin returns the one pinned action reference and its version
+// comment, so the tests hold for the placeholder and for every real pin.
+func claudeMentionPin(t *testing.T, workflow string) string {
+	t.Helper()
+	pins := claudeMentionPinPattern.FindAllString(workflow, -1)
+	if len(pins) != 1 {
+		t.Fatalf("pinned claude-code-action references = %q, want exactly one", pins)
+	}
+	return pins[0]
 }
