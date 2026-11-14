@@ -17,6 +17,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -765,6 +766,9 @@ func TestMaterializeRefusesAKeptManifestThatItCannotRead(t *testing.T) {
 func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
 	noStep := swapStep
 	t.Cleanup(func() { swapStep = noStep })
+	// Every send ends before swapStep is restored, also when the test fails.
+	var sending sync.WaitGroup
+	t.Cleanup(sending.Wait)
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
 	paused, resume, steps := make(chan struct{}), make(chan struct{}), atomic.Int32{}
 	swapStep = func(string, *os.File) error {
@@ -775,20 +779,20 @@ func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
 		return nil
 	}
 	sends := make(chan error, 4)
-	go func() {
+	sending.Go(func() {
 		_, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
 		sends <- err
-	}()
+	})
 	<-paused
 	defer close(resume)
 	var started bool
 	for _, target := range []ConformanceTarget{FakeTarget{Contract: DefaultGCPVMContract()}, fakeBrokerTarget(t, "receive", t.TempDir(), &started)} {
 		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		defer cancel()
-		go func() {
+		sending.Go(func() {
 			_, err := target.MaterializeWorkspace(ctx, req)
 			sends <- err
-		}()
+		})
 		select {
 		case err := <-sends:
 			if !errors.Is(err, context.DeadlineExceeded) || started {
@@ -798,17 +802,48 @@ func TestMaterializeWaitsForASendOfTheSameID(t *testing.T) {
 			t.Fatal("MaterializeWorkspace() still waits 5s after its 200ms deadline")
 		}
 	}
-	go func() {
-		_, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req)
+	// The last send waits with no deadline, so only the end of the first
+	// send lets it go on. The first send resumes once the last waits, and
+	// the test, not the send, bounds the wait.
+	noDeadline, stop := context.WithCancel(t.Context())
+	defer stop()
+	last := &waitSignalContext{Context: noDeadline, waiting: make(chan struct{})}
+	sending.Go(func() {
+		_, err := materializeInStateRoot(last, DefaultGCPVMContract(), req)
 		sends <- err
-	}()
+	})
+	select {
+	case <-last.waiting:
+	case <-time.After(lockWaitBound):
+		stop()
+		t.Fatalf("the send with no deadline did not wait for the lock within %v", lockWaitBound)
+	}
 	resume <- struct{}{}
 	for range 2 {
-		if err := <-sends; err != nil {
-			t.Fatal(err)
+		select {
+		case err := <-sends:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(lockWaitBound):
+			stop()
+			t.Fatalf("a send still ran %v after the first send was resumed", lockWaitBound)
 		}
 	}
 	assertHostCopyMatchesKeptManifest(t, req, readHostManifest(t, req).Entries)
+}
+
+// waitSignalContext closes waiting when a send first asks for Done, which a
+// send does only while it waits for the lock of its ID.
+type waitSignalContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (c *waitSignalContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
 }
 
 // TestMaterializeRefusesAManifestOverTheReadLimit lowers the manifest limit
