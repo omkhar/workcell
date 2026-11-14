@@ -69,6 +69,19 @@ colima_child_cache_home() {
   printf '%s/workcell/colima-xdg\n' "$(XDG_CACHE_HOME='' workcell_host_cache_root)"
 }
 
+# Runs colima as run_host_colima does in scripts/workcell: workcell_colima
+# COLIMA_BIN COLIMA_HOME ARGS...  HOME is REAL_HOME and XDG_CACHE_HOME is
+# colima_child_cache_home, so a start or restart regenerates lima.yaml with
+# the read-only Colima cache root outside the staging root.  Every colima run
+# outside scripts/workcell goes through it.
+workcell_colima() {
+  local colima_bin="$1"
+  local colima_home="$2"
+
+  shift 2
+  HOME="${REAL_HOME}" COLIMA_HOME="${colima_home}" XDG_CACHE_HOME="$(colima_child_cache_home)" "${colima_bin}" "$@"
+}
+
 # Per-host managed Colima VM type: vz on macOS, qemu on Linux.  Linux has no
 # vz, and Lima's QEMU driver is the reviewed Linux path.
 colima_vm_type() {

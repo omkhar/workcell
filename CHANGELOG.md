@@ -195,7 +195,9 @@ The fixes are below.
   now gives each `colima` command `XDG_CACHE_HOME=<cache>/workcell/colima-xdg`,
   so that root holds no Workcell staging or snapshot store. The validator
   accepts only that exact root, and only as read-only
-  (`internal/colimautil/colima_cache_mount_test.go`).
+  (`internal/colimautil/colima_cache_mount_test.go`). The scenarios, the
+  uninstaller and the verify cleanup run `colima` through the same setting.
+  `workcell --gc` keeps that root.
 - The scheduled Rust fuzz lane builds again. Its dated nightly
   (`nightly-2026-07-02`, rustc 1.98) was older than the crate's
   `rust-version` of 1.99, so cargo refused to build the fuzz targets. The lane

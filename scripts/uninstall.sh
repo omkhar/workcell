@@ -99,8 +99,9 @@ if [[ -L "${BASH_SOURCE[0]}" ]]; then
   echo "Run scripts/uninstall.sh from the Workcell repository, not through a symlink: ${BASH_SOURCE[0]}" >&2
   exit 2
 fi
+HOST_DETECT_HELPER="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/launcher/host-detect.sh"
 # shellcheck source=SCRIPTDIR/lib/launcher/host-detect.sh
-source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/launcher/host-detect.sh"
+source "${HOST_DETECT_HELPER}"
 COLIMA_CACHE_ROOT="$(colima_staging_cache_root)"
 INJECTION_ROOT="${COLIMA_CACHE_ROOT}/workcell-host-inputs"
 SHADOW_ROOT="${COLIMA_CACHE_ROOT}/workcell-shadow"
@@ -297,11 +298,15 @@ delete_managed_profile() {
     if [[ "${DRY_RUN}" -eq 1 ]]; then
       log_action "Would run" "${colima_bin} delete --profile ${profile} --force"
     else
+      # workcell_colima sets HOME and the Colima cache root; env -i keeps the
+      # rest of this shell's environment away from colima.
+      # shellcheck disable=SC2016 # the inner shell expands "$1" and "$@"
       env -i \
         PATH="${TRUSTED_HOST_PATH}" \
-        HOME="${REAL_HOME}" \
-        COLIMA_HOME="${COLIMA_HOME}" \
-        "${colima_bin}" delete --profile "${profile}" --force >/dev/null 2>&1 || true
+        REAL_HOME="${REAL_HOME}" \
+        /bin/bash --noprofile --norc -c 'source "$1" && shift && workcell_colima "$@"' bash \
+        "${HOST_DETECT_HELPER}" "${colima_bin}" "${COLIMA_HOME}" \
+        delete --profile "${profile}" --force >/dev/null 2>&1 || true
     fi
   fi
 

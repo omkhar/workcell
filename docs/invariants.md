@@ -61,6 +61,12 @@ child, and `<cache>/colima`.
 The launcher in `scripts/workcell` refuses a symlink in the root path. It also
 refuses a workspace that contains the root or is inside it.
 
+A `colima` run without this `XDG_CACHE_HOME` would write a `lima.yaml` that
+mounts `<cache>/colima` again. Thus every shell `colima` run goes through
+`run_host_colima` or the `workcell_colima` host helper.
+`workcell --gc` never removes `<cache>/workcell/colima-xdg`, and recent use of
+it does not keep the other stale cache entries.
+
 Invariant `snapshot-store-host-owned`: `workcell session snapshot` writes to
 `<cache>/colima/workcell-snapshots`. No container mounts this store.
 Workcell refuses a workspace that contains the store or is inside it.

@@ -5890,14 +5890,34 @@ cleanup_workcell_cache_root() {
   # A cache root is stale only when nothing under it changed within the
   # threshold, so a running Workcell that writes the cache keeps it. The root's
   # own mtime moves only when a direct entry changes. A failed walk keeps it.
+  # <cache_root>/colima-xdg holds the Colima cache root that every managed VM
+  # mounts read-only (colima_child_cache_home), so gc keeps it and does not
+  # count it as recent use of the other entries.
   if [[ "${stale_minutes}" -gt 0 ]]; then
-    if ! recent="$(find "${cache_root}" -mmin "-${stale_minutes}" -print -quit 2>/dev/null)"; then
+    if ! recent="$(find "${cache_root}" -maxdepth 0 -mmin "-${stale_minutes}" -print 2>/dev/null)"; then
       return 0
     fi
     [[ -z "${recent}" ]] || return 0
+    for entry in "${cache_root}"/* "${cache_root}"/.[!.]* "${cache_root}"/..?*; do
+      [[ -e "${entry}" || -L "${entry}" ]] || continue
+      [[ "${entry}" != "${cache_root}/colima-xdg" ]] || continue
+      if ! recent="$(find "${entry}" -mmin "-${stale_minutes}" -print -quit 2>/dev/null)"; then
+        return 0
+      fi
+      [[ -z "${recent}" ]] || return 0
+    done
   fi
-  make_workcell_tree_user_writable "${cache_root}"
-  rm -rf "${cache_root}"
+  if [[ ! -e "${cache_root}/colima-xdg" && ! -L "${cache_root}/colima-xdg" ]]; then
+    make_workcell_tree_user_writable "${cache_root}"
+    rm -rf "${cache_root}"
+    return 0
+  fi
+  for entry in "${cache_root}"/* "${cache_root}"/.[!.]* "${cache_root}"/..?*; do
+    [[ -e "${entry}" || -L "${entry}" ]] || continue
+    [[ "${entry}" != "${cache_root}/colima-xdg" ]] || continue
+    make_workcell_tree_user_writable "${entry}"
+    rm -rf "${entry}"
+  done
 }
 
 cleanup_workcell_cache_roots() {

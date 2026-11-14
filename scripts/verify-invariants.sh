@@ -265,6 +265,9 @@ fi
 REAL_HOME="$(
   printf '%s\n' ~
 )"
+# workcell_colima (delete_verify_colima_profile) and the cache-root helpers.
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 # The launcher runs under env -i, so it never reads XDG_CACHE_HOME: its Colima
 # cache root is ~/Library/Caches/colima on macOS and ~/.cache/colima elsewhere.
 verify_colima_cache_root() {
@@ -541,9 +544,9 @@ delete_verify_colima_profile() {
 
   [[ -n "${profile_name}" ]] || return 0
   if [[ -x /opt/homebrew/bin/colima ]]; then
-    /opt/homebrew/bin/colima delete --profile "${profile_name}" --force >/dev/null 2>&1 || true
+    workcell_colima /opt/homebrew/bin/colima "${REAL_HOME}/.colima" delete --profile "${profile_name}" --force >/dev/null 2>&1 || true
   elif [[ -x /usr/local/bin/colima ]]; then
-    /usr/local/bin/colima delete --profile "${profile_name}" --force >/dev/null 2>&1 || true
+    workcell_colima /usr/local/bin/colima "${REAL_HOME}/.colima" delete --profile "${profile_name}" --force >/dev/null 2>&1 || true
   fi
   if ! go_verify_hostutil helper reap-colima-profile-processes "${profile_name}"; then
     return 1

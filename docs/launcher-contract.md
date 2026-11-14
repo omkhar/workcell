@@ -120,7 +120,8 @@ refresh.
 [`host-detect.sh`](../scripts/lib/launcher/host-detect.sh) returns normalized,
 lowercase host fields during detection without a test override. The module uses
 `uname`, `ps`, `tr`, `PPID`, environment values, `/etc/os-release`,
-`/dev/kvm`, `sw_vers`, and its own functions.
+`/dev/kvm`, `sw_vers`, and its own functions. `workcell_colima()` also runs the
+`colima` binary that its caller names.
 
 ### `support_matrix_host_override_allowed()`
 
