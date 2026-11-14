@@ -123,6 +123,11 @@
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
     },
+    "dependabot-follow-up.yml/regenerate": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the job runs only on a Dependabot pull request; locally, refresh-action-inputs runs on the bump branch"
+    },
     "docs.yml/spelling-and-manpage": {
       "profiles": ["pr-parity", "release-preflight"],
       "authority": "pr-parity",
