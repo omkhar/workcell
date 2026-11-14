@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +28,7 @@ const (
 	peekTimeout   = 10 * time.Second
 	dialTimeout   = 10 * time.Second // per resolve and per dial attempt
 	connectBudget = 3 * dialTimeout  // all dial attempts for one connection
-	maxHelloBytes = 1 << 17          // above the 64 KiB handshake message limit plus record framing
+	maxHelloBytes = 16 << 10         // a ClientHello with a post-quantum key share is under 2 KiB
 	maxLogHost    = 253              // longest DNS name
 	maxDenyKeys   = 4096
 	maxConns      = 1024 // concurrent connections across all ports
@@ -77,12 +78,25 @@ func blockedAddr(a netip.Addr) bool {
 	return false
 }
 
+// hostPrefixes returns the networks this host has an address on.
+func hostPrefixes() ([]netip.Prefix, error) {
+	addrs, err := net.InterfaceAddrs()
+	var out []netip.Prefix
+	for _, a := range addrs {
+		if p, perr := netip.ParsePrefix(a.String()); perr == nil {
+			out = append(out, netip.PrefixFrom(p.Addr().Unmap(), p.Bits()).Masked())
+		}
+	}
+	return out, err
+}
+
 // Proxy admits allowlisted connections and logs each denial as one JSONL line.
 // Overload refusals past the log queue are counted and logged as one port-0 line.
 type Proxy struct {
 	allow  *Allowlist
 	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
 	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
+	local  func() ([]netip.Prefix, error) // the host's own networks; never dialed
 
 	// TLS termination; set by Terminate. upstreamRoots nil means system roots.
 	terminate     map[string][]TerminateRule
@@ -118,6 +132,7 @@ func New(allow *Allowlist, denyLog io.Writer) *Proxy {
 		dial: func(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
 			return dialer.DialContext(ctx, "tcp", addr.String())
 		},
+		local:   hostPrefixes,
 		slots:   make(chan struct{}, maxConns),
 		shed:    make(chan uint16, 64),
 		denyLog: denyLog,
@@ -222,8 +237,16 @@ func (p *Proxy) connect(host string, port uint16) (net.Conn, string) {
 	if err != nil || len(addrs) == 0 {
 		return nil, "resolve_failed"
 	}
+	local, err := p.local()
+	if err != nil {
+		return nil, "blocked_address"
+	}
 	for _, a := range addrs {
 		if blockedAddr(a) {
+			return nil, "blocked_address"
+		}
+		// A public address on one of the host's own networks is the host or a neighbor.
+		if slices.ContainsFunc(local, func(n netip.Prefix) bool { return n.Contains(a.Unmap()) }) {
 			return nil, "blocked_address"
 		}
 	}

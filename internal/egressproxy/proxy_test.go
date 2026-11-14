@@ -145,6 +145,18 @@ func TestPeekSNI(t *testing.T) {
 	}
 }
 
+func TestPeekSNIStopsAtTheHelloCap(t *testing.T) {
+	t.Parallel()
+	// Full-size handshake records that open a ClientHello of the largest length and never finish it.
+	record := append([]byte{0x16, 0x03, 0x01, 0x40, 0x00}, make([]byte, 1<<14)...)
+	copy(record[5:], []byte{0x01, 0x00, 0xff, 0xff})
+	conn := feed(bytes.Repeat(record, 8))
+	defer conn.Close()
+	if sni, read, ok := peekSNI(conn); ok || len(read) > 16<<10 {
+		t.Fatalf("peekSNI = (%q, %d bytes read, ok=%v), want failure within 16 KiB", sni, len(read), ok)
+	}
+}
+
 func FuzzPeekSNI(f *testing.F) {
 	f.Add(clientHello(f, "api.example.com"))
 	f.Add(clientHello(f, ""))
@@ -289,6 +301,25 @@ func TestProxyRefusesBlockedResolution(t *testing.T) {
 
 	if _, err := httpsGet("example.com", addr, roots); err == nil {
 		t.Fatal("GET to a host that resolves to a metadata address succeeded, want refusal")
+	}
+	p.mu.Lock()
+	n := len(*dialed)
+	p.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("proxy dialed %d times, want 0", n)
+	}
+	want := denyLine{Host: "example.com", Port: 443, Reason: "blocked_address", Count: 1, Seq: 1}
+	if d := denies(t, p, log); len(d) != 1 || d[0] != want {
+		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
+	}
+}
+
+func TestProxyRefusesOwnNetwork(t *testing.T) {
+	t.Parallel()
+	p, log, dialed := testProxy(t, "example.com:443", []netip.Addr{netip.MustParseAddr("::ffff:8.8.8.8")}, "127.0.0.1:1")
+	p.local = func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}, nil }
+	if _, err := httpsGet("example.com", listen(t, p, 443), nil); err == nil {
+		t.Fatal("GET to a host that resolves into the host's own network succeeded, want refusal")
 	}
 	p.mu.Lock()
 	n := len(*dialed)
