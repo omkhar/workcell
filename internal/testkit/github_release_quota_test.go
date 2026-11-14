@@ -197,8 +197,8 @@ func TestTrustedEntrypointKeepsAGitHubActionsRunKnown(t *testing.T) {
 	inner := filepath.Join(dir, "inner.sh")
 	outer := filepath.Join(dir, "outer.sh")
 	for path, body := range map[string]string{
-		inner: "#!/bin/bash -p\nsource \"" + entrypoint + "\"\necho \"actions=${WORKCELL_GITHUB_ACTIONS:-unset} raw=${GITHUB_ACTIONS:-unset}\"\n",
-		outer: "#!/bin/bash -p\nsource \"" + entrypoint + "\"\nexec /bin/bash -p \"" + inner + "\"\n",
+		inner: "#!/bin/bash -p\nsource " + ShellQuote(entrypoint) + "\necho \"actions=${WORKCELL_GITHUB_ACTIONS:-unset} raw=${GITHUB_ACTIONS:-unset}\"\n",
+		outer: "#!/bin/bash -p\nsource " + ShellQuote(entrypoint) + "\nexec /bin/bash -p " + ShellQuote(inner) + "\n",
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
 			t.Fatal(err)
