@@ -253,10 +253,8 @@ func stageWorkspaceCopy(ctx context.Context, sourceWorkspace, materializationRoo
 	if err != nil {
 		return nil, nil, err
 	}
-	// A second send of this ID waits for this lock on the parent, which close
-	// ends. A child that a fork starts holds the lock too until its exec, so
-	// a send that does not wait could fail with no second send running. The
-	// wait polls, so that it ends with ctx.
+	// A second send of this ID waits for this lock on the parent, which
+	// endHostLock ends. The wait polls, so that it ends with ctx.
 	err = unix.Flock(int(parent.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	for wait := time.Millisecond; errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EINTR); wait = min(2*wait, 100*time.Millisecond) {
 		select {
@@ -270,15 +268,15 @@ func stageWorkspaceCopy(ctx context.Context, sourceWorkspace, materializationRoo
 		err = ctx.Err()
 	}
 	if err != nil {
-		return nil, nil, errors.Join(err, parent.Close())
+		return nil, nil, errors.Join(err, endHostLock(parent))
 	}
 	leftovers, err := recoverInterruptedSwap(parent, materializationRoot, workspaceDir, manifestName)
 	if err != nil {
-		return nil, nil, errors.Join(err, parent.Close())
+		return nil, nil, errors.Join(err, endHostLock(parent))
 	}
 	name, err := mkdirTempAt(parent, "."+workspaceDir+stagingInfix)
 	if err != nil {
-		return nil, nil, errors.Join(err, parent.Close())
+		return nil, nil, errors.Join(err, endHostLock(parent))
 	}
 	staged := &stagedHostCopy{parent: parent, name: name, workspaceDir: workspaceDir, path: filepath.Join(materializationRoot, name), leftovers: leftovers}
 	entries, err := copyWorkspaceTree(sourceWorkspace, staged.path, excluded)
@@ -459,10 +457,17 @@ func (s *stagedHostCopy) commit(manifestPath string, manifest any) error {
 }
 
 // close removes the staged copy if it is still under its staged name, which
-// no kept manifest then describes, and closes the parent directory. Closing
-// the parent ends the lock.
+// no kept manifest then describes, and ends the lock on the parent directory.
 func (s *stagedHostCopy) close() error {
-	return errors.Join(rootio.RemoveAllAtNoFollow(s.parent, s.name), s.parent.Close())
+	return errors.Join(rootio.RemoveAllAtNoFollow(s.parent, s.name), endHostLock(s.parent))
+}
+
+// endHostLock ends the flock on parent and then closes it. A child that a
+// fork starts for an exec shares the open file description, and with it the
+// flock, until its exec closes the copy, so a close alone can leave the lock
+// held for that gap. LOCK_UN ends it for every copy of the description.
+func endHostLock(parent *os.File) error {
+	return errors.Join(unix.Flock(int(parent.Fd()), unix.LOCK_UN), parent.Close())
 }
 
 // mkdirTempAt creates a new owner-only directory under parent with a random

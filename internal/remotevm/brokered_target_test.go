@@ -1082,6 +1082,60 @@ func TestBrokeredTargetRefusesASendWhoseConfirmedManifestCannotFit(t *testing.T)
 	}
 }
 
+// hostLocked reports whether a send holds the host lock of the ID of req.
+func hostLocked(t *testing.T, req MaterializeRequest) bool {
+	t.Helper()
+	dir, err := os.Open(filepath.Dir(hostManifestPath(req)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	err = unix.Flock(int(dir.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	if err == nil {
+		// The probe ends its own lock, which a forked child could
+		// otherwise hold past the close.
+		if err := unix.Flock(int(dir.Fd()), unix.LOCK_UN); err != nil {
+			t.Fatal(err)
+		}
+		return false
+	}
+	if !errors.Is(err, unix.EWOULDBLOCK) {
+		t.Fatal(err)
+	}
+	return true
+}
+
+// TestMaterializeEndsTheHostLockWhileChildrenFork sends while this process
+// forks children for an exec. A child forked while a send holds the lock
+// shares it until its exec, so a send that only closed the lock could leave
+// it held after it returned. Each send that succeeds, and each send that
+// ends its context after the lock is taken, must end the lock itself. A send
+// of the second kind holds the lock only briefly, so the test makes many.
+func TestMaterializeEndsTheHostLockWhileChildrenFork(t *testing.T) {
+	t.Parallel()
+
+	forkWhileTheTestRuns(t)
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+	for attempt := range 400 {
+		if attempt%20 == 0 {
+			if _, err := materializeInStateRoot(sendContext(t), DefaultGCPVMContract(), req); err != nil {
+				t.Fatal(err)
+			}
+			if hostLocked(t, req) {
+				t.Fatal("the host lock outlived a send")
+			}
+		}
+		if _, err := materializeInStateRoot(ended, DefaultGCPVMContract(), req); !errors.Is(err, context.Canceled) {
+			t.Fatalf("materializeInStateRoot() = %v, want the ended context", err)
+		}
+		if hostLocked(t, req) {
+			t.Fatal("the host lock outlived a send whose context ended")
+		}
+	}
+}
+
 // TestBrokeredTargetEndsTheLockWhenTheSendPanics panics in the broker
 // command while the lock is held. A later send of the same ID in this process
 // must not wait for the lock of the panicked send. A collection could close
