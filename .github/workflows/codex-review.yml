@@ -1,0 +1,67 @@
+name: Codex review
+
+# This workflow is the PULL-REQUEST independent-review lane. It runs the
+# pinned Codex CLI (the version and checksums in runtime/container/Dockerfile)
+# with `codex exec review` against the PR head and posts the findings as one
+# PR comment with a machine-readable marker. It replaces the ChatGPT Codex
+# GitHub App as the review marker: that app stopped answering review requests,
+# and nothing in this repository could restart it. The job fails closed when
+# the OPENAI_API_KEY secret is absent or the review does not complete.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  codex-review:
+    name: Codex review
+    runs-on: ubuntu-latest
+    # Dependabot runs get no repository secret, and the policy merges its PRs
+    # after a trial without a Codex round.
+    if: github.actor != 'dependabot[bot]'
+    timeout-minutes: 30
+    # The OPENAI_API_KEY secret lives in this environment, so no other job can
+    # read it.
+    environment:
+      name: codex-review
+    permissions:
+      contents: read # Check out the pull request head.
+      pull-requests: write # Post the one review comment.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The runner image makes /opt world-writable, so its tool-cache go fails
+      # the trusted-go storage rule; stage the go.mod toolchain root-owned.
+      - name: Stage a root-owned Go toolchain
+        run: ./scripts/ci/stage-trusted-go.sh
+
+      - name: Review the pull request head with the pinned Codex CLI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WORKCELL_PR_NUMBER: ${{ github.event.pull_request.number }}
+          WORKCELL_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          WORKCELL_PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-codex-review.sh

@@ -94,6 +94,8 @@ For each pull request, inspect:
 - Inline review comments.
 - Unresolved review threads.
 - Reviews and requested changes.
+- The newest `Codex review` lane comment for the exact head. Its marker
+  `workcell-codex-review:v1` names the head and the number of findings.
 - Configured asynchronous reviewers in
   `policy/reviewer-identities.toml`.
 

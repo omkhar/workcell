@@ -56,6 +56,7 @@ For an approved large adapter PR, use both required options:
 | `bench.yml` | Measures exec-guard performance on a schedule or manual run. |
 | `ci-insights.yml` | Writes weekly flake and cost reports. See [CI reliability](ci-efficiency-and-reliability.md). |
 | `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and required hostile-environment reruns. |
+| `codex-review.yml` | Reviews each pull request head with the pinned Codex CLI and posts the findings. |
 | `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
 | `docs.yml` | Checks spelling, links, contracts, and the man page. |
 | `fuzz.yml` | Runs extended Go and Rust fuzz tests. |
@@ -112,6 +113,33 @@ All four lane groups support manual dispatch.
 
 The aggregate reproducibility check passes on a normal PR when the platform matrix result is `skipped`.
 It requires both platform jobs on `main`, an approved heavy PR, or manual dispatch.
+
+## Codex review lane
+
+`codex-review.yml` runs on each pull request event that changes the head or the ready state.
+It checks out the pull request head, not the merge commit.
+`scripts/ci/job-codex-review.sh` downloads the Codex release that `runtime/container/Dockerfile` pins.
+It checks both tarballs against the pinned SHA-256 values before it runs them.
+Then it runs `codex exec review --base origin/<base>` with the `OPENAI_API_KEY` secret of the `codex-review` environment.
+
+The job posts one pull request comment for each review.
+The comment starts with the marker `<!-- workcell-codex-review:v1 {"head":"<sha>","findings":<n>} -->`.
+The marker names the reviewed head and the number of findings.
+Treat the newest marker for the exact head as the review result.
+A marker for an older head is not a result for the current head.
+
+The job succeeds when a review completes, with or without findings.
+`scripts/ci/job-codex-review.sh` exits with an error when the secret is absent, a download or checksum fails, or Codex returns no result.
+GitHub gives no repository secret to a fork pull request, so the script exits with an error for one.
+Dependabot pull requests skip the lane.
+
+The lane replaced the ChatGPT Codex GitHub App as the review marker.
+That app stopped answering review requests on 2026-10-25.
+Nothing in this repository can restart an external app, so the lane keeps the review inside CI.
+
+The review runs with a scrubbed environment.
+Only `PATH`, a private `HOME` and `CODEX_HOME`, and the key reach the CLI.
+The GitHub token stays in a mode `0600` file for the comment call.
 
 ## Hosted install evidence
 

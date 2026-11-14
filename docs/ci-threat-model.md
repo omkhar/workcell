@@ -154,11 +154,12 @@ Scheduled and manual runs can write a minimal non-PR cache.
 
 ### Stored credential
 
-The workflow files use one long-lived stored credential:
+The workflow files use two long-lived stored credentials:
 
 | Credential | Location | Purpose | Limit |
 | --- | --- | --- | --- |
 | `WORKCELL_HOSTED_CONTROLS_TOKEN` | `hosted-controls-audit` environment | Read repository administration metadata for hosted-control audits | The repository cannot inspect the token scopes. Read-only authority is a provisioning rule. |
+| `OPENAI_API_KEY` | `codex-review` environment | Run the Codex review lane on a pull request head | The key reaches only the pinned Codex CLI, in a scrubbed environment. GitHub gives no repository secret to a fork pull request. A same-repository pull request can change the lane script and read the key. |
 
 This token does not trigger or publish a release.
 The current script removes it before the publication call.
@@ -282,6 +283,7 @@ Residual risk describes the risk after the current controls.
 | 9 | A malicious change reaches a release. | Signed commits, signed tags, required checks, environment approval, and immutable releases protect publication. | Medium. One maintainer signs and approves releases. |
 | 10 | A large or hidden change avoids review. | The PR shape gate limits files, lines, areas, and binary changes. | Low. A reviewed exception can raise the limits. |
 | 11 | Script logging exposes the stored token. | The token is environment-scoped and the workflows do not print it. | Low. Read-only scope remains a provisioning rule. |
+| 12 | A same-repository pull request changes the Codex review lane and reads the key. | The lane runs `pull_request`, so a fork gets no secret. The pull request shape gate and review cover a change to the lane. | Medium. A maintainer-branch pull request can expose the key, so rotate it after a suspect change. |
 
 ## Signing-compromise incident response
 
