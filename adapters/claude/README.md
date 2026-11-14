@@ -49,8 +49,9 @@ and `~/.mcp.json` (`reserved_targets` in `adapters/claude/adapter.toml`).
   (`docs/adapter-control-planes.md#claude-hook-coverage`).
 - Autonomy is set host-side via `workcell --agent-autonomy` (mapped to
   `--permission-mode`); the wrapper does not honor provider-native overrides.
-- `reject_unsafe_claude_args` blocks permission bypass, extra directories,
-  custom tools, MCP, plugins, settings, and prompt overrides.
+- The Claude policy in `internal/providerpolicy/providerpolicy.go` blocks
+  permission bypass, extra directories, custom tools, MCP, plugins, settings,
+  and prompt overrides.
 - It also blocks provider install and update commands. These rules apply in all
   modes, including `breakglass`.
 - Breakglass changes the container posture. It does not change the provider

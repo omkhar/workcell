@@ -168,7 +168,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/copilot/README.md",
       "runtime_path": "/opt/workcell/adapters/copilot/README.md",
-      "sha256": "b6071a3b0b60b9a56f917a98d4fdd86e8699e50fdac31fd30ad007a0d6123996"
+      "sha256": "de3d85e3e104a816d6fff34f6cab869a414e811d11e4db37efe3e3ba915e7ec6"
     },
     {
       "kind": "adapter-baseline",
@@ -192,19 +192,19 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/opencode/README.md",
       "runtime_path": "/opt/workcell/adapters/opencode/README.md",
-      "sha256": "703fd040fea87563f127d1fc74a45b8754acd76ec3aaf7d673b6f1613917ae87"
+      "sha256": "37bd07cd20c836f8f21b5941688a0cb8736b6a6c4df499d9404998f65dd333e1"
     },
     {
       "kind": "adapter-baseline",
       "repo_path": "adapters/amp/README.md",
       "runtime_path": "/opt/workcell/adapters/amp/README.md",
-      "sha256": "fc5a3b23101b3bef63d0e7faacd6226d7aca856fcaa389e1057e2b06b707b4d5"
+      "sha256": "e96fd9af002ffd25ef0b5928c77a48c4b3872411a41fbcfd305703a99374070d"
     },
     {
       "kind": "adapter-baseline",
       "repo_path": "adapters/goose/README.md",
       "runtime_path": "/opt/workcell/adapters/goose/README.md",
-      "sha256": "1d2de6a64d40536fd4662157a598d67b634c80ada2cd48ceb209ed40913f37d6"
+      "sha256": "1878c180bce735ca02568bb1831ce5b476f8a643f4e1d0f70cf988b13b89e4e3"
     },
     {
       "kind": "runtime-control-plane",
