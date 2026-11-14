@@ -157,6 +157,7 @@ func materializeInStateRoot(ctx context.Context, contract Contract, req Material
 	if err != nil {
 		return MaterializeResult{}, err
 	}
+	// No deferred close: a kill that a test injects as a panic must leave what a real kill leaves.
 	err = staged.commit(result.ManifestPath, result.Manifest)
 	if err = errors.Join(err, staged.close()); err != nil {
 		return MaterializeResult{}, err

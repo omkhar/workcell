@@ -61,6 +61,11 @@ func TestFakeBrokerProcess(t *testing.T) {
 		}{os.Stdin, io.Discard}, args[1], defaultWorkspaceLimits); err != nil {
 			os.Exit(3)
 		}
+	case "longack": // the longest path that one ack line can carry
+		digest, size := "", int64(0)
+		fmt.Fscanln(os.Stdin, new(string), new(string), &digest, &size)
+		io.CopyN(io.Discard, os.Stdin, size)
+		fmt.Printf("ok %s /%s\n", digest, strings.Repeat("\x01", archiveLineBytes-len("ok  /\n")-len(digest)))
 	case "refuse":
 		fmt.Fprintf(os.Stdout, "error %q\n", "refused")
 		io.Copy(io.Discard, os.Stdin)
@@ -1122,5 +1127,55 @@ func TestMaterializeRefusesAnEndedContextBeforeTheSwap(t *testing.T) {
 			t.Fatalf("late %v: MaterializeWorkspace() = %v, broker started = %v", late, err, started)
 		}
 		assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
+	}
+}
+
+// TestMaterializeKeepsAKeptCopyThatRecoveryCannotScan: a killed send leaves the
+// kept copy aside; a scan error then a failed write must keep it. Not parallel.
+func TestMaterializeKeepsAKeptCopyThatRecoveryCannotScan(t *testing.T) {
+	write, limits := writeManifestAt, defaultWorkspaceLimits
+	t.Cleanup(func() { writeManifestAt, defaultWorkspaceLimits = write, limits })
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	first, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManifestAt = func(parent *os.File, _ string, _ []byte, _ os.FileMode, _ string) error {
+		parent.Close()
+		panic(killedRun{})
+	}
+	req.SourceWorkspace = t.TempDir()
+	materializeUntilKilled(t, req)
+	writeManifestAt, defaultWorkspaceLimits.maxEntries = func(*os.File, string, []byte, os.FileMode, string) error { return unix.ENOSPC }, len(first.Manifest.Entries)-1
+	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); !errors.Is(err, unix.ENOSPC) {
+		t.Fatalf("materializeInStateRoot() = %v, want ENOSPC", err)
+	}
+	writeManifestAt, defaultWorkspaceLimits = write, limits
+	kept := hostCopies(t, first.MaterializationRoot)[fmt.Sprint(readHostManifest(t, req).Entries)]
+	if _, err := materializeInStateRoot(t.Context(), DefaultGCPVMContract(), req); err != nil || !kept {
+		t.Fatalf("a host copy matches the kept manifest: %v; the next send: %v", kept, err)
+	}
+}
+
+// TestBrokeredTargetConfirmsTheLongestAckAtTheManifestLimit: an empty broker
+// command must fail and end the lock; at the limit of the size check the longest
+// ack is confirmed, one byte less stops the send before the broker. Not parallel.
+func TestBrokeredTargetConfirmsTheLongestAckAtTheManifestLimit(t *testing.T) {
+	defer func(limit int64) { maxManifestBytes = limit }(maxManifestBytes)
+	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	empty := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string { return nil }}
+	if _, err := empty.MaterializeWorkspace(t.Context(), req); err == nil || !strings.Contains(err.Error(), "broker command is empty") {
+		t.Fatalf("MaterializeWorkspace() = %v, want the empty broker command", err)
+	}
+	manifest := readHostManifest(t, req)
+	manifest.GuestTransfer, manifest.MaterializedWorkspace = "", strings.Repeat("\x00", archiveLineBytes)
+	content, _ := manifestContent(manifest)
+	for _, size := range []int{len(content) - 1, len(content)} {
+		maxManifestBytes = int64(size)
+		var started bool
+		_, err := fakeBrokerTarget(t, "longack", t.TempDir(), &started).MaterializeWorkspace(t.Context(), req)
+		if (err == nil) != (size == len(content)) || started != (err == nil) {
+			t.Fatalf("limit %d: MaterializeWorkspace() = %v, broker started = %v", size, err, started)
+		}
 	}
 }
