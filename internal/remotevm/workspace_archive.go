@@ -201,6 +201,17 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 		return "", "", err
 	}
 	defer materializations.Close()
+	// One receive at a time changes the materializations, so a late failure
+	// of one receive cannot remove the copy that another receive of the same
+	// ID acked. Closing the directory ends the lock.
+	lock, err := materializations.Open(".")
+	if err != nil {
+		return "", "", err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return "", "", err
+	}
 	if err := removeMaterialization(materializations, materializationID); err != nil {
 		return "", "", err
 	}

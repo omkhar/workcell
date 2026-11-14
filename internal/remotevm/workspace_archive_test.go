@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 )
 
 type archiveItem struct {
@@ -526,5 +527,42 @@ func TestReceiveWorkspaceRemovesAReadOnlyMaterialization(t *testing.T) {
 	}
 	if ack, err := receiveFrame(t, root, frame, defaultWorkspaceLimits); err != nil || !strings.HasPrefix(ack, "ok ") {
 		t.Fatalf("receive after the failure = %q, %v", ack, err)
+	}
+}
+
+// TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive starts a second receive
+// of an ID while the first unpacks it, and the first then fails. The failure
+// must not remove the copy that the second receive acks. Not parallel: it
+// replaces beforeReceiverOpen.
+func TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(root, "materializations", "m1", MaterializedWorktree)
+	failing := frameArchive("m1", buildTestArchive(t, file("f", "first"), link("l", "missing")))
+	frame := frameArchive("m1", buildTestArchive(t, file("f", "second")))
+	var fired atomic.Bool
+	var ack string
+	var secondErr error
+	finished := make(chan struct{})
+	beforeReceiverOpen = func(opened string) {
+		if opened != worktree || !fired.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			defer close(finished)
+			ack, secondErr = receiveFrame(t, root, frame, defaultWorkspaceLimits)
+		}()
+		// Without a lock the second receive acks here, inside the first.
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+		}
+	}
+	t.Cleanup(func() { beforeReceiverOpen = func(string) {} })
+	if _, err := receiveFrame(t, root, failing, defaultWorkspaceLimits); err == nil || !fired.Load() {
+		t.Fatalf("first receive = %v, second started = %v; want a late failure", err, fired.Load())
+	}
+	<-finished
+	if content, err := os.ReadFile(filepath.Join(worktree, "f")); secondErr != nil || !strings.HasPrefix(ack, "ok ") || string(content) != "second" {
+		t.Fatalf("second receive = %q, %v; its copy = %q, %v", ack, secondErr, content, err)
 	}
 }
