@@ -5,12 +5,15 @@ package scenarios
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func repoRoot(tb testing.TB) string {
@@ -177,7 +180,6 @@ func TestRunScenarioTestsRepoRequiredOnlySkipsCertificationEntries(t *testing.T)
 		t.Fatalf("run-scenario-tests exit code = %d stdout=%q", code, stdout)
 	}
 	for _, want := range []string{
-		"required-ran",
 		"PASS shared/required",
 		"SKIP shared/certification (validation tier certification)",
 		"SKIP shared/provider (lane provider-e2e)",
@@ -236,7 +238,6 @@ func TestRunScenarioTestsCertificationOnlySkipsRepoRequiredEntries(t *testing.T)
 	}
 	for _, want := range []string{
 		"SKIP shared/required (validation tier repo-required)",
-		"certification-ran",
 		"PASS shared/certification",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -304,16 +305,17 @@ func TestRunScenarioTestsAllIncludesCertificationByDefault(t *testing.T) {
 		t.Fatalf("run-scenario-tests --all exit code = %d stdout=%q", code, stdout)
 	}
 	for _, want := range []string{
-		"required-ran",
 		"PASS shared/required",
-		"certification-ran",
 		"PASS shared/certification",
-		"provider-ran",
 		"PASS shared/provider",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout %q does not contain %q", stdout, want)
 		}
+	}
+	// A passing scenario's own output stays quiet.
+	if strings.Contains(stdout, "-ran") {
+		t.Fatalf("stdout %q shows a passing scenario's output", stdout)
 	}
 }
 
@@ -363,5 +365,153 @@ func TestRunScenarioTestsFailsWhenManifestValidationFails(t *testing.T) {
 	}
 	if strings.Contains(stdout, "Scenario tests passed") {
 		t.Fatalf("stdout %q unexpectedly reported success", stdout)
+	}
+}
+
+func TestRunScenarioTestsPrintsAFailedScenarioOutput(t *testing.T) {
+	t.Parallel()
+
+	scenarioRoot := t.TempDir()
+	writeScenarioScript(t, scenarioRoot, "shared/test-passing.sh", "#!/bin/sh\nset -eu\necho passing-noise\necho passing-noise-err >&2\n")
+	writeScenarioScript(t, scenarioRoot, "shared/test-failing.sh", "#!/bin/sh\nset -eu\ni=1\nwhile [ \"$i\" -le 250 ]; do echo \"failing-line-$i\"; i=$((i + 1)); done\necho failing-cause >&2\nexit 3\n")
+	scenarios := []map[string]any{}
+	for _, name := range []string{"failing", "passing"} {
+		scenarios = append(scenarios, map[string]any{
+			"id":                   "shared/" + name,
+			"description":          name + " fixture",
+			"lane":                 "secretless",
+			"platform":             "any",
+			"validation_tier":      "repo-required",
+			"manual":               false,
+			"providers":            []string{"codex"},
+			"persona":              "developer",
+			"test_file":            "shared/test-" + name + ".sh",
+			"requires_credentials": false,
+		})
+	}
+	manifestPath := writeScenarioManifest(t, scenarioRoot, scenarios)
+
+	for _, jobs := range []string{"1", "2"} {
+		code, stdout, _ := runScenarioScript(
+			t,
+			filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"),
+			map[string]string{
+				"WORKCELL_SCENARIO_ROOT":     scenarioRoot,
+				"WORKCELL_SCENARIO_MANIFEST": manifestPath,
+				"WORKCELL_SCENARIO_JOBS":     jobs,
+			},
+		)
+		if code != 1 {
+			t.Fatalf("jobs %s: run-scenario-tests exit code = %d stdout=%q", jobs, code, stdout)
+		}
+		header := "--- shared/failing output (exit 3; last 200 of 251 lines) ---\n"
+		block := header + "failing-line-52\n"
+		for _, want := range []string{"FAIL shared/failing", "PASS shared/passing", block, "failing-line-250\nfailing-cause\n--- end shared/failing output ---\n"} {
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("jobs %s: stdout %q does not contain %q", jobs, stdout, want)
+			}
+		}
+		for _, unwanted := range []string{"failing-line-51\n", "passing-noise"} {
+			if strings.Contains(stdout, unwanted) {
+				t.Fatalf("jobs %s: stdout %q contains %q", jobs, stdout, unwanted)
+			}
+		}
+		if strings.Index(stdout, header) > strings.Index(stdout, "Results: passed=1 failed=1") {
+			t.Fatalf("jobs %s: the failed output follows the summary: %q", jobs, stdout)
+		}
+	}
+}
+
+// TestRunScenarioTestsPrintsAStoppedScenarioOutput stops the runner while a
+// scenario hangs, as a CI timeout or a Ctrl-C does. The runner must print the
+// captured tail of the hung scenario, and stop the scenario and its children.
+func TestRunScenarioTestsPrintsAStoppedScenarioOutput(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		jobs   string
+		signal syscall.Signal
+		name   string
+		code   int
+	}{{"1", syscall.SIGTERM, "SIGTERM", 143}, {"2", syscall.SIGTERM, "SIGTERM", 143}, {"1", syscall.SIGINT, "SIGINT", 130}, {"2", syscall.SIGINT, "SIGINT", 130}} {
+		jobs := tc.jobs
+		t.Run("jobs "+jobs+" "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			scenarioRoot := t.TempDir()
+			ready := filepath.Join(scenarioRoot, "ready")
+			child := filepath.Join(scenarioRoot, "child")
+			writeScenarioScript(t, scenarioRoot, "shared/test-passing.sh", "#!/bin/sh\necho passing-noise\n")
+			writeScenarioScript(t, scenarioRoot, "shared/test-hung.sh", "#!/bin/sh\necho hung-line-1\necho hung-line-2\necho hung-cause >&2\nsleep 30 &\necho \"$!\" >\"$HUNG_CHILD\"\n: >\"$HUNG_READY\"\nwait\n")
+			scenarios := []map[string]any{}
+			for _, name := range []string{"passing", "hung"} {
+				scenarios = append(scenarios, map[string]any{
+					"id": "shared/" + name, "description": name + " fixture", "lane": "secretless",
+					"platform": "any", "validation_tier": "repo-required", "manual": false,
+					"providers": []string{"codex"}, "persona": "developer",
+					"test_file": "shared/test-" + name + ".sh", "requires_credentials": false,
+				})
+			}
+			manifestPath := writeScenarioManifest(t, scenarioRoot, scenarios)
+			cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"))
+			cmd.Dir = repoRoot(t)
+			cmd.Env = append(os.Environ(),
+				"WORKCELL_SCENARIO_ROOT="+scenarioRoot,
+				"WORKCELL_SCENARIO_MANIFEST="+manifestPath,
+				"WORKCELL_SCENARIO_JOBS="+jobs,
+				"HUNG_READY="+ready,
+				"HUNG_CHILD="+child)
+			var out strings.Builder
+			cmd.Stdout, cmd.Stderr = &out, &out
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			deadline := time.Now().Add(20 * time.Second)
+			for {
+				if _, err := os.Stat(ready); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					_ = cmd.Process.Kill()
+					t.Fatalf("the hung scenario never started: %q", out.String())
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			time.Sleep(100 * time.Millisecond)
+			if err := cmd.Process.Signal(tc.signal); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) || exitErr.ExitCode() != tc.code {
+					t.Fatalf("runner exit = %v, want %d; output %q", err, tc.code, out.String())
+				}
+			case <-time.After(10 * time.Second):
+				_ = cmd.Process.Kill()
+				t.Fatalf("the runner did not stop on %s: %q", tc.name, out.String())
+			}
+			raw, err := os.ReadFile(child)
+			if err != nil {
+				t.Fatal(err)
+			}
+			childPID := strings.TrimSpace(string(raw))
+			for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+				// A killed child that init has not reaped yet shows as Z.
+				state, _ := exec.Command("ps", "-o", "stat=", "-p", childPID).Output()
+				if s := strings.TrimSpace(string(state)); s == "" || strings.HasPrefix(s, "Z") {
+					break
+				}
+				if time.Now().After(deadline) {
+					_ = exec.Command("kill", "-9", childPID).Run()
+					t.Fatalf("the hung scenario's child %s still runs after %s", childPID, tc.name)
+				}
+			}
+			want := "--- shared/hung output (stopped by " + tc.name + "; 3 lines) ---\nhung-line-1\nhung-line-2\nhung-cause\n--- end shared/hung output ---\n"
+			if got := out.String(); !strings.Contains(got, want) || strings.Contains(got, "passing-noise") {
+				t.Fatalf("output %q, want the hung scenario block %q and no passing output", got, want)
+			}
+		})
 	}
 }

@@ -190,6 +190,14 @@ credential, because it runs the pin script of the worktree. GitHub allows 60
 calls an hour without a token. The hook reports a spent quota as a rate limit,
 not as a pending pin, and names the reset time.
 
+The local validate gate runs the upstream Copilot release check with no GitHub
+credential. After a full check of a pin passes, the check keeps the release
+metadata in `~/.cache/workcell/upstream-releases`. The next local run of the
+same pin reads that metadata and makes no GitHub API call. If the quota is
+spent, a local run stops the check with a notice and does not fail. CI runs
+the full check with a token, and a spent quota fails it there. The check of
+pins that `scripts/update-provider-pins.sh` just wrote always runs in full.
+
 ## Good first contributions
 
 Useful starter changes tend to be:
