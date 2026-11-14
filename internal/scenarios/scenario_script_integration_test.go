@@ -6,11 +6,13 @@ package scenarios
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -422,96 +424,181 @@ func TestRunScenarioTestsPrintsAFailedScenarioOutput(t *testing.T) {
 	}
 }
 
+// lockedBuffer collects a command's output while the test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+var (
+	scenarioManifestToolOnce sync.Once
+	errScenarioManifestTool  error
+)
+
+// buildScenarioManifestTool runs the manifest tool once, so that a deadline
+// that starts after it does not include a cold go run build.
+func buildScenarioManifestTool(tb testing.TB, manifestPath string) {
+	tb.Helper()
+	scenarioManifestToolOnce.Do(func() {
+		cmd := exec.Command(filepath.Join(repoRoot(tb), "scripts", "lib", "scenario_manifest"), "list-tsv", manifestPath)
+		cmd.Dir = repoRoot(tb)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			errScenarioManifestTool = fmt.Errorf("scenario_manifest list-tsv: %w: %s", err, output)
+		}
+	})
+	if errScenarioManifestTool != nil {
+		tb.Fatal(errScenarioManifestTool)
+	}
+}
+
+// processGone reports whether a process has exited. A killed process that
+// init has not reaped yet shows as Z.
+func processGone(pid string) bool {
+	state, _ := exec.Command("ps", "-o", "stat=", "-p", pid).Output()
+	s := strings.TrimSpace(string(state))
+	return s == "" || strings.HasPrefix(s, "Z")
+}
+
+// runStoppedScenario starts the runner on a passing and a hung scenario,
+// calls beforeSignal with the runner's PID once the passing scenario is
+// recorded and the hung one runs, and then stops the runner with signal. It
+// checks that the runner exits with code, prints the hung scenario's
+// captured tail and nothing of a record that ran on, stops the scenario and
+// its child, and removes its temporary files.
+func runStoppedScenario(t *testing.T, jobs string, signal syscall.Signal, name string, code int, beforeSignal func(pid int)) {
+	t.Helper()
+	scenarioRoot := t.TempDir()
+	tmpDir := t.TempDir()
+	ready := filepath.Join(scenarioRoot, "ready")
+	child := filepath.Join(scenarioRoot, "child")
+	hungPID := filepath.Join(scenarioRoot, "hung-pid")
+	writeScenarioScript(t, scenarioRoot, "shared/test-passing.sh", "#!/bin/sh\necho passing-noise\n")
+	writeScenarioScript(t, scenarioRoot, "shared/test-hung.sh", "#!/bin/sh\necho hung-line-1\necho hung-line-2\necho hung-cause >&2\necho \"$$\" >\"$HUNG_PID\"\nsleep 30 &\necho \"$!\" >\"$HUNG_CHILD\"\n: >\"$HUNG_READY\"\nwait\n")
+	scenarios := []map[string]any{}
+	for _, scenarioName := range []string{"passing", "hung"} {
+		scenarios = append(scenarios, map[string]any{
+			"id": "shared/" + scenarioName, "description": scenarioName + " fixture", "lane": "secretless",
+			"platform": "any", "validation_tier": "repo-required", "manual": false,
+			"providers": []string{"codex"}, "persona": "developer",
+			"test_file": "shared/test-" + scenarioName + ".sh", "requires_credentials": false,
+		})
+	}
+	manifestPath := writeScenarioManifest(t, scenarioRoot, scenarios)
+	buildScenarioManifestTool(t, manifestPath)
+	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"))
+	cmd.Dir = repoRoot(t)
+	cmd.Env = append(os.Environ(),
+		"WORKCELL_SCENARIO_ROOT="+scenarioRoot,
+		"WORKCELL_SCENARIO_MANIFEST="+manifestPath,
+		"WORKCELL_SCENARIO_JOBS="+jobs,
+		"HUNG_READY="+ready,
+		"HUNG_CHILD="+child,
+		"HUNG_PID="+hungPID,
+		"TMPDIR="+tmpDir)
+	var out lockedBuffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	// The passing scenario must be recorded before the signal, or the runner
+	// rightly reports it as stopped too.
+	const startTimeout = 20 * time.Second
+	deadline := time.Now().Add(startTimeout)
+	for {
+		_, err := os.Stat(ready)
+		if err == nil && strings.Contains(out.String(), "PASS shared/passing\n") {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			t.Fatalf("within %s of the start, the hung scenario had not signalled that it runs (%v) or the passing one had not passed: %q", startTimeout, err, out.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if beforeSignal != nil {
+		beforeSignal(cmd.Process.Pid)
+	}
+	if err := cmd.Process.Signal(signal); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != code {
+			t.Fatalf("runner exit = %v, want %d; output %q", err, code, out.String())
+		}
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("the runner did not stop on %s: %q", name, out.String())
+	}
+	// The runner reaps the scenario and kills its process group before it
+	// exits; init reaps the child.
+	for _, pidFile := range []string{hungPID, child} {
+		raw, err := os.ReadFile(pidFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid := strings.TrimSpace(string(raw))
+		for deadline := time.Now().Add(3 * time.Second); !processGone(pid); time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				_ = exec.Command("kill", "-9", pid).Run()
+				t.Fatalf("the hung scenario's process %s (%s) still runs after %s", pid, filepath.Base(pidFile), name)
+			}
+		}
+	}
+	got := out.String()
+	want := "--- shared/hung output (stopped by " + name + "; 3 lines) ---\nhung-line-1\nhung-line-2\nhung-cause\n--- end shared/hung output ---\n"
+	if !strings.Contains(got, "STOPPED shared/hung\n"+want) || strings.Contains(got, "passing-noise") {
+		t.Fatalf("output %q, want the hung scenario block %q and no passing output", got, want)
+	}
+	// A record that outlives the stop writes FAIL and its result files while
+	// the exit trap removes the results directory.
+	for _, unwanted := range []string{"FAIL shared/hung", "cannot remove", "No such file"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("output %q contains %q: the hung scenario's record ran on after %s", got, unwanted, name)
+		}
+	}
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		t.Errorf("the runner left %s in TMPDIR after %s", entry.Name(), name)
+	}
+}
+
 // TestRunScenarioTestsPrintsAStoppedScenarioOutput stops the runner while a
-// scenario hangs, as a CI timeout or a Ctrl-C does. The runner must print the
-// captured tail of the hung scenario, and stop the scenario and its children.
+// scenario hangs, as a CI timeout, a Ctrl-C or a closed terminal does. The
+// runner must print the captured tail of the hung scenario, and stop the
+// scenario and its children.
 func TestRunScenarioTestsPrintsAStoppedScenarioOutput(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		jobs   string
 		signal syscall.Signal
 		name   string
 		code   int
-	}{{"1", syscall.SIGTERM, "SIGTERM", 143}, {"2", syscall.SIGTERM, "SIGTERM", 143}, {"1", syscall.SIGINT, "SIGINT", 130}, {"2", syscall.SIGINT, "SIGINT", 130}} {
-		jobs := tc.jobs
-		t.Run("jobs "+jobs+" "+tc.name, func(t *testing.T) {
-			t.Parallel()
-			scenarioRoot := t.TempDir()
-			ready := filepath.Join(scenarioRoot, "ready")
-			child := filepath.Join(scenarioRoot, "child")
-			writeScenarioScript(t, scenarioRoot, "shared/test-passing.sh", "#!/bin/sh\necho passing-noise\n")
-			writeScenarioScript(t, scenarioRoot, "shared/test-hung.sh", "#!/bin/sh\necho hung-line-1\necho hung-line-2\necho hung-cause >&2\nsleep 30 &\necho \"$!\" >\"$HUNG_CHILD\"\n: >\"$HUNG_READY\"\nwait\n")
-			scenarios := []map[string]any{}
-			for _, name := range []string{"passing", "hung"} {
-				scenarios = append(scenarios, map[string]any{
-					"id": "shared/" + name, "description": name + " fixture", "lane": "secretless",
-					"platform": "any", "validation_tier": "repo-required", "manual": false,
-					"providers": []string{"codex"}, "persona": "developer",
-					"test_file": "shared/test-" + name + ".sh", "requires_credentials": false,
-				})
-			}
-			manifestPath := writeScenarioManifest(t, scenarioRoot, scenarios)
-			cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"))
-			cmd.Dir = repoRoot(t)
-			cmd.Env = append(os.Environ(),
-				"WORKCELL_SCENARIO_ROOT="+scenarioRoot,
-				"WORKCELL_SCENARIO_MANIFEST="+manifestPath,
-				"WORKCELL_SCENARIO_JOBS="+jobs,
-				"HUNG_READY="+ready,
-				"HUNG_CHILD="+child)
-			var out strings.Builder
-			cmd.Stdout, cmd.Stderr = &out, &out
-			if err := cmd.Start(); err != nil {
-				t.Fatal(err)
-			}
-			done := make(chan error, 1)
-			go func() { done <- cmd.Wait() }()
-			deadline := time.Now().Add(20 * time.Second)
-			for {
-				if _, err := os.Stat(ready); err == nil {
-					break
-				}
-				if time.Now().After(deadline) {
-					_ = cmd.Process.Kill()
-					t.Fatalf("the hung scenario never started: %q", out.String())
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
-			time.Sleep(100 * time.Millisecond)
-			if err := cmd.Process.Signal(tc.signal); err != nil {
-				t.Fatal(err)
-			}
-			select {
-			case err := <-done:
-				var exitErr *exec.ExitError
-				if !errors.As(err, &exitErr) || exitErr.ExitCode() != tc.code {
-					t.Fatalf("runner exit = %v, want %d; output %q", err, tc.code, out.String())
-				}
-			case <-time.After(10 * time.Second):
-				_ = cmd.Process.Kill()
-				t.Fatalf("the runner did not stop on %s: %q", tc.name, out.String())
-			}
-			raw, err := os.ReadFile(child)
-			if err != nil {
-				t.Fatal(err)
-			}
-			childPID := strings.TrimSpace(string(raw))
-			for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-				// A killed child that init has not reaped yet shows as Z.
-				state, _ := exec.Command("ps", "-o", "stat=", "-p", childPID).Output()
-				if s := strings.TrimSpace(string(state)); s == "" || strings.HasPrefix(s, "Z") {
-					break
-				}
-				if time.Now().After(deadline) {
-					_ = exec.Command("kill", "-9", childPID).Run()
-					t.Fatalf("the hung scenario's child %s still runs after %s", childPID, tc.name)
-				}
-			}
-			want := "--- shared/hung output (stopped by " + tc.name + "; 3 lines) ---\nhung-line-1\nhung-line-2\nhung-cause\n--- end shared/hung output ---\n"
-			if got := out.String(); !strings.Contains(got, want) || strings.Contains(got, "passing-noise") {
-				t.Fatalf("output %q, want the hung scenario block %q and no passing output", got, want)
-			}
-		})
+	}{{syscall.SIGTERM, "SIGTERM", 143}, {syscall.SIGINT, "SIGINT", 130}, {syscall.SIGHUP, "SIGHUP", 129}} {
+		for _, jobs := range []string{"1", "2"} {
+			t.Run("jobs "+jobs+" "+tc.name, func(t *testing.T) {
+				t.Parallel()
+				runStoppedScenario(t, jobs, tc.signal, tc.name, tc.code, nil)
+			})
+		}
 	}
 }
