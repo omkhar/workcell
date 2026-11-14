@@ -150,58 +150,59 @@ func (f FakeTarget) MaterializeWorkspace(_ context.Context, req MaterializeReque
 // materializeInStateRoot stages the source workspace in the host state root
 // and writes its manifest. The fake target stops here.
 func materializeInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
-	result, err := stageInStateRoot(contract, req)
+	result, staged, err := stageInStateRoot(contract, req)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
-	if err := writeJSON(result.ManifestPath, result.Manifest); err != nil {
+	err = staged.commit(func() error { return commitManifest(result.ManifestPath, result.Manifest) })
+	if err = errors.Join(err, staged.close()); err != nil {
 		return MaterializeResult{}, err
 	}
 	return result, nil
 }
 
-// stageInStateRoot copies the source workspace into the host state root and
-// returns its manifest unwritten. It replaces the host copy of an earlier run
-// with the same ID but leaves that run's manifest in place: a brokered target
-// keeps it as the record of the guest copy until it sends this copy.
-func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, error) {
+// stageInStateRoot copies the source workspace into the host state root,
+// beside the host copy of an earlier run with the same ID, and returns its
+// manifest unwritten. The caller puts the copy in place and writes the
+// manifest together through the returned stagedHostCopy, and then closes it.
+func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeResult, *stagedHostCopy, error) {
 	if strings.TrimSpace(req.StateRoot) == "" {
-		return MaterializeResult{}, fmt.Errorf("state root is required")
+		return MaterializeResult{}, nil, fmt.Errorf("state root is required")
 	}
 	targetProvider, err := statePathSegment("target provider", contract.TargetProvider)
 	if err != nil {
-		return MaterializeResult{}, err
+		return MaterializeResult{}, nil, err
 	}
 	targetID, err := statePathSegment("target id", req.TargetID)
 	if err != nil {
-		return MaterializeResult{}, err
+		return MaterializeResult{}, nil, err
 	}
 	materializationID, err := statePathSegment("materialization id", req.MaterializationID)
 	if err != nil {
-		return MaterializeResult{}, err
+		return MaterializeResult{}, nil, err
 	}
 	if strings.TrimSpace(req.SourceWorkspace) == "" {
-		return MaterializeResult{}, fmt.Errorf("source workspace is required")
+		return MaterializeResult{}, nil, fmt.Errorf("source workspace is required")
 	}
 	workspaceDir, err := statePathSegment("workspace dir", contract.WorkspaceMaterialization.WorkspaceDir)
 	if err != nil {
-		return MaterializeResult{}, err
+		return MaterializeResult{}, nil, err
 	}
 	targetRoot := targetRoot(req.StateRoot, targetProvider, targetID)
 	materializationRoot := filepath.Join(targetRoot, "materializations", materializationID)
 	workspaceRoot := filepath.Join(materializationRoot, workspaceDir)
 	manifestPath := filepath.Join(materializationRoot, contract.WorkspaceMaterialization.ManifestName)
 	if err := mkdirAllSynced(materializationRoot); err != nil {
-		return MaterializeResult{}, err
+		return MaterializeResult{}, nil, err
 	}
 	// The copy keeps the source file modes, so the directory above it must
 	// keep other local accounts out. An earlier run can have left it open.
 	if err := restrictToOwner(materializationRoot); err != nil {
-		return MaterializeResult{}, err
+		return MaterializeResult{}, nil, err
 	}
-	entries, err := stageWorkspaceCopy(req.SourceWorkspace, materializationRoot, workspaceDir, contract.WorkspaceMaterialization.ExcludedPaths)
+	staged, entries, err := stageWorkspaceCopy(req.SourceWorkspace, materializationRoot, workspaceDir, contract.WorkspaceMaterialization.ManifestName, contract.WorkspaceMaterialization.ExcludedPaths)
 	if err != nil {
-		return MaterializeResult{}, err
+		return MaterializeResult{}, nil, err
 	}
 	manifest := WorkspaceManifest{
 		Version:               1,
@@ -221,60 +222,139 @@ func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeRes
 		ManifestPath:          manifestPath,
 		MaterializedWorkspace: workspaceRoot,
 		Manifest:              manifest,
-	}, nil
+	}, staged, nil
 }
 
-// stageWorkspaceCopy copies the source workspace into a new sibling of the
-// workspace directory and replaces the host copy of an earlier run only after
-// the copy succeeds. A failed copy removes the sibling and leaves the earlier
-// host copy, which a kept manifest of that run still describes.
-func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir string, excluded []string) ([]WorkspaceEntry, error) {
+// stagedHostCopy is a host copy staged beside the host workspace. commit puts
+// it in place together with its manifest, and close removes it if it was not
+// put in place.
+type stagedHostCopy struct {
+	parent       *os.File
+	name         string
+	workspaceDir string
+	path         string
+	committed    bool
+}
+
+// stageWorkspaceCopy recovers what an interrupted earlier run left, and then
+// copies the source workspace into a new sibling of the workspace directory.
+// A failed copy removes the sibling and leaves the earlier host copy, which a
+// kept manifest of that run still describes.
+func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir, manifestName string, excluded []string) (*stagedHostCopy, []WorkspaceEntry, error) {
 	// The parent of a name in materializationRoot is that root, opened
 	// without a follow.
 	parent, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(materializationRoot, workspaceDir))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	defer parent.Close()
-	staged, err := mkdirTempAt(parent, "."+workspaceDir+"-staging-")
+	if err := recoverInterruptedSwap(parent, workspaceDir, manifestName); err != nil {
+		return nil, nil, errors.Join(err, parent.Close())
+	}
+	name, err := mkdirTempAt(parent, "."+workspaceDir+stagingInfix)
 	if err != nil {
-		return nil, err
+		return nil, nil, errors.Join(err, parent.Close())
 	}
-	entries, err := copyWorkspaceTree(sourceWorkspace, filepath.Join(materializationRoot, staged), excluded)
-	if err == nil {
-		err = replaceWorkspaceAt(parent, staged, workspaceDir)
-	}
+	staged := &stagedHostCopy{parent: parent, name: name, workspaceDir: workspaceDir, path: filepath.Join(materializationRoot, name)}
+	entries, err := copyWorkspaceTree(sourceWorkspace, staged.path, excluded)
 	if err != nil {
-		return nil, errors.Join(err, rootio.RemoveAllAtNoFollow(parent, staged))
+		return nil, nil, errors.Join(err, staged.close())
 	}
-	return entries, parent.Sync()
+	return staged, entries, nil
 }
 
-// replaceWorkspaceAt moves the earlier host copy aside, moves staged into its
-// place, and only then removes the earlier copy. A crash at any step leaves
-// the earlier copy whole under its own name or under a sibling name.
-func replaceWorkspaceAt(parent *os.File, staged, workspaceDir string) error {
-	fd := int(parent.Fd())
-	previous, err := mkdirTempAt(parent, "."+workspaceDir+"-previous-")
+const (
+	stagingInfix  = "-staging-"
+	previousInfix = "-previous-"
+	archivePrefix = ".archive-"
+)
+
+// recoverInterruptedSwap handles the names that a run killed part way leaves.
+// A killed swap between its two renames leaves the earlier host copy under a
+// previous name and no workspace: when a manifest is kept, that copy goes back
+// in place, because the kept manifest still describes it. Every other
+// leftover name is removed. Two sends of the same ID must not run at once.
+func recoverInterruptedSwap(parent *os.File, workspaceDir, manifestName string) error {
+	names, err := parent.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	var st unix.Stat_t
+	workspaceMissing := errors.Is(unix.Fstatat(int(parent.Fd()), workspaceDir, &st, unix.AT_SYMLINK_NOFOLLOW), unix.ENOENT) &&
+		unix.Fstatat(int(parent.Fd()), manifestName, &st, unix.AT_SYMLINK_NOFOLLOW) == nil
+	var errs []error
+	for _, name := range names {
+		switch {
+		case strings.HasPrefix(name, "."+workspaceDir+previousInfix) && workspaceMissing:
+			if err := unix.Renameat(int(parent.Fd()), name, int(parent.Fd()), workspaceDir); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			workspaceMissing = false
+		case strings.HasPrefix(name, "."+workspaceDir+previousInfix),
+			strings.HasPrefix(name, "."+workspaceDir+stagingInfix),
+			strings.HasPrefix(name, archivePrefix):
+			errs = append(errs, rootio.RemoveAllAtNoFollow(parent, name))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// commit moves the earlier host copy aside, moves the staged copy into its
+// place, and then runs record, which writes the manifest. If a step fails,
+// the earlier host copy goes back in place, so the host copy and its manifest
+// change together. Once record succeeds the swap is done, and an earlier copy
+// that cannot be removed now is removed by the next run.
+func (s *stagedHostCopy) commit(record func() error) error {
+	fd := int(s.parent.Fd())
+	previous, err := mkdirTempAt(s.parent, "."+s.workspaceDir+previousInfix)
 	if err != nil {
 		return err
 	}
 	// Renaming onto the new empty directory replaces it in one step. A
 	// non-directory in the workspace place is no host copy, so it goes.
-	err = unix.Renameat(fd, workspaceDir, fd, previous)
+	hadPrevious := true
+	err = unix.Renameat(fd, s.workspaceDir, fd, previous)
 	switch {
 	case errors.Is(err, unix.ENOENT):
-		err = nil
+		hadPrevious, err = false, nil
 	case errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENOTDIR):
-		err = rootio.RemoveAllAtNoFollow(parent, workspaceDir)
+		hadPrevious, err = false, rootio.RemoveAllAtNoFollow(s.parent, s.workspaceDir)
 	}
 	if err != nil {
-		return errors.Join(err, rootio.RemoveAllAtNoFollow(parent, previous))
+		return errors.Join(err, rootio.RemoveAllAtNoFollow(s.parent, previous))
 	}
-	if err := unix.Renameat(fd, staged, fd, workspaceDir); err != nil {
-		return errors.Join(err, unix.Renameat(fd, previous, fd, workspaceDir))
+	restore := func() error {
+		if !hadPrevious {
+			return rootio.RemoveAllAtNoFollow(s.parent, previous)
+		}
+		return unix.Renameat(fd, previous, fd, s.workspaceDir)
 	}
-	return rootio.RemoveAllAtNoFollow(parent, previous)
+	if err := unix.Renameat(fd, s.name, fd, s.workspaceDir); err != nil {
+		return errors.Join(err, restore())
+	}
+	rollback := func(err error) error {
+		// Move the new copy back under its staged name, which close removes.
+		return errors.Join(err, unix.Renameat(fd, s.workspaceDir, fd, s.name), restore(), s.parent.Sync())
+	}
+	if err := s.parent.Sync(); err != nil {
+		return rollback(err)
+	}
+	if err := record(); err != nil {
+		return rollback(err)
+	}
+	s.committed = true
+	_ = rootio.RemoveAllAtNoFollow(s.parent, previous)
+	return nil
+}
+
+// close removes the staged copy unless commit put it in place, and closes the
+// parent directory.
+func (s *stagedHostCopy) close() error {
+	var err error
+	if !s.committed {
+		err = rootio.RemoveAllAtNoFollow(s.parent, s.name)
+	}
+	return errors.Join(err, s.parent.Close())
 }
 
 // mkdirTempAt creates a new owner-only directory under parent with a random
