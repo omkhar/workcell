@@ -22,6 +22,7 @@ allowed = [
   "actions/download-artifact",
   "actions/upload-artifact",
   "anchore/sbom-action",
+  "anthropics/claude-code-action",
   "docker/build-push-action",
   "docker/login-action",
   "docker/setup-buildx-action",

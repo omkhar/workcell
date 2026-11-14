@@ -66,7 +66,7 @@ Reviewers check all other `runs-on` values.
 
 ### Workflow authority
 
-The repository has 14 workflows.
+The repository has 15 workflows.
 Each workflow starts with `permissions: {}`.
 Jobs that need authority declare job permissions.
 Other jobs inherit the empty workflow-level permission set.
@@ -92,6 +92,7 @@ Other workflows also have write authority:
 - Scorecard can upload SARIF data and request an OIDC token.
 - Upstream refresh has repository-wide `issues: write` authority.
 - Upstream refresh also has `pull-requests: read` authority.
+- Claude mention can request an OIDC token. The action exchanges it for a Claude GitHub App token.
 
 The refresh script can create its label and tracking issue.
 It can also reopen or edit that issue.
@@ -103,6 +104,12 @@ It mints a GitHub App token with `contents: write` and `pull-requests: write`.
 It uses that token to create a signed branch commit and a bump PR for each candidate. If the scope guard passes on the provider candidate, it enables auto-merge and checks that commit at arming time.
 A later writer push is an accepted risk (see `docs/github-workflows.md`).
 The App has no Workflows permission, so the job does not publish a candidate that changes `.github/workflows/`.
+
+The Claude mention job uses the `claude-mention` environment.
+Its gate accepts only events that the repository owner writes, by numeric account ID.
+It stops before checkout on a PR from a fork.
+The action runs with no Bash, file edit, or web tool.
+See `docs/github-workflows.md`.
 
 The release environment protects registry publication, signing, and attestation.
 The environment requires maintainer approval and does not permit administrator bypass.
@@ -154,13 +161,14 @@ Scheduled and manual runs can write a minimal non-PR cache.
 
 ### Stored credential
 
-The workflow files use one long-lived stored credential:
+The workflow files use two long-lived stored credentials:
 
 | Credential | Location | Purpose | Limit |
 | --- | --- | --- | --- |
 | `WORKCELL_HOSTED_CONTROLS_TOKEN` | `hosted-controls-audit` environment | Read repository administration metadata for hosted-control audits | The repository cannot inspect the token scopes. Read-only authority is a provisioning rule. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude-mention` environment | Authenticate the Claude Code action to Anthropic | It grants no GitHub authority. An owner-only gate and a tool deny list limit its use. |
 
-This token does not trigger or publish a release.
+The hosted-controls token does not trigger or publish a release.
 The current script removes it before the publication call.
 
 One final-publisher step receives both tokens.
@@ -282,6 +290,7 @@ Residual risk describes the risk after the current controls.
 | 9 | A malicious change reaches a release. | Signed commits, signed tags, required checks, environment approval, and immutable releases protect publication. | Medium. One maintainer signs and approves releases. |
 | 10 | A large or hidden change avoids review. | The PR shape gate limits files, lines, areas, and binary changes. | Low. A reviewed exception can raise the limits. |
 | 11 | Script logging exposes the stored token. | The token is environment-scoped and the workflows do not print it. | Low. Read-only scope remains a provisioning rule. |
+| 12 | Text in an issue or PR steers the Claude mention action. | Only the owner can start it. It has no Bash, file edit, or web tool, and it refuses fork PRs. See `.github/workflows/claude-mention.yml`. | Medium. Other people's text in the thread can change the answer. The Claude App token can still write comments. |
 
 ## Signing-compromise incident response
 
