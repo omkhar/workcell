@@ -243,7 +243,7 @@ func TestBrokeredTargetRefusesAnEmptyBrokerCommandBeforeTheRecord(t *testing.T) 
 // TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord: a broker
 // program that is missing or not executable, and a context that has ended,
 // start no broker and send nothing, so the send must fail before the
-// unconfirmed manifest records it.
+// unconfirmed manifest records it and before the host copy is replaced.
 func TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord(t *testing.T) {
 	t.Parallel()
 
@@ -269,6 +269,28 @@ func TestBrokeredTargetRefusesABrokerThatCannotStartBeforeTheRecord(t *testing.T
 	}
 	if _, err := os.Lstat(hostManifestPath(req)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("host manifest after an ended context: %v; want no record of a send", err)
+	}
+	// A second send of a confirmed ID must also keep the host copy and its
+	// confirmed manifest.
+	first, err := fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)).MaterializeWorkspace(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := req
+	second.SourceWorkspace = secondSource(t)
+	for _, program := range []string{"/nonexistent/gcloud", notExecutable, "ended context"} {
+		target := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string { return []string{program, "compute"} }}
+		sendCtx := t.Context()
+		if program == "ended context" {
+			target, sendCtx = fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)), ctx
+		}
+		if _, err := target.MaterializeWorkspace(sendCtx, second); err == nil {
+			t.Fatalf("%q: a second send that cannot start succeeded", program)
+		}
+		assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
+		if kept := readHostManifest(t, req); kept.GuestTransfer != "" || kept.ArchiveSHA256 != first.Manifest.ArchiveSHA256 {
+			t.Fatalf("%q: kept manifest = guest_transfer %q, archive_sha256 %q; want the confirmed first send", program, kept.GuestTransfer, kept.ArchiveSHA256)
+		}
 	}
 }
 
