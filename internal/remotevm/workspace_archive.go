@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -366,7 +367,7 @@ func unpackWorkspaceArchive(archive io.Reader, workspace *os.Root, limits worksp
 	directories := map[string]bool{".": true}
 	destinations := newWorkspaceDestinationState()
 	excluded := DefaultContract().WorkspaceMaterialization.ExcludedPaths
-	var links []*tar.Header
+	var links, dirs []*tar.Header
 	entryCount, totalBytes := 0, int64(0)
 	for {
 		header, err := reader.Next()
@@ -397,10 +398,13 @@ func unpackWorkspaceArchive(archive io.Reader, workspace *os.Root, limits worksp
 		mode := header.FileInfo().Mode().Perm()
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := workspace.Mkdir(dest, mode); err != nil {
+			// Owner-only until the unpack ends, so a read-only source
+			// directory cannot block its own entries on a non-root guest.
+			if err := workspace.Mkdir(dest, 0o700); err != nil {
 				return err
 			}
 			directories[rel] = true
+			dirs = append(dirs, header)
 		case tar.TypeReg:
 			if header.Size > min(limits.maxFileBytes, limits.maxBytes-totalBytes) {
 				return workspaceSizeError(rel, header.Size, limits)
@@ -421,6 +425,14 @@ func unpackWorkspaceArchive(archive io.Reader, workspace *os.Root, limits worksp
 	// Check links after the unpack, when every in-workspace target exists.
 	for _, link := range links {
 		if err := checkReceivedSymlink(workspace, link.Name, link.Linkname); err != nil {
+			return err
+		}
+	}
+	// The umask must not change the modes that the manifest records. A
+	// child comes after its parent in the archive, so the reverse order
+	// sets each directory mode after its children.
+	for _, dir := range slices.Backward(dirs) {
+		if err := workspace.Chmod(filepath.FromSlash(dir.Name), dir.FileInfo().Mode().Perm()); err != nil {
 			return err
 		}
 	}
@@ -449,6 +461,9 @@ func unpackArchiveFile(reader io.Reader, workspace *os.Root, dest string, mode o
 		return err
 	}
 	_, err = io.Copy(file, reader)
+	if err == nil {
+		err = file.Chmod(mode)
+	}
 	if err == nil {
 		err = file.Sync()
 	}
