@@ -4,6 +4,7 @@
 package remotevm
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,6 +16,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -154,7 +156,7 @@ func materializeInStateRoot(contract Contract, req MaterializeRequest) (Material
 	if err != nil {
 		return MaterializeResult{}, err
 	}
-	err = staged.commit(func() error { return commitManifest(result.ManifestPath, result.Manifest) })
+	err = staged.commit(result.ManifestPath, result.Manifest)
 	if err = errors.Join(err, staged.close()); err != nil {
 		return MaterializeResult{}, err
 	}
@@ -226,14 +228,17 @@ func stageInStateRoot(contract Contract, req MaterializeRequest) (MaterializeRes
 }
 
 // stagedHostCopy is a host copy staged beside the host workspace. commit puts
-// it in place together with its manifest, and close removes it if it was not
-// put in place.
+// it in place together with its manifest, and close removes it if it was
+// never put in place.
 type stagedHostCopy struct {
 	parent       *os.File
 	name         string
 	workspaceDir string
 	path         string
-	committed    bool
+	placed       bool
+	// leftovers are the names that earlier runs left. Only a committed
+	// send removes them.
+	leftovers []string
 }
 
 // stageWorkspaceCopy recovers what an interrupted earlier run left, and then
@@ -247,14 +252,15 @@ func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir, mani
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := recoverInterruptedSwap(parent, workspaceDir, manifestName); err != nil {
+	leftovers, err := recoverInterruptedSwap(parent, materializationRoot, workspaceDir, manifestName)
+	if err != nil {
 		return nil, nil, errors.Join(err, parent.Close())
 	}
 	name, err := mkdirTempAt(parent, "."+workspaceDir+stagingInfix)
 	if err != nil {
 		return nil, nil, errors.Join(err, parent.Close())
 	}
-	staged := &stagedHostCopy{parent: parent, name: name, workspaceDir: workspaceDir, path: filepath.Join(materializationRoot, name)}
+	staged := &stagedHostCopy{parent: parent, name: name, workspaceDir: workspaceDir, path: filepath.Join(materializationRoot, name), leftovers: leftovers}
 	entries, err := copyWorkspaceTree(sourceWorkspace, staged.path, excluded)
 	if err != nil {
 		return nil, nil, errors.Join(err, staged.close())
@@ -263,95 +269,173 @@ func stageWorkspaceCopy(sourceWorkspace, materializationRoot, workspaceDir, mani
 }
 
 const (
-	stagingInfix  = "-staging-"
-	previousInfix = "-previous-"
-	archivePrefix = ".archive-"
+	stagingInfix     = "-staging-"
+	previousInfix    = "-previous-"
+	archivePrefix    = ".archive-"
+	maxManifestBytes = 64 << 20
 )
 
-// recoverInterruptedSwap handles the names that a run killed part way leaves.
-// A killed swap between its two renames leaves the earlier host copy under a
-// previous name and no workspace: when a manifest is kept, that copy goes back
-// in place, because the kept manifest still describes it. Every other
-// leftover name is removed. Two sends of the same ID must not run at once.
-func recoverInterruptedSwap(parent *os.File, workspaceDir, manifestName string) error {
+// recoverInterruptedSwap makes sure that the host workspace is the copy that
+// the kept manifest describes, if a run killed part way left that copy under
+// a staging or previous name. It compares content, so it needs no record of
+// the swap. It never removes a name: it moves the workspace aside and renames
+// the matching copy into its place. It returns the names that earlier runs
+// left, which a committed send removes. A copy that it scans must be a real
+// directory that this user owns. Two sends of the same ID must not run at
+// once.
+func recoverInterruptedSwap(parent *os.File, materializationRoot, workspaceDir, manifestName string) ([]string, error) {
 	names, err := parent.Readdirnames(-1)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var st unix.Stat_t
-	workspaceMissing := errors.Is(unix.Fstatat(int(parent.Fd()), workspaceDir, &st, unix.AT_SYMLINK_NOFOLLOW), unix.ENOENT) &&
-		unix.Fstatat(int(parent.Fd()), manifestName, &st, unix.AT_SYMLINK_NOFOLLOW) == nil
-	var errs []error
+	var leftovers, candidates []string
 	for _, name := range names {
-		switch {
-		case strings.HasPrefix(name, "."+workspaceDir+previousInfix) && workspaceMissing:
-			if err := unix.Renameat(int(parent.Fd()), name, int(parent.Fd()), workspaceDir); err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			workspaceMissing = false
-		case strings.HasPrefix(name, "."+workspaceDir+previousInfix),
-			strings.HasPrefix(name, "."+workspaceDir+stagingInfix),
-			strings.HasPrefix(name, archivePrefix):
-			errs = append(errs, rootio.RemoveAllAtNoFollow(parent, name))
+		copyName := strings.HasPrefix(name, "."+workspaceDir+stagingInfix) || strings.HasPrefix(name, "."+workspaceDir+previousInfix)
+		if copyName || strings.HasPrefix(name, archivePrefix) {
+			leftovers = append(leftovers, name)
+		}
+		if copyName && ownedDirectoryAt(parent, name) {
+			candidates = append(candidates, name)
 		}
 	}
-	return errors.Join(errs...)
+	if len(candidates) == 0 {
+		return leftovers, nil
+	}
+	raw, err := rootio.ReadFileAtNoFollow(parent, manifestName, "host manifest", maxManifestBytes)
+	if errors.Is(err, os.ErrNotExist) {
+		return leftovers, nil
+	}
+	var kept WorkspaceManifest
+	if err == nil {
+		err = json.Unmarshal(raw, &kept)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read the kept host manifest: %w", err)
+	}
+	matches := func(name string) bool {
+		entries, err := copyWorkspaceTree(filepath.Join(materializationRoot, name), "", nil)
+		return err == nil && slices.EqualFunc(entries, kept.Entries, func(a, b WorkspaceEntry) bool {
+			return a.Path == b.Path && a.Kind == b.Kind && a.SHA256 == b.SHA256 && a.LinkTarget == b.LinkTarget
+		})
+	}
+	if ownedDirectoryAt(parent, workspaceDir) && matches(workspaceDir) {
+		return leftovers, nil
+	}
+	for _, name := range candidates {
+		if !matches(name) {
+			continue
+		}
+		aside, err := moveAside(parent, workspaceDir)
+		if err != nil {
+			return nil, err
+		}
+		if err := unix.Renameat(int(parent.Fd()), name, int(parent.Fd()), workspaceDir); err != nil {
+			return nil, err
+		}
+		leftovers = slices.DeleteFunc(leftovers, func(n string) bool { return n == name })
+		if aside != "" {
+			leftovers = append(leftovers, aside)
+		}
+		return leftovers, parent.Sync()
+	}
+	return leftovers, nil
+}
+
+// ownedDirectoryAt reports whether name in parent is a directory, not a
+// symlink, that this user owns.
+func ownedDirectoryAt(parent *os.File, name string) bool {
+	st, err := rootio.LstatAtNoFollow(parent, name)
+	return err == nil && st.Mode&unix.S_IFMT == unix.S_IFDIR && int(st.Uid) == os.Geteuid()
+}
+
+// moveAside renames name in parent, if it is there, to a new previous name
+// and returns that name. It moves a non-directory too, without a follow.
+func moveAside(parent *os.File, name string) (string, error) {
+	fd := int(parent.Fd())
+	aside, err := mkdirTempAt(parent, "."+name+previousInfix)
+	if err != nil {
+		return "", err
+	}
+	// Renaming a directory onto the new empty directory replaces it in one
+	// step. A non-directory cannot replace it, so it takes the freed name.
+	err = unix.Renameat(fd, name, fd, aside)
+	if errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENOTDIR) {
+		if err = unix.Unlinkat(fd, aside, unix.AT_REMOVEDIR); err == nil {
+			err = unix.Renameat(fd, name, fd, aside)
+		}
+	}
+	if errors.Is(err, unix.ENOENT) {
+		return "", unix.Unlinkat(fd, aside, unix.AT_REMOVEDIR)
+	}
+	return aside, err
 }
 
 // commit moves the earlier host copy aside, moves the staged copy into its
-// place, and then runs record, which writes the manifest. If a step fails,
-// the earlier host copy goes back in place, so the host copy and its manifest
-// change together. Once record succeeds the swap is done, and an earlier copy
-// that cannot be removed now is removed by the next run.
-func (s *stagedHostCopy) commit(record func() error) error {
-	fd := int(s.parent.Fd())
-	previous, err := mkdirTempAt(s.parent, "."+s.workspaceDir+previousInfix)
+// place, and writes the manifest. If a step fails, the earlier host copy
+// goes back in place, so the host copy and its manifest change together. A
+// kill or a failed rollback leaves both copies, and the next run puts back
+// the one that the kept manifest describes. Only after the manifest is
+// written does commit remove the earlier copy and the leftovers.
+func (s *stagedHostCopy) commit(manifestPath string, manifest any) error {
+	content, err := manifestContent(manifest)
 	if err != nil {
 		return err
 	}
-	// Renaming onto the new empty directory replaces it in one step. A
-	// non-directory in the workspace place is no host copy, so it goes.
-	hadPrevious := true
-	err = unix.Renameat(fd, s.workspaceDir, fd, previous)
-	switch {
-	case errors.Is(err, unix.ENOENT):
-		hadPrevious, err = false, nil
-	case errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENOTDIR):
-		hadPrevious, err = false, rootio.RemoveAllAtNoFollow(s.parent, s.workspaceDir)
+	fd := int(s.parent.Fd())
+	if err := swapStep("first rename"); err != nil {
+		return err
 	}
+	previous, err := moveAside(s.parent, s.workspaceDir)
 	if err != nil {
-		return errors.Join(err, rootio.RemoveAllAtNoFollow(s.parent, previous))
-	}
-	restore := func() error {
-		if !hadPrevious {
-			return rootio.RemoveAllAtNoFollow(s.parent, previous)
-		}
-		return unix.Renameat(fd, previous, fd, s.workspaceDir)
-	}
-	if err := unix.Renameat(fd, s.name, fd, s.workspaceDir); err != nil {
-		return errors.Join(err, restore())
+		return err
 	}
 	rollback := func(err error) error {
-		// Move the new copy back under its staged name, which close removes.
-		return errors.Join(err, unix.Renameat(fd, s.workspaceDir, fd, s.name), restore(), s.parent.Sync())
+		if s.placed {
+			err = errors.Join(err, unix.Renameat(fd, s.workspaceDir, fd, s.name))
+			// A failed write can still have put the manifest in place. Then
+			// the new copy stays under its staged name, for the next run.
+			kept, readErr := rootio.ReadFileAtNoFollow(s.parent, filepath.Base(manifestPath), "host manifest", maxManifestBytes)
+			s.placed = readErr == nil && bytes.Equal(kept, content)
+		}
+		if previous != "" {
+			err = errors.Join(err, unix.Renameat(fd, previous, fd, s.workspaceDir))
+		}
+		return errors.Join(err, s.parent.Sync())
 	}
+	if err := swapStep("second rename"); err != nil {
+		return rollback(err)
+	}
+	if err := unix.Renameat(fd, s.name, fd, s.workspaceDir); err != nil {
+		return rollback(err)
+	}
+	s.placed = true
 	if err := s.parent.Sync(); err != nil {
 		return rollback(err)
 	}
-	if err := record(); err != nil {
+	if err := swapStep("manifest"); err != nil {
 		return rollback(err)
 	}
-	s.committed = true
-	_ = rootio.RemoveAllAtNoFollow(s.parent, previous)
-	return nil
+	err = writeJSON(manifestPath, manifest)
+	if err == nil {
+		err = swapStep("cleanup")
+	}
+	if err != nil {
+		return rollback(err)
+	}
+	for _, name := range append(s.leftovers, previous) {
+		if name != "" {
+			_ = rootio.RemoveAllAtNoFollow(s.parent, name)
+		}
+	}
+	_ = swapStep("done")
+	return s.parent.Sync()
 }
 
 // close removes the staged copy unless commit put it in place, and closes the
 // parent directory.
 func (s *stagedHostCopy) close() error {
 	var err error
-	if !s.committed {
+	if !s.placed {
 		err = rootio.RemoveAllAtNoFollow(s.parent, s.name)
 	}
 	return errors.Join(err, s.parent.Close())
@@ -569,8 +653,9 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 	return copyWorkspaceTreeWithReservation(sourceRoot, destRoot, excluded, newWorkspaceDestinationState(), defaultWorkspaceLimits)
 }
 
+// An empty destRoot only scans sourceRoot and returns its entries.
 func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []string, destinations workspaceDestinationReservation, limits workspaceLimits) ([]WorkspaceEntry, error) {
-	entries := make([]WorkspaceEntry, 0)
+	entries, scanOnly := make([]WorkspaceEntry, 0), destRoot == ""
 	entryCount, totalBytes := 0, int64(0)
 	if destinations == nil {
 		return nil, fmt.Errorf("workspace destination reservation is required")
@@ -630,20 +715,22 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 			if err := checkWorkspaceSymlink(resolvedRoot, path, rel, target); err != nil {
 				return err
 			}
-			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-				return err
-			}
-			if err := os.Symlink(target, destPath); err != nil {
-				return err
+			if !scanOnly {
+				if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+					return err
+				}
+				if err := os.Symlink(target, destPath); err != nil {
+					return err
+				}
 			}
 			entries = append(entries, WorkspaceEntry{Path: rel, Kind: "symlink", Mode: info.Mode(), LinkTarget: target})
 		case info.IsDir():
-			if err := os.MkdirAll(destPath, info.Mode().Perm()); err != nil {
+			if err := mkdirAllUnless(scanOnly, destPath, info.Mode().Perm()); err != nil {
 				return err
 			}
 			entries = append(entries, WorkspaceEntry{Path: rel, Kind: "dir", Mode: info.Mode()})
 		case info.Mode().IsRegular():
-			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+			if err := mkdirAllUnless(scanOnly, filepath.Dir(destPath), 0o755); err != nil {
 				return err
 			}
 			// The bounded read stops one byte past the remaining budget, so an
@@ -657,8 +744,10 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 				return workspaceSizeError(rel, int64(len(content)), limits)
 			}
 			totalBytes += int64(len(content))
-			if err := os.WriteFile(destPath, content, info.Mode().Perm()); err != nil {
-				return err
+			if !scanOnly {
+				if err := os.WriteFile(destPath, content, info.Mode().Perm()); err != nil {
+					return err
+				}
 			}
 			sum := sha256.Sum256(content)
 			entries = append(entries, WorkspaceEntry{
@@ -790,6 +879,13 @@ func (s *workspaceDestinationState) reserve(path string) error {
 // and syncs each directory that gains an entry. A manifest that writeJSON
 // then publishes in dir cannot lose a created ancestor in a crash. Each
 // directory that it creates is owner-only.
+func mkdirAllUnless(skip bool, dir string, perm os.FileMode) error {
+	if skip {
+		return nil
+	}
+	return os.MkdirAll(dir, perm)
+}
+
 func mkdirAllSynced(dir string) error {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
@@ -833,12 +929,20 @@ func restrictToOwner(dir string) error {
 	return handle.Sync()
 }
 
-func writeJSON(path string, value any) error {
+// manifestContent is the exact content that writeJSON writes for value.
+func manifestContent(value any) ([]byte, error) {
 	content, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(content, '\n'), nil
+}
+
+func writeJSON(path string, value any) error {
+	content, err := manifestContent(value)
 	if err != nil {
 		return err
 	}
-	content = append(content, '\n')
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

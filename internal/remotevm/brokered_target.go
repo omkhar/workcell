@@ -82,11 +82,11 @@ func validateBrokerArgs(cliPath string, receiverPort int, values ...string) erro
 	return nil
 }
 
-// createArchiveFile and commitManifest are replaced only by tests that inject
-// a failure.
+// createArchiveFile and swapStep are replaced only by tests that inject a
+// failure or a kill.
 var (
 	createArchiveFile = os.CreateTemp
-	commitManifest    = writeJSON
+	swapStep          = func(string) error { return nil }
 )
 
 func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (MaterializeResult, error) {
@@ -151,7 +151,7 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 		return "", err
 	}
 	result.Manifest.GuestTransfer = GuestTransferUnconfirmed
-	if err := staged.commit(func() error { return commitManifest(result.ManifestPath, result.Manifest) }); err != nil {
+	if err := staged.commit(result.ManifestPath, result.Manifest); err != nil {
 		return "", err
 	}
 	return runBroker(ctx, argv, func(conn io.ReadWriter) (string, error) {
