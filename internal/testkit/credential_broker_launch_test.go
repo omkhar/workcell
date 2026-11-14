@@ -581,26 +581,29 @@ sign_session_audit_head_explicit() { printf 'seal %s\n' "$*" >>"$DIR/audit"; }
 finish_stopped_session_fallback prof "$SID" rec.json
 `, withSID("prof $SID exit source=host-stop-fallback exit_status=7 final_assurance=managed-mutable\nseal prof $SID rec.json\n")},
 	}
+	// ps lists by pid and the scan stops at the first match, so the decoy
+	// starts both before and after this run's broker: a scan that ignored the
+	// session would stop the decoy in one of the two orders.
 	for name, path := range paths {
-		t.Run(name, func(t *testing.T) {
-			dir := t.TempDir()
-			private := filepath.Join(dir, "wcb.AbC123")
-			for _, d := range []string{filepath.Join(dir, "sessions"), private} {
-				if err := os.MkdirAll(d, 0o700); err != nil {
+		for _, order := range []string{"decoy-first", "decoy-last"} {
+			t.Run(name+"/"+order, func(t *testing.T) {
+				dir := t.TempDir()
+				private := filepath.Join(dir, "wcb.AbC123")
+				for _, d := range []string{filepath.Join(dir, "sessions"), private} {
+					if err := os.MkdirAll(d, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(filepath.Join(private, "ledger.jsonl"), []byte("{}\n"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if err := os.WriteFile(filepath.Join(private, "ledger.jsonl"), []byte("{}\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			// The decoy is the fake broker of a concurrent run, which has a
-			// session id of its own: the stop must never signal it.
-			out, err := brokerLaunchProbe(t, dir, `
+				// The decoy is the fake broker of a concurrent run, which has a
+				// session id of its own: the stop must never signal it.
+				out, err := brokerLaunchProbe(t, dir, `
 run_profile_docker_command() { :; }
-(exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.AbC123/b.sock --guest-socket /tmp/workcell-broker-$SID.sock" sleep 30) &
-pid=$!
-(exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.DeC0y1/b.sock --guest-socket /tmp/workcell-broker-$DECOY.sock" sleep 30) &
-decoy=$!
+start_this() { (exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.AbC123/b.sock --guest-socket /tmp/workcell-broker-$SID.sock" sleep 30) & pid=$!; }
+start_decoy() { (exec -a "/x/workcell-hostutil-abc credential-broker-cli serve --socket $DIR/wcb.DeC0y1/b.sock --guest-socket /tmp/workcell-broker-$DECOY.sock" sleep 30) & decoy=$!; }
+if [[ "$ORDER" == decoy-first ]]; then start_decoy; start_this; else start_this; start_decoy; fi
 printf '%s %s\n' "$pid" "$DIR/wcb.AbC123" >"$DIR/sessions/$SID.broker"
 for p in "$pid" "$decoy"; do
   for _ in {1..40}; do [[ "$(ps -p "$p" -o command=)" == *credential-broker-cli* ]] && break; sleep 0.05; done
@@ -608,22 +611,23 @@ done
 `+path.body+`
 if state="$(ps -p "$decoy" -o stat=)" && [[ "$state" != *Z* ]]; then echo decoy alive; kill "$decoy"; else echo decoy signalled; fi
 if state="$(ps -p "$pid" -o stat=)" && [[ "$state" != *Z* ]]; then echo alive; kill "$pid"; else echo stopped; fi
-`, "DECOY="+newBrokerTestSession())
-			if err != nil || !strings.HasSuffix(out, "decoy alive\nstopped\n") {
-				t.Fatalf("the stop missed this run's broker or signalled the decoy: %v\n%s", err, out)
-			}
-			got, _ := os.ReadFile(filepath.Join(dir, "audit"))
-			want := withSID("prof $SID credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n"+
-				"prof $SID egress_summary status=unreadable\n") + path.seal
-			if string(got) != want {
-				t.Fatalf("audit steps = %q, want %q", got, want)
-			}
-			if _, err := os.Stat(filepath.Join(dir, "sessions", brokerTestSession+".broker")); !os.IsNotExist(err) {
-				t.Fatalf("state file remains: %v", err)
-			}
-			if colima, _ := os.ReadFile(filepath.Join(dir, "colima")); string(colima) != withSID("ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-$SID.sock\n") {
-				t.Fatalf("colima calls = %q, want the guest socket removal", colima)
-			}
-		})
+`, "DECOY="+newBrokerTestSession(), "ORDER="+order)
+				if err != nil || !strings.HasSuffix(out, "decoy alive\nstopped\n") {
+					t.Fatalf("the stop missed this run's broker or signalled the decoy: %v\n%s", err, out)
+				}
+				got, _ := os.ReadFile(filepath.Join(dir, "audit"))
+				want := withSID("prof $SID credential_broker_summary status=complete granted=1 denied=0 malformed_lines=0\n"+
+					"prof $SID egress_summary status=unreadable\n") + path.seal
+				if string(got) != want {
+					t.Fatalf("audit steps = %q, want %q", got, want)
+				}
+				if _, err := os.Stat(filepath.Join(dir, "sessions", brokerTestSession+".broker")); !os.IsNotExist(err) {
+					t.Fatalf("state file remains: %v", err)
+				}
+				if colima, _ := os.ReadFile(filepath.Join(dir, "colima")); string(colima) != withSID("ssh --profile prof -- sudo rm -f -- /tmp/workcell-broker-$SID.sock\n") {
+					t.Fatalf("colima calls = %q, want the guest socket removal", colima)
+				}
+			})
+		}
 	}
 }
