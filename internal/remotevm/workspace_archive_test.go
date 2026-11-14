@@ -602,21 +602,23 @@ func materializationsLocked(t *testing.T, root string) bool {
 	return true
 }
 
-// forkWhileTheTestRuns forks children for an exec of /bin/true on a few
+// forkWhileTheTestRuns forks children for an exec of true on a few
 // goroutines until the test ends. Each child shares every open file
 // description of this process, and so every flock on one, from its fork to
 // its exec.
 func forkWhileTheTestRuns(t *testing.T) {
 	t.Helper()
-	if _, err := os.Stat("/bin/true"); err != nil {
-		t.Skipf("no /bin/true to exec: %v", err)
+	// true is /bin/true on Linux and /usr/bin/true on macOS.
+	program, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatalf("find true to exec: %v", err)
 	}
 	var stop atomic.Bool
 	var forks sync.WaitGroup
 	for range 4 {
 		forks.Go(func() {
 			for !stop.Load() {
-				_ = exec.Command("/bin/true").Run()
+				_ = exec.Command(program).Run()
 			}
 		})
 	}
