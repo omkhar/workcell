@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+readonly ROOT_DIR
 workcell_validate_token_file_created=""
 if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
   workcell_validate_token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"

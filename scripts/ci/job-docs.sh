@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ROOT_DIR
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-}"

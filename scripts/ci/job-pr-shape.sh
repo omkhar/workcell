@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ROOT_DIR
 BASE_BRANCH="${WORKCELL_PR_BASE_REF:-main}"
 BASE_REF=""
 readonly CERTIFIED_ADAPTER_LABEL="approved-large-certified-adapter"

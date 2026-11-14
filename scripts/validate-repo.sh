@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
+readonly ROOT_DIR
 # shellcheck source=scripts/lib/canonical-build-env.sh
 source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
 workcell_require_modern_privileged_bash "$@"

@@ -43,6 +43,11 @@ func TestDocClaimsPassOnCheckout(t *testing.T) {
 	}
 }
 
+// laneRoot is the assignment and readonly line that pin the root of
+// scripts/validate-repo.sh, without which a ${ROOT_DIR}/ path names no
+// repository script.
+const laneRoot = `ROOT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"` + "\nreadonly ROOT_DIR"
+
 func TestDocClaimsNegativeControls(t *testing.T) {
 	citools := filepath.Join(t.TempDir(), "workcell-citools")
 	build := exec.Command("go", "build", "-o", citools, "./cmd/workcell-citools")
@@ -80,7 +85,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"missing internal path", "See `internal/nope/x.go` here.\n", "", "", "", "missing-path"},
 		{"unwired script", "See `scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
 		{"unwired dot-slash script", "See `./scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
-		{"wired by root variable", "See `scripts/orphan.sh` here.\n", "\"${ROOT_DIR}/scripts/orphan.sh\" --flag\n", "", "", ""},
+		{"wired by root variable", "See `scripts/orphan.sh` here.\n", laneRoot + "\n\"${ROOT_DIR}/scripts/orphan.sh\" --flag\n", "", "", ""},
 		{"wired after keyword", "See `scripts/orphan.sh` here.\n", "if ! ./scripts/orphan.sh; then exit 1; fi\n", "", "", ""},
 		{"comment is not wiring", "See `scripts/orphan.sh` here.\n", "# scripts/orphan.sh is intentionally not run\n", "", "", "unwired-script"},
 		{"echo is not wiring", "See `scripts/orphan.sh` here.\n", "echo \"scripts/orphan.sh\"\n", "", "", "unwired-script"},
@@ -107,6 +112,17 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"a CRLF fence closes", "```\r\nx\r\n```\r\nSee `scripts/nope.sh` here.\r\n", "", "", "", "missing-path"},
 		{"a multiline code span", "See `\nscripts/nope.sh\n` here.\n", "", "", "", "missing-path"},
 		{"a code span does not cross a blank line", "stray `\n\nscripts/nope.sh` here.\n", "", "", "", ""},
+		{"a heading ends a code span", "# stray `\n`scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"a list item ends a code span", "- stray `\n- `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"a blockquote ends a code span", "stray `\n> `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		// The next two rows guard the narrowed block rule: each fails when its
+		// branch of starts_block is removed.
+		{"a table ends a code span", "stray `\n| `scripts/nope.sh` | x |\n| - | - |\n", "", "", "", "missing-path"},
+		{"an ordered item from 1 ends a code span", "stray `\n1. `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"a wrapped pipe stays in a code span", "See `scripts/nope.sh\n| more` here.\n", "", "", "", "missing-path"},
+		{"a wrapped number stays in a code span", "See `scripts/nope.sh\n10) more` here.\n", "", "", "", "missing-path"},
+		{"a wrapped year stays in a code span", "See `scripts/nope.sh\n2026. more` here.\n", "", "", "", "missing-path"},
+		{"an HTML comment opener in a code span is code", "Use `<!--` to describe a literal opener.\nThe launcher rejects bad input.\n", "", "", "", "unanchored-claim"},
 		{"no main ref", "Nothing here.\n", "", "", "", "no origin/main or main ref"},
 		{"unreadable base baseline", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
 		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "", "escaping-path"},
