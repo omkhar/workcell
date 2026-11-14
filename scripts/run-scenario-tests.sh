@@ -232,7 +232,9 @@ stop_on_signal() {
     if [[ -f "${prefix}.pid" ]]; then
       pid="$(<"${prefix}.pid")"
       # The scenario PID is also its process group ID.
-      [[ "${pid}" =~ ^[1-9][0-9]*$ ]] && kill -TERM -- "-${pid}" 2>/dev/null || true
+      if [[ "${pid}" =~ ^[1-9][0-9]*$ ]]; then
+        kill -TERM -- "-${pid}" 2>/dev/null || true
+      fi
     fi
   done
   for pid in ${pids[@]+"${pids[@]}"}; do
