@@ -436,3 +436,53 @@ func TestReceiveWorkspaceRefusesARootSwappedDuringTheReceive(t *testing.T) {
 		t.Fatalf("the receiver created a name at its root: %v", err)
 	}
 }
+
+// TestReceiveWorkspaceRefusesAPathSwappedBetweenItsCheckAndItsOpen swaps the
+// receiver root, and then each receiver subdirectory, for a symlink in the gap
+// between the check and the open. The identity check must refuse each swap,
+// and nothing may land in the symlink target. Not parallel: it replaces
+// beforeReceiverOpen.
+func TestReceiveWorkspaceRefusesAPathSwappedBetweenItsCheckAndItsOpen(t *testing.T) {
+	frame := frameArchive("m1", buildTestArchive(t, dir("d"), file("d/a.txt", "alpha")))
+	for _, swapped := range []string{"", "materializations", filepath.Join("materializations", "m1"), filepath.Join("materializations", "m1", MaterializedWorktree)} {
+		t.Run("root/"+swapped, func(t *testing.T) {
+			// os.Root follows a relative symlink that stays in the parent,
+			// so the decoy of a subdirectory is a sibling of it.
+			base := t.TempDir()
+			root := filepath.Join(base, "root")
+			mustMkdir(t, root)
+			path := filepath.Join(root, swapped)
+			target, link := filepath.Join(base, "outside"), filepath.Join(base, "outside")
+			if swapped != "" {
+				target, link = filepath.Join(filepath.Dir(path), "decoy"), "decoy"
+			}
+			var fired bool
+			beforeReceiverOpen = func(opened string) {
+				if opened != path || fired {
+					return
+				}
+				fired = true
+				if err := os.Rename(path, path+".held"); err != nil {
+					t.Error(err)
+				}
+				if err := os.MkdirAll(target, 0o700); err != nil {
+					t.Error(err)
+				}
+				if err := os.Symlink(link, path); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { beforeReceiverOpen = func(string) {} })
+			_, err := receiveFrame(t, root, frame, defaultWorkspaceLimits)
+			if !fired {
+				t.Fatalf("the receiver never opened %s", path)
+			}
+			if err == nil || !strings.Contains(err.Error(), "changed while it was opened") {
+				t.Fatalf("receive = %v, want the identity check to refuse the swap", err)
+			}
+			if names, _ := os.ReadDir(target); len(names) != 0 {
+				t.Fatalf("the receiver wrote %v into the symlink target", names)
+			}
+		})
+	}
+}

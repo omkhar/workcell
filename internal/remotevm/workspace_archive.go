@@ -213,6 +213,10 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 	return filepath.Join(root, "materializations", materializationID, MaterializedWorktree), digest, nil
 }
 
+// beforeReceiverOpen runs between the check of a receiver path and its open.
+// Only tests replace it, to swap the path in that gap.
+var beforeReceiverOpen = func(string) {}
+
 // openReceiverRoot opens root as an os.Root that is the directory a no-follow
 // walk from / reaches. A symlink at root or at any ancestor is refused, and a
 // path swapped between the walk and the open fails the identity check. Every
@@ -228,6 +232,7 @@ func openReceiverRoot(root string) (*os.Root, error) {
 		return nil, fmt.Errorf("open workspace receiver root without following symlinks: %w", err)
 	}
 	defer pinned.Close()
+	beforeReceiverOpen(cleaned)
 	opened, err := os.OpenRoot(cleaned)
 	if err != nil {
 		return nil, err
@@ -250,6 +255,7 @@ func openSubdirectoryRoot(parent *os.Root, name string) (*os.Root, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("workspace receiver path %q is not a directory", filepath.Join(parent.Name(), name))
 	}
+	beforeReceiverOpen(filepath.Join(parent.Name(), name))
 	opened, err := parent.OpenRoot(name)
 	if err != nil {
 		return nil, err
