@@ -977,18 +977,22 @@ func localTypeName(expr ast.Expr) string {
 	return ""
 }
 
-// listTypeNames lists the types declared as a map, slice or array, whose
-// literal keys name no field. A name is matched across the package, so a
-// struct type of the same name elsewhere keeps its fields read.
+// listTypeNames lists the package-level types declared as a map, slice or
+// array, whose literal keys name no field. A name is matched across the
+// package, so a struct type of the same name elsewhere keeps its fields read.
+// A type declared in a function names nothing outside it, so it is not listed.
 func listTypeNames(files []*ast.File) map[string]bool {
 	names, structs := map[string]bool{}, structFields(files)
 	for _, file := range files {
-		ast.Inspect(file, func(c ast.Node) bool {
-			if spec, ok := c.(*ast.TypeSpec); ok && isListType(spec.Type) && structs[spec.Name.Name] == nil {
-				names[spec.Name.Name] = true
+		for _, decl := range file.Decls {
+			if general, ok := decl.(*ast.GenDecl); ok && general.Tok == token.TYPE {
+				for _, each := range general.Specs {
+					if spec := each.(*ast.TypeSpec); isListType(spec.Type) && structs[spec.Name.Name] == nil {
+						names[spec.Name.Name] = true
+					}
+				}
 			}
-			return true
-		})
+		}
 	}
 	return names
 }
@@ -1820,6 +1824,14 @@ type table[T any] map[string]T
 func apply(key func(string) string, dir string) { _ = key(dir) }
 func a(dir string) { key := "HOME"; _ = table[func(string, string) error]{key: os.Setenv}; apply(filepath.Base, dir); exec.Command("git") }
 `, 0},
+		// A list type declared inside a function names nothing outside it, so a
+		// package type of the same name keeps its keyed fields read.
+		"function_local_list_type_keeps_a_package_struct_alias.go": {`package x
+import ("os"; "os/exec"; "example.com/ext")
+type writer = ext.W
+func b() { type writer []func(string, string) error; _ = writer{} }
+func a(dir string) { w := writer{Set: os.Setenv}; w.Set("PATH", dir); exec.Command("git") }
+`, 1},
 		"struct_key_is_a_writer.go": {`package x
 import ("os"; "os/exec")
 type writer struct{ set func(string, string) error }

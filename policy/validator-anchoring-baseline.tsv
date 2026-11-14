@@ -47,11 +47,11 @@ internal/metadatautil	claudeMentionPin	4a5debeb	test helper: finds the one pinne
 internal/metadatautil	TestClaudeMentionWorkflowRejectsChanges	f0b79fb3	test fixture: locates the text each negative row rewrites
 internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,7c7b6223	test reads decoded YAML fields: the gate expression and the claude_args value
 internal/metadatautil	checkClaudeMentionReach	bf0bcc67,bf0bcc67,f2e98a0c	finds expression spans and the action, secret or environment names in decoded YAML scalars; a match only rejects or adds checks
-internal/metadatautil	checkSecretsUse	6c1fd84d,b75c08fe	reads the secrets context in a decoded expression; anything but one literal secret name fails
+internal/metadatautil	checkSecretsUse	6c1fd84d,a9d8a996,b75c08fe	reads the secrets context in a decoded expression; anything but one literal secret name fails
 internal/metadatautil	compareToolchainVersions	94d21a70,a6fb3cfe	reads the digit runs of a pin value that matchToolchainPin already matched against an anchored format
 internal/metadatautil	countToolchainPrefix	b69b9526	counts whole lines of a git blob that start with a pin key, so a second assignment of the key fails the toolchain guard
 internal/metadatautil	evalUpstreamRefreshPublishIf	409b8dd6	splits a job condition that the workflow verifier already pins exactly into its context == literal terms, to evaluate each scenario
-internal/metadatautil	matchToolchainPin	2e58db5e	matches the value of one whole git blob line, after its exact key prefix and before its exact suffix, against a format anchored at both ends
+internal/metadatautil	matchToolchainPin	2e58db5e,8ac9e14b,fa3ea43f	matches the value of one whole git blob line, after its exact key prefix and before its exact suffix, against a format anchored at both ends
 internal/metadatautil	normalizeClaudeMentionNode	04f5fe0b,ac3399b8	picks the action reference in the decoded uses value; the digest covers the rest
 internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherRepository	30d03cdc	a test builds the expected error text from the repository it mutates in the fixture policy file
 internal/metadatautil	TestCheckPinnedInputsRejectsWorkflowToolPinBypass	a687f1b3	a test precondition on the fixture text that the test itself rewrites
@@ -64,6 +64,7 @@ internal/metadatautil	rejectInlineToolPins	ce23d36a	the substring finds a tool-p
 internal/metadatautil	rejectToolPinLoaderEnv	6d4747d3,7b56a4cb,d91244a9,dc54a3fe	the prefixes check a decoded workflow or job env key name; they only deny
 internal/metadatautil	replaceInReleaseJob	4ac3aaf4,9d4ac0c7	a test locates the job it mutates in the release workflow fixture
 internal/metadatautil	actionInputNames	a39bcf76	the pattern checks one decoded YAML mapping key of action metadata
+internal/metadatautil	readActionInputRows	1b822896	the cut splits one row of the generated action inputs table at its first tab to key it by ref; it reads a generated table, not free text
 internal/metadatautil	parseActionRef	0a2ee96f	the pattern splits one decoded workflow step uses: value
 internal/metadatautil	pinnedWorkflowActionRefs	6ec42091,9dce78c5	the prefixes check a decoded workflow step uses: value
 internal/metadatautil	heredocExpanded	9a5e4aa1	the checks copy one heredoc body byte by byte into a double-quoted word for the reader to parse; they decide nothing
@@ -125,8 +126,8 @@ internal/metadatautil	ValidateRequirements	6960f23b	the prefix checks a requirem
 internal/metadatautil	ValidateUpstreamRefreshWorkflow	ab15fa41,f83a4e4c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	afterDeclaration	8e5f5463,f3888ab6	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewrite the goose ARG pins, and the result must read back through gooseDockerfilePin as the target pin
-internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
-internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
+internal/metadatautil	dockerfileArgPin	460afc4a,ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
+internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,61155ee7,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
 internal/metadatautil	toolchainQEMUImageRE	27499df4	builds an anchored pin value format from fixed constants
 internal/metadatautil	toolchainRustImageRE	93c09f8c	builds an anchored pin value format from fixed constants
 internal/metadatautil	toolchainScopeGit.blob	bc48f987	checks an object id that git diff-tree printed against an anchored hex format before git reads it
@@ -162,6 +163,7 @@ internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe1138
 internal/metadatautil	readCommand	80d7a496,eda3ff46	the checks read shellWords words of one command for the function keyword, an eval or a trap; they parse words, not free text
 internal/metadatautil	leadsCommand	022f87b2,4fc23ad3,a4b7742c,f2b3a754	the checks read shellWords words before one word for a redirection, a reserved word, a prefix word, an assignment or an option; they parse words, not free text
 internal/metadatautil	shellRedirectionWord	733a776c	the check reads the unquoted syntax of one shellWords word for a redirection operator; it parses a word, not free text
+internal/metadatautil	shellContinues	4e03b6c3,520b778d,78480cde	the checks read whether one line ends in a backslash and whether the joined run so far ends in a blank, before the shared shellWords parses it; they read line ends, not free text
 internal/metadatautil	definedName	0f1edc2e,1b14e3f8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	docClaimRule	3ac775b1,ea119221	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.aptBrokerBuilderStage	174cd5ff	unreviewed debt: review the subject, then port or justify
@@ -182,9 +184,8 @@ internal/metadatautil	fetchCodexSubcommands	ce25dff3	unreviewed debt: review the
 internal/metadatautil	fileExemptsPortability	6c6641e7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	filterVerificationPaths	3c90a3bd	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	flagFixtureStampRE	1eb67864	the pattern reads the one version stamp line of a reviewed flag fixture
-internal/metadatautil	flattenGroupedCases	1d1df309,4196f09c,b89c427b,ba4a3fee,d15f9ac1,dfcdfffb,e2a01531	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	readCommands	01ff8cc7,0980b463,1cac75d1,76463688,76463688,8432ac3d,9989ea1a,a7fe05a6,b107ac7f,ca694816,d9729561,fcf39dce	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	flattenGrouped	5aece71e,730b42b7,a930838a,cde81839,d4b04b79,d57f3e38,e6b5a265,e8a93e14,fc08632c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	flattenGroupedCases	1d1df309,4196f09c,55285868,786fca64,ae0a546c,b89c427b,ba4a3fee,d15f9ac1,dfcdfffb,e2a01531	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	readCommands	01ff8cc7,0980b463,1cac75d1,76463688,76463688,8432ac3d,9989ea1a,a7fe05a6,b107ac7f,b9f6426d,ca694816,d9729561,e6477274,fcf39dce	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	forwards	b157cc56	the pattern tests whether one parsed command word is a positional parameter or an array expansion
 internal/metadatautil	functionDefinition	3504f8e9,f3e2f47e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	functionScopedMatches	063efee0,2282fb4d,8151ca87,cb6c1dce	unreviewed debt: review the subject, then port or justify
@@ -210,7 +211,7 @@ internal/metadatautil	joinFirstWords	80fea3c8	unreviewed debt in a test: review 
 internal/metadatautil	laneLibraryPath	21765aac,40f39ba5,75a4ad0b	the patterns read the operand word of a source command EveryShellCommand returns, for a fixed ${ROOT_DIR}/ path, its root prefix and any .. in it; they parse words, not free text
 internal/metadatautil	laneRootPinned	02e69514,29f26c27,3b1893bc,4f345bb4,80ec0e4b	fails closed: a lane line or library path it cannot match leaves ROOT_DIR unpinned, so a ${ROOT_DIR}/ path wires nothing
 internal/metadatautil	laneArrayClosed	095e8a43,ded798bc,feca79ce	the check reads the syntax of the words a closed reader returns for an array assignment that closes its own parentheses; any other word leaves the reader to close the innermost ( as before
-internal/metadatautil	laneEnds.rerunning	93c73e66	fails closed: a lane or library text that names BASH_ARGV0, in its text or a word its brace expansion makes, proves no rerun
+internal/metadatautil	laneEnds.rerunning	8597c6f2,93c73e66	fails closed: a lane or library text that names BASH_ARGV0, in its text or a word its brace expansion makes, proves no rerun
 internal/metadatautil	laneSetMoves	38645f05,3d37a5f9,7ea0eaf1	the check reads the words a closed reader returns for a set command: an option word of set that starts with - or + and holds letters, and after one that holds o a lower-case option name; any other word may set the arguments, which makes every branch run and proves no rerun, so it fails closed
 internal/metadatautil	laneEntryPinned	af6e2f7f,b01af3d9	fails closed: a lane whose text before the root line names ROOT_DIR, or that already holds the line the reader writes for it, is read unpinned
 internal/metadatautil	laneEntryStripped	0c13b96c	the checks compare whole lines with the fixed guard, its fixed stop and an echo of a message that expands nothing but the script path; a line that differs leaves the guard unread, so the lane is read as written and fails closed
@@ -225,7 +226,7 @@ internal/metadatautil	loadDocLanguageBaseline	5939fd27	the prefix skips a TSV co
 internal/metadatautil	loadHardenedBaseline	7d0fa33e,a3ef0e02	the prefix skips a TSV comment line
 internal/metadatautil	loadTextMatchBaseline	4eeca9bb,d6395a28	the prefix skips a TSV comment line, and the pattern checks one TSV field
 internal/metadatautil	mapStringSetKeys	22e4373c,a9ce114c	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	matchesText	55cdea10,ad3d3395,e58a4acd	the check reads a Go call's package and function names, identifiers the go/ast parser returns, against fixed lists of text-matching calls; it reads names, not the text a validator checks
+internal/metadatautil	matchesText	55cdea10,9b0b5ca0,ad3d3395,e58a4acd	the check reads a Go call's package and function names, identifiers the go/ast parser returns, against fixed lists of text-matching calls; it reads names, not the text a validator checks
 internal/metadatautil	moveStepBefore	65e9dda2,c92fcbf2,dd7bb1ad	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	moveStepToEnd	93097790,aaffba0a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	mutatedContractCopy	950732e1	unreviewed debt in a test: review the subject, then port or justify
@@ -262,8 +263,9 @@ internal/metadatautil	pinnedInputsCheck.validateSecurityWorkflowDispatch	34f2f10
 internal/metadatautil	pinnedInputsCheck.validateValidatorBuildkit	3b54b641,7e8fd525	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateWorkflowPolicy	20114f66,729ab531,aa1b7dd5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	preloadAssignments	46f1dfca,cd8fdbb9,cd8fdbb9	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	preludeSafe	6e6cff88,7ad76984,7d62ff7e,85178304,c256efb6,ca623b3a,e008b096	the searches read the words of one shell command that the reader already split, not script text; the new ones refuse a redirection or a substitution in an exit or an echo before a reviewed source
+internal/metadatautil	preludeSafe	3cd3f8d0,6e6cff88,7ad76984,7d62ff7e,85178304,c256efb6,ca623b3a,e008b096	the searches read the words of one shell command that the reader already split, not script text; the new ones refuse a redirection or a substitution in an exit or an echo before a reviewed source
 internal/metadatautil	TestLauncherSetsNoReturnTrap	e64b7df9	the search lists the source lines of scripts/workcell to find the libraries it loads; the trap check itself reads parsed commands
+internal/metadatautil	launcherSourceFailures	b86a2692	the check cuts the fixed ${ROOT_DIR}/ prefix off the one operand of a source that EveryShellCommand returns, to look up its pinned library; it reads parsed words, not script text
 internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a line break in a token file
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify
@@ -275,7 +277,7 @@ internal/metadatautil	laneExpands	4d870f23	fails closed: a word with an expansio
 internal/metadatautil	laneInnerText	7a693089	the checks read the command words laneCommand returns for an eval operand with an expansion and a trap option; they parse words, not free text
 internal/metadatautil	laneAssigns	36f3eb76,b8e7a45b	the checks read laneScan command words for the shape of a bare assignment, a declaration or a for loop; any other command counts as no write, which fails closed
 internal/metadatautil	laneEnvOperands	1cb09415	the checks read laneScan command words for env and the program it runs by an absolute path; any other command keeps every shaped write, which fails closed
-internal/metadatautil	laneLeading	5521dc8a	the checks read words a closed reader returns: the shape of an assignment, to tell it from a case pattern, and a word that ends in ) to find where a case pattern ends; they parse words, not free text
+internal/metadatautil	laneLeading	5521dc8a,7c2f5f39,7ebb0683	the checks read words a closed reader returns: the shape of an assignment, to tell it from a case pattern, and a word that ends in ) to find where a case pattern ends; they parse words, not free text
 internal/metadatautil	laneLiteralOptions	337d65e9,a4f48ac8,b76466b5,ea7ffe16	fails closed: an option word with an expansion makes the lane unreadable
 internal/metadatautil	laneOption	63c8cdd6,e5e919d3	fails closed: an option word with a letter that changes what runs makes the lane unreadable
 internal/metadatautil	laneOutputName	0dd42f68,6537f911	fails closed: a name that is not a plain identifier, or names a variable bash reads or ROOT_DIR, makes the lane unreadable
@@ -283,6 +285,7 @@ internal/metadatautil	laneProgramWord	bdc2a2e6	fails closed: a value that is not
 internal/metadatautil	laneReadable	112c5a94,24a9644f,3db12709,436c815a,532c91a7,8a60283b	fails closed: an arithmetic assignment to a computed name or one bash reads, or a BASH_CMDS, BASH_ALIASES or localvar_inherit name, makes the lane unreadable; it also reads each word a closed reader returns for one expansion of a variable, to note where a function declares it local, and builds the pattern of the env names whose value names the event name from a quoted list, which an if heading may read; a lane text that holds the line the reader writes for an entry guard's root where no command reads it makes the lane unreadable
 internal/metadatautil	laneReading.callReason	0ef736ec	fails closed: a command word with a glob or a brace group makes the lane unreadable
 internal/metadatautil	laneReading.expandedReason	25256dad,2b860056,65907a4e,7eae08b2,b9d78721,fed703bb	fails closed: a command word it cannot read as a pinned root, a path or one program variable makes the lane unreadable
+internal/metadatautil	laneReading.numbers	7e33fd2c	the check splits a key the reader itself builds from a variable name and a function body number at its @; it reads no text a lane holds
 internal/metadatautil	laneReading.outputs	ad697d63,c5f63017	the checks read the words a closed reader returns for a local copy of a positional parameter and a computed name; a write it cannot match makes the lane unreadable
 internal/metadatautil	laneScanWrites	3fe0e8ae,85220f63,e285c2fb	the checks read laneScan command words for an assignment, a local of a positional parameter and a default a redirection, a here-string or a heredoc body assigns; they parse words, not free text
 internal/metadatautil	laneUnquotedRisk	531ecaa8,d5d66042	fails closed: a word with an unquoted expansion or glob is read as one bash may split
@@ -296,20 +299,21 @@ internal/metadatautil	laneEnds.ending	509675ec	the check reads the operand of an
 internal/metadatautil	laneGuardTest	9798a5ec	the check reads one word a closed reader returns for an expansion of one named variable; it parses a word, not free text
 internal/metadatautil	laneLocalNames	8b067a1f,8ced4645,d26b668e	the check reads one word a closed reader returns for a variable name; it parses a word, not free text
 internal/metadatautil	laneUnredirectedFront	4587528c	the check reads one command word for a redirection operator; it parses words, not free text
-internal/metadatautil	laneWrites	115a8587,16e67208,278ff4ec,4a3c19dd,60783146,71c4a764,bf2e822d,d3dab433,e571f33c,f901ac14	the checks read the operands of one command for the names declare, read, printf -v, unset and their kin assign or remove; they parse words, not free text
+internal/metadatautil	laneWrites	115a8587,16e67208,278ff4ec,4a3c19dd,60783146,71c4a764,bf2e822d,c8e53089,d28255bf,d3dab433,e571f33c,f901ac14	the checks read the operands of one command for the names declare, read, printf -v, unset and their kin assign or remove; they parse words, not free text
 internal/metadatautil	arithmeticReason	d7825f0f	fails closed: an arithmetic operand it cannot match as a number or a variable whose every write is a number makes the lane unreadable
 internal/metadatautil	laneArithmetic.add	1d768bae,82ce0f99	the checks read the words a closed reader returns for an arithmetic expression; an expression it cannot close runs to the end of the lane and fails closed
 internal/metadatautil	laneArithmetic.parameter	0dd07588,497c83fd,b0eb04fa	the checks read one ${...} expansion of a closed reader word for a subscript, an offset and a length; they parse a word, not free text
 internal/metadatautil	laneArithmetic.read	67e0b804	the checks read the command words a closed reader returns for ((, let, unset, [[ and their number operands; they parse words, not free text
 internal/metadatautil	laneArithmetic.word	51a7739b,7376251a,91d0ad3e,cc72e3c4,e50d2b93,eaa83eee	the checks read one closed reader word for $((, $[, ${ and an assigned element; an expansion it cannot close fails closed
 internal/metadatautil	laneArithmeticOperand	52af8613	the pattern splits one arithmetic expression into operands; an operand it cannot class as a number fails closed
-internal/metadatautil	laneNesting.read	09920859,8dd89c45,9fb62694,aec07487,c33d0193,cba5a32b,cc07a76c	fails closed: a closer that does not match the innermost opener marks the nesting lost, so no write counts for a later read
+internal/metadatautil	laneNesting.read	09920859,8dd89c45,94d6eeca,9fb62694,aec07487,b12bb300,c33d0193,cba5a32b	fails closed: a closer that does not match the innermost opener marks the nesting lost, so no write counts for a later read
 internal/metadatautil	laneNumberWrite	41ecb704,44ade9bb,5a6df017,b8ed9651,f79fcb20	fails closed: a write it cannot match as a number leaves the variable out of the numbers arithmetic may read
 internal/metadatautil	laneOperatorReason	15af6a92,b70a76ff	fails closed: an @X} operator outside a fixed inert list, wherever the text holds one, makes the lane unreadable
 internal/metadatautil	laneReading.bares	42f32b49	the check compares a variable name with the prefixes of the names an unset may remove, both from words the reader parsed; it reads no text a lane holds
 internal/metadatautil	laneReading.unsetsListed	b8633007,f2203794	the check reads a value the reader parsed from a write for the names a listing expands; it parses one value, not free text
 internal/metadatautil	laneSubscripts	df9e7966	the pattern reads the subscript of one unset operand that a closed reader returns; it parses a word, not free text
 internal/metadatautil	laneUnredirectedWords	10a0c9f5	the check reads one command word as the line spells it for a redirection operator; it parses words, not free text
+internal/metadatautil	laneStdin	6e4cbef3	the check reads one command word for a here-string operator; it parses words, not free text
 internal/metadatautil	refsRoot	8c451e37	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rejectInstallScriptAptPackages	30b19070,7ae83b67	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	renderDiscoverabilitySurface	e9d7ffc7	the prefix checks a surface name from the decoded contract
@@ -391,7 +395,7 @@ internal/metadatautil	shellToolSubsts	57e83a94	unreviewed debt: review the subje
 internal/metadatautil	shellUnnamedCommand	d1bb2d49	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellUnwrapped	dacfd2d4,f33b35de,fd36e9b8	the patterns find each command start and its fields in one line a closed reader has already cut, to blank the wrapper words wrappedCommand names; a wrapper it does not find leaves the line as it was, and the shared evasion corpus pins the wrappers it must find
 internal/metadatautil	shellWords	03c76f35,0f0950e1,52951b4a,5e1c3157,a0ae5e55,d0dc3f09	the checks read the bytes of one shell line at the reader's own offset, for an escape bash honours in double quotes, an arithmetic $(( opener and the control and redirection bytes that end a word; this is the closed decoder itself, not a match on the content it decodes
-internal/metadatautil	spelledProgram	d6917967	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	spelledProgram	5114de6d,d6917967	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	startupFileStep	f69b73c9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	stepCondition	05fe93c8,0cfb9063,1251aa19,60ede516,a8e4f0a4,c9b391af,cc4b3040,ebe07d86	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	stripComments	0327796f,78ef8599,8189b49d,cee7c880	unreviewed debt: review the subject, then port or justify
@@ -438,7 +442,7 @@ internal/testkit	TestCopilotReleaseCheckGuardsEachLocalOnlyBranch	6a60f3ff,b059b
 internal/testkit	TestGitHubUnauthenticatedGetNamesTheSpentQuota	3288323f,b0624deb,c60f58bc	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestToolPinImageConsumersRejectOtherRepositories	55750ef1	a test assertion on the refusal text that the script under test prints
 internal/testkit	TestUninstallRefusesSymlinkedScript	d2735c1b	the search checks the output of an uninstall run through a symlink, not script text
-internal/testkit	TestEntryScriptsCarryTheGuard	1066927e,12420dcc,2df9475b,434e08a4,752130ca,7780a891,7780a891,8466149b,8cf3431e,c024b1d1,d9718b27,e4f56ad9,e5cf8918,e614513e,f07ffd4e	the checks read a git ls-files mode field, a script's shebang line and its leading lines, and the launcher's guard block, which are the subject of the entry-script rule, not a command search
+internal/testkit	TestEntryScriptsCarryTheGuard	1066927e,12420dcc,2df9475b,434e08a4,752130ca,7780a891,7780a891,8466149b,8cf3431e,adec2185,b074a35d,c024b1d1,d9718b27,e4434337,e4f56ad9,e5cf8918,e614513e,f07ffd4e	the checks read a git ls-files mode field, a script's shebang line and its leading lines, and the launcher's guard block, which are the subject of the entry-script rule, not a command search
 internal/testkit	TestEntryScriptGuardAnchorsTheTree	20e6c84d,3db87680,8f1e5420,a3044b32,d71b6a1e	the searches check the output of an entry script run from a copy, a link or a fake group file, not script text
 internal/testkit	TestEntryScriptGuardReadsGroupsAndACLs	6529fcf1,b0ace1eb,c7d12c07,ffc921e1	the searches check the output of an entry script run under a fake group or user file or an access control list, not script text
 internal/testkit	TestUninstallRefusesCopyBesideHostileHelper	1be2b7e5,b02cc340	the searches check the output of an entry script run from a copy or a link, not script text
@@ -658,7 +662,7 @@ internal/testkit	launcherFunction	79450fdc,c39af2db	finds a function header in s
 internal/testkit	mutateContainerSmokeHarness	67e5a80e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	parseExecBaseline	74c9b8ef	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	prepareHostedControlCommandGraphFixture	1079268e	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	privateGroup	620cdeed	the checks read one getent group record, name and members, and the getent passwd primary groups, as the entry guard does
+internal/testkit	privateGroup	620cdeed,f875fa83	the checks read one getent group record, name and members, and the getent passwd primary groups, as the entry guard does
 internal/testkit	recordedIdentityRegexp	b2f033fa	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	requireCIPlanError	6a938e6b	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	requireHostedControlGitHubLog	d35dd47e	unreviewed debt in a test: review the subject, then port or justify
@@ -672,11 +676,12 @@ internal/testkit	splitEdit	79c6f592,9bbfdcfa,e6fee40c	unreviewed debt in a test:
 internal/testkit	stableProgramLiteral	0b32dcde	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	stagedCanonicalEntrypoint	2d175265	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	unreachedDelegation	17772321,25250625,88186d5c	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	updaterFixtureToolPin	605afb33,74c0751f,a3aeacb5	a test reads one key = "value" line of the policy file the updater fixture copies
+internal/testkit	updaterFixtureToolPin	605afb33,74c0751f,a3aeacb5	a test reads one key = "value" line of the policy file the updater fixture copies, and strips the quotes around its value
 internal/testkit	updaterFixtureValues	172af3bd	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	validateContainerSmokeHarness	162d2ca4,1e51ce8c,56b17ac3,76e18943,8643818c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	validateControlScriptModes	66e29302,f159c56a	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	validatorCleanupLines	affcc8fc	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	withoutEnv	e63f019e	the cut splits each NAME=value entry of an os.Environ-style list at its first =, to drop the named variables from a test command's environment; it reads environment entries, not file content
 internal/testkit	writeCanonicalMutation	671e8eef	unreviewed debt in a test: review the subject, then port or justify
 internal/workcellhardening	TestCheckSmokeAptBrokerProbeRejectsCommentedOutAssertions	1bd4f673,eb56b0a7	unreviewed debt in a test: review the subject, then port or justify
 internal/workcellhardening	TestExtractGoFunctionBlock	06475d50,ab83bc7c	unreviewed debt in a test: review the subject, then port or justify
@@ -693,33 +698,6 @@ internal/metadatautil	laneCases.read	6e391454	the check reads the subject word a
 internal/metadatautil	laneLiteralPiece	0de12997	the check refuses a case pattern piece that holds a glob, quote, expansion or operator byte in the words a closed reader returns; a refused piece makes the branch run, which fails closed
 internal/metadatautil	startupEnvName	04bacaca,8fafc6f9,d1484ea2	the check reads an env name from a workflow's YAML map, upper-cased, for the names bash reads at startup to set options or import a function, PATH, and a ${{ expression that may spell any of them; a match moves the step, which only fails closed
 internal/metadatautil	laneNeverIf	1120224f,86c5a309,ca552164,e3de8a28	the check reads one if value from a workflow's YAML, with its quoted strings and ${{ }} dropped, for a context name, a status function call, a failure() or cancelled() with no ! in front, and a bare false or 0 operand of &&; a match only drops wiring, so it fails closed
-internal/metadatautil	laneOneWord	5c8393e9,7ca10c1f	the check refuses a skipped argument word whose syntax, from a closed reader, holds an unquoted expansion, brace or pattern, or whose spelling holds an @; a refused word makes every branch run, which fails closed
-internal/metadatautil	laneStartupStep	313e3c8c,d2689201,ed1c281b	the checks read a step's run text from a workflow's YAML for a ${{ expression, for a GITHUB_PATH name outside the lines laneToolLines blanks, and for a GITHUB_ENV write of a startup name; a match moves the step and every later one, which only fails closed
-internal/metadatautil	substitutionKeyword	0913caa2,570dfed3,67c3793a	the checks read a case or esac word at one offset the flattener walks inside a substitution, and the words before it back over reserved words, time -p and a function name to the start of the frame or a separator; a case it reads as an argument leaves a frame that closes with a case and no esac after it, which makes the lane unreadable, so a misread fails closed
-internal/metadatautil	laneGateReader.substitution	50907d7f	the check reads the command words a closed reader returns for a lone ( and ) and one $_ in the command after them; any other shape is no substitution, whose status the reader then does not let through, which only drops gating
-internal/metadatautil	laneGateReader.through	1e7f2057	the check reads the words of the command a closed reader returns after a substitution for one $_ and a plain assignment; any other shape masks the status, which only drops gating
-internal/metadatautil	laneGateWords	cc9c0afd	the checks read the command words a closed reader returns past subshell parentheses, redirections and a wrapper; they parse words, not free text
-internal/metadatautil	laneSetOptions	08a77c25,605b6bf3,74c916b6,7aeae173,7b89adf8,e39e72dd	the checks read the operand words of a set or shopt that a closed reader returns; an operand with an expansion turns errexit and pipefail off, which only drops gating
-internal/metadatautil	laneEnvPlain	07897e15,16e96876,65bdc708	the check reads a step's run text for a name beyond a $NAME or ${NAME} expansion; any other mention makes the name not plain, which fails closed
-internal/metadatautil	laneLiteralTarget	86646f0e	the check reads one write target word a closed reader returns for a path in scripts/; a match unwires the step and every later one, which fails closed
-internal/metadatautil	laneOperands	b807a822	the checks read the option words of one command a closed reader returns, to find the operands a write names; they parse words, not free text
-internal/metadatautil	laneOptionValue	76224f05,b2c32202,c1ab1f4a,c1ab1f4a,deb2f485,e4bade92,e4bade92	the checks read the option words of one command a closed reader returns for the value of one option; they parse words, not free text
-internal/metadatautil	laneSetOnce	44a142e5,5cb87a35,6baee631,7475720d,f59f2437,f86f023f	fails closed: a target variable that one line does not set, before any mention, to a literal path, a ${RUNNER_TEMP} path or a mktemp in it reads as unspelled, which unwires the step and every later one
-internal/metadatautil	laneSpelledTarget	0be8f236,4c4dbe81,60ad341a,9d3d9f41,dc1eb1b7	fails closed: a write target word it cannot spell as a literal path, a runner file or a variable laneSetOnce reads unwires the step and every later one
-internal/metadatautil	laneStepContext.next	149fe591,8ac0151e	the check reads a step's run text for GITHUB_ENV and the names githubEnvWrite reads; a match drops the case subjects and makes those names not plain, which fails closed
-internal/metadatautil	laneSubjects	16974453	the check reads a step's env values for the shape of one github sha or event_name expression; the event name counts only where laneReachable is sure which events reach the step, so any doubt drops the subject, which fails closed
-internal/metadatautil	laneTargetVariable	585562e0	the pattern reads one write target word a closed reader returns as one expansion of a variable and a path under it; any other word is unspelled, which unwires the step and every later one
-internal/metadatautil	laneToolForms	d60300fb	the pattern reads a step's run lines for the exact tool install forms of the release and security workflows after a sha256sum -c; any other line stays, so a GITHUB_PATH or RUNNER_TEMP bin mention in it unwires the later steps, which fails closed
-internal/metadatautil	laneToolLines	9c6651c5,bb040a12	the checks read a step's run lines for the exact tool install forms after a sha256sum -c and a cd, pushd or popd command a closed reader returns; any other line stays and unwires the later steps, which fails closed
-internal/metadatautil	laneUnwires	304a93fe,4f7f2bfb,8f709990,9aaa6b64	the checks read a step's uses and with values from a workflow's YAML, its run text for a runner command or a mention of the RUNNER_TEMP bin, and the command words a closed reader returns for a cd; a match unwires the later steps, which fails closed
-internal/metadatautil	laneWriteTargets	025ea92b,29713bc4,774ca99f,b048f9e3,be2aebe2	the checks read the words of one command a closed reader returns for a redirection operator, a descriptor copy and the options of the commands that write a file; they parse words, not free text
-internal/metadatautil	laneCases.heading	666cdc3b	the check reads the words a closed reader returns for an if heading, for one [[ ]] or [ ] test of a variable that holds the event name against a literal word; a heading that reads the event name any other way makes each command in the if's branches count as running, which fails closed
-internal/metadatautil	laneEventReads	10e282b2,61f1c018	the check reads a step's, job's and workflow's env values for any mention of event_name, to find the variables an if heading may test; a match only makes a heading on one judged or opaque, and an opaque heading fails closed
-internal/metadatautil	laneIfParser.atom	660d97a5,7d80e30c,96496179,da376568,ea70f6cd,f5d3176b	the check reads an operand's tokens, from a closed tokenizer of a GitHub if expression, for event_name, which voids the event subject, the context paths that may copy it, which void it too, and the context paths they read for one read twice or one inside another, which voids it too
-internal/metadatautil	laneIfParser.compare	51b05ee3,b961a694	the check reads the tokens of a closed tokenizer of a GitHub if expression for a comparison operator and the event name compared with a quoted literal; any other comparison is an unknown operand, and a comparison of two literals fails the parse
-internal/metadatautil	laneIfParser.operand	a8a59df2,cc5012e4	the check reads the tokens of a closed tokenizer of a GitHub if expression for literals, names, calls and property access; any token outside that grammar fails the parse, which voids the event subject
-internal/metadatautil	laneIfParser.parse	e40fa2fa	the check splits a GitHub if expression with a closed tokenizer and refuses fromJSON and format; any text the tokenizer does not take fails the parse, which voids the event subject
-internal/metadatautil	laneReachable	77852a45	the check strips one ${{ }} around a GitHub if expression before the closed parser reads it; any text it cannot parse voids the event subject
 internal/metadatautil	TestExcludeNonEmitterFilesDropsSelfAndTests	54ca8684	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	TestResolveDebianBootstrapPinsRejectsMalformedMetadata	043707a5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	bodyWords	06ef2f8f,170936ce	unreviewed debt: review the subject, then port or justify
@@ -751,7 +729,40 @@ internal/metadatautil	validateReleaseImageDescriptor	2ad3f761	unreviewed debt: r
 internal/testkit	TestEgressEnforcementReachesTheRecordAndTheLaunchAudit	221caaba,85183789	unreviewed debt: review the subject, then port or justify
 internal/testkit	TestInstallDevToolsEnforcesLockedMarkdownlintNodeRanges	97da982c	unreviewed debt: review the subject, then port or justify
 internal/testkit	TestTrackedBashScriptsNeutralizeStartupFiles	c3c3e8f7	unreviewed debt: review the subject, then port or justify
-internal/testkit	publishFixture.run	1d716ed6	unreviewed debt: review the subject, then port or justify
+internal/testkit	publishFixture.run	1d716ed6,ee4385bd,f658efe4	unreviewed debt: review the subject, then port or justify
 internal/testkit	requireSHA256Sum	a4d44d22,ffd59af3	unreviewed debt: review the subject, then port or justify
 internal/testkit	splitUpdaterFixtureImage	925de3e9	unreviewed debt: review the subject, then port or justify
 internal/workcellhardening	TestRuntimePathPrologues	77bd7d14,9516b133	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	lanePatternEnds	8326705d	the check reads the syntax a closed reader returns for one word, in which a quoted or escaped byte is masked, for a ) that ends a case pattern list; it parses a word, not free text
+internal/metadatautil	upstreamRefreshPublishLine	9c76a6ff,be9a3ebb,c34e5f3c,ca49f605,de3ca2d8	a test helper cuts the publish job of the real upstream-refresh workflow at its fixed job keys and returns the one line with a fixed prefix, so a test can pin that line; it reads a checked-in workflow, not untrusted text
+internal/testkit	newToolchainGuardRepo	a049c102	picks a file mode for a fixture path from a fixed list by its .sh suffix; it reads a path, not script text
+internal/testkit	toolchainGuardEdit	49c85789	keeps a fixture script executable after an edit by its .sh suffix; it reads a path, not script text
+internal/metadatautil	checkToolchainPinOrder	4ba4ae12,4ecccba8	splits a pin value that toolchainPinRule matched against an anchored format at its @ to compare tracks; it reads a checked value, not free text
+internal/metadatautil	laneOneWord	5c8393e9,7ca10c1f	the check refuses a skipped argument word whose syntax, from a closed reader, holds an unquoted expansion, brace or pattern, or whose spelling holds an @; a refused word makes every branch run, which fails closed
+internal/metadatautil	laneStartupStep	313e3c8c,d2689201,ed1c281b	the checks read a step's run text from a workflow's YAML for a ${{ expression, for a GITHUB_PATH name outside the lines laneToolLines blanks, and for a GITHUB_ENV write of a startup name; a match moves the step and every later one, which only fails closed
+internal/metadatautil	substitutionKeyword	0913caa2,570dfed3,67c3793a	the checks read a case or esac word at one offset the flattener walks inside a substitution, and the words before it back over reserved words, time -p and a function name to the start of the frame or a separator; a case it reads as an argument leaves a frame that closes with a case and no esac after it, which makes the lane unreadable, so a misread fails closed
+internal/metadatautil	laneGateReader.substitution	50907d7f	the check reads the command words a closed reader returns for a lone ( and ) and one $_ in the command after them; any other shape is no substitution, whose status the reader then does not let through, which only drops gating
+internal/metadatautil	laneGateReader.through	1e7f2057	the check reads the words of the command a closed reader returns after a substitution for one $_ and a plain assignment; any other shape masks the status, which only drops gating
+internal/metadatautil	laneGateWords	6fe42bde,c520f243,cc9c0afd	the checks read the command words a closed reader returns past subshell parentheses, redirections and a wrapper; they parse words, not free text
+internal/metadatautil	laneGates	19b6074c,d913a89c	the checks read the leading words of a command a closed reader returns for a NAME() or NAME(){ function definition past the reserved words; they parse words, not free text
+internal/metadatautil	laneSetOptions	08a77c25,605b6bf3,74c916b6,7aeae173,7b89adf8,e39e72dd	the checks read the operand words of a set or shopt that a closed reader returns; an operand with an expansion turns errexit and pipefail off, which only drops gating
+internal/metadatautil	laneEnvPlain	07897e15,16e96876,65bdc708	the check reads a step's run text for a name beyond a $NAME or ${NAME} expansion; any other mention makes the name not plain, which fails closed
+internal/metadatautil	laneLiteralTarget	86646f0e	the check reads one write target word a closed reader returns for a path in scripts/; a match unwires the step and every later one, which fails closed
+internal/metadatautil	laneOperands	b807a822	the checks read the option words of one command a closed reader returns, to find the operands a write names; they parse words, not free text
+internal/metadatautil	laneOptionValue	76224f05,b2c32202,c1ab1f4a,c1ab1f4a,deb2f485,e4bade92,e4bade92	the checks read the option words of one command a closed reader returns for the value of one option; they parse words, not free text
+internal/metadatautil	laneSetOnce	44a142e5,5cb87a35,6baee631,7475720d,f59f2437,f86f023f	fails closed: a target variable that one line does not set, before any mention, to a literal path, a ${RUNNER_TEMP} path or a mktemp in it reads as unspelled, which unwires the step and every later one
+internal/metadatautil	laneSpelledTarget	0be8f236,4c4dbe81,60ad341a,9d3d9f41,dc1eb1b7	fails closed: a write target word it cannot spell as a literal path, a runner file or a variable laneSetOnce reads unwires the step and every later one
+internal/metadatautil	laneStepContext.next	149fe591,8ac0151e	the check reads a step's run text for GITHUB_ENV and the names githubEnvWrite reads; a match drops the case subjects and makes those names not plain, which fails closed
+internal/metadatautil	laneSubjects	16974453	the check reads a step's env values for the shape of one github sha or event_name expression; the event name counts only where laneReachable is sure which events reach the step, so any doubt drops the subject, which fails closed
+internal/metadatautil	laneTargetVariable	585562e0	the pattern reads one write target word a closed reader returns as one expansion of a variable and a path under it; any other word is unspelled, which unwires the step and every later one
+internal/metadatautil	laneToolForms	d60300fb	the pattern reads a step's run lines for the exact tool install forms of the release and security workflows after a sha256sum -c; any other line stays, so a GITHUB_PATH or RUNNER_TEMP bin mention in it unwires the later steps, which fails closed
+internal/metadatautil	laneToolLines	9c6651c5,bb040a12	the checks read a step's run lines for the exact tool install forms after a sha256sum -c and a cd, pushd or popd command a closed reader returns; any other line stays and unwires the later steps, which fails closed
+internal/metadatautil	laneUnwires	304a93fe,4f7f2bfb,8f709990,9aaa6b64,d02ef477	the checks read a step's uses and with values from a workflow's YAML, its run text for a runner command or a mention of the RUNNER_TEMP bin, and the command words a closed reader returns for a cd; a match unwires the later steps, which fails closed
+internal/metadatautil	laneWriteTargets	025ea92b,29713bc4,774ca99f,b048f9e3,be2aebe2,fb2d2307	the checks read the words of one command a closed reader returns for a redirection operator, a descriptor copy and the options of the commands that write a file; they parse words, not free text
+internal/metadatautil	laneCases.heading	666cdc3b	the check reads the words a closed reader returns for an if heading, for one [[ ]] or [ ] test of a variable that holds the event name against a literal word; a heading that reads the event name any other way makes each command in the if's branches count as running, which fails closed
+internal/metadatautil	laneEventReads	10e282b2,61f1c018	the check reads a step's, job's and workflow's env values for any mention of event_name, to find the variables an if heading may test; a match only makes a heading on one judged or opaque, and an opaque heading fails closed
+internal/metadatautil	laneIfParser.atom	660d97a5,7d80e30c,96496179,da376568,ea70f6cd,f5d3176b	the check reads an operand's tokens, from a closed tokenizer of a GitHub if expression, for event_name, which voids the event subject, the context paths that may copy it, which void it too, and the context paths they read for one read twice or one inside another, which voids it too
+internal/metadatautil	laneIfParser.compare	51b05ee3,b961a694	the check reads the tokens of a closed tokenizer of a GitHub if expression for a comparison operator and the event name compared with a quoted literal; any other comparison is an unknown operand, and a comparison of two literals fails the parse
+internal/metadatautil	laneIfParser.operand	a8a59df2,cc5012e4	the check reads the tokens of a closed tokenizer of a GitHub if expression for literals, names, calls and property access; any token outside that grammar fails the parse, which voids the event subject
+internal/metadatautil	laneIfParser.parse	e40fa2fa	the check splits a GitHub if expression with a closed tokenizer and refuses fromJSON and format; any text the tokenizer does not take fails the parse, which voids the event subject
+internal/metadatautil	laneReachable	208dccaf,77852a45	the check strips one ${{ }} around a GitHub if expression before the closed parser reads it; any text it cannot parse voids the event subject
