@@ -58,6 +58,9 @@ func startSupervisorTestCommand(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
+// leaderExitProofLimit bounds the absence proof in the leader-exit test.
+const leaderExitProofLimit = 30 * time.Second
+
 type leaderExitSupervisorFixture struct {
 	t                     *testing.T
 	cause                 error
@@ -82,10 +85,16 @@ func newLeaderExitSupervisorFixture(t *testing.T) (*leaderExitSupervisorFixture,
 	childPIDPath := filepath.Join(dir, "child-pid")
 	releasePath := filepath.Join(dir, "release")
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `
-/bin/sh -c 'trap "" TERM; printf "%s\n" "$$" >"$1"; sleep 5' fixture-child "$1" &
+/bin/sh -c 'trap "" TERM; printf "%s\n" "$$" >"$1"; sleep 300' fixture-child "$1" &
 while [ ! -f "$2" ]; do sleep .01; done
 exit 0
 `, "fixture", childPIDPath, releasePath)
+	t.Cleanup(func() {
+		// A failed run can leave the fixture child sleeping.
+		if t.Failed() && cmd.Process != nil {
+			_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+		}
+	})
 	return &leaderExitSupervisorFixture{
 		t:              t,
 		cause:          cause,
@@ -149,7 +158,7 @@ func (f *leaderExitSupervisorFixture) awaitResult(results <-chan processGroupRun
 	select {
 	case result := <-results:
 		return result
-	case <-time.After(10 * time.Second):
+	case <-time.After(2 * leaderExitProofLimit):
 		killRunningSupervisorTestCommand(f.cmd)
 		f.t.Fatal("leader-exit cleanup did not finish")
 		return processGroupRunResult{}
@@ -165,10 +174,10 @@ func killRunningSupervisorTestCommand(cmd *exec.Cmd) {
 func (f *leaderExitSupervisorFixture) assertResult(result processGroupRunResult) {
 	f.t.Helper()
 	if result.runErr != nil || result.cleanupErr != nil || !result.cleanupRan {
-		f.t.Fatalf("run result = %+v", result)
+		f.t.Fatalf("run error = %v, cleanup error = %v, cleanup ran = %t", result.runErr, result.cleanupErr, result.cleanupRan)
 	}
 	if !errors.Is(result.cause, f.cause) {
-		f.t.Fatalf("run result = %+v, want cause %v", result, f.cause)
+		f.t.Fatalf("cause = %v, want %v", result.cause, f.cause)
 	}
 }
 
@@ -219,6 +228,13 @@ func TestSignalOwnedGroupRejectsReapedLeader(t *testing.T) {
 func TestProcessGroupSupervisorLeaderExitCancellation(t *testing.T) {
 	fixture, ctx := newLeaderExitSupervisorFixture(t)
 	s := defaultProcessGroupSupervisor()
+	// The fixture child outlives the leader, so init reaps it after SIGKILL.
+	// The absence proof waits for that reap, which takes seconds on a loaded
+	// host or under a slow container init. A generous proof limit keeps
+	// reap latency from failing a test of signal and cleanup order. The
+	// short TERM grace and the long child sleep keep the KILL path from
+	// racing the child's own exit.
+	s.termGrace, s.proofLimit = 10*time.Millisecond, leaderExitProofLimit
 	s.signalGroup = fixture.signalGroup
 	s.afterFunc = fixture.afterFunc
 	s.watchExit = fixture.watchExit
