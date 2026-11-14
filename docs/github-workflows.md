@@ -55,6 +55,7 @@ For an approved large adapter PR, use both required options:
 | --- | --- |
 | `bench.yml` | Measures exec-guard performance on a schedule or manual run. |
 | `ci-insights.yml` | Writes weekly flake and cost reports. See [CI reliability](ci-efficiency-and-reliability.md). |
+| `claude-mention.yml` | Answers an `@claude` mention by the repository owner. See [Claude mention](#claude-mention). |
 | `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and required hostile-environment reruns. |
 | `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
 | `docs.yml` | Checks spelling, links, contracts, and the man page. |
@@ -343,6 +344,59 @@ The first place is the `version`, `resolved`, and `integrity` lines of the `node
 The second place is the root `@google/gemini-cli` pin.
 The `resolved` URL must be on `registry.npmjs.org` and must name the same version.
 Any other lockfile change is out of scope, including an added or removed package.
+
+## Claude mention
+
+`claude-mention.yml` runs `anthropics/claude-code-action` when the repository owner writes `@claude`.
+It starts on a new issue or a new comment on an issue or a PR.
+An edit does not start it.
+It has no PR review trigger. GitHub runs a review event from the PR merge ref, not from `main`.
+
+The job gate compares numeric account IDs, not logins.
+The event author, the event sender, and the run actor must be account `22666538` (`omkhar`).
+The first step looks up the account ID of the actor that started or reran the run.
+Thus another account, a bot, or the reply of the Claude App cannot start the action.
+
+On a PR, the owner must have opened the PR from this repository.
+The gate checks the PR author, and a second step checks the author and head repository through the REST API.
+The action reads the PR head, so fork or bot content must not reach it with the secret.
+
+The action runs in answer-only mode.
+Its tool deny list removes Bash, file edits, and web access.
+It also denies reads of `/proc`, the runner temporary directory, Claude Code state, and `.git`.
+`/tmp/github-images` stays readable, so Claude can see images in comments.
+The `claude_args` input of `.github/workflows/claude-mention.yml` holds this list.
+
+The job token is read-only. The action writes with the Claude GitHub App token that it gets through OIDC.
+
+`internal/metadatautil/claude_mention.go` pins the parsed workflow to a reviewed digest.
+The digest ignores comments and the action commit, so a pin bump keeps it.
+Only `.github/workflows/claude-mention.yml` can name the action, its secret, or its environment, in any case.
+Another workflow cannot choose its environment by an expression.
+It also cannot read the secrets context by a computed index or as a whole, for example `toJSON(secrets)`.
+`check-pinned-inputs` runs these checks on PRs to `main`.
+
+These checks do not cover a branch that does not merge to `main`.
+The environment rule keeps the secret on `main`, so set it as step 5 says.
+
+Text from other people in the thread is still model input.
+It can change the answer, but it cannot run a command or change a file.
+
+### Claude mention administrator steps
+
+`.github/workflows/claude-mention.yml` fails until the owner does these steps:
+
+1. Run `gh api repos/anthropics/claude-code-action/commits/v1 --jq .sha`.
+2. Replace the placeholder SHA in `.github/workflows/claude-mention.yml` with that SHA.
+3. Add the row for that SHA to `tests/fixtures/actions/inputs.tsv`.
+4. Install the Claude GitHub App on this repository only.
+5. Create the `claude-mention` environment with no required reviewers. Set its deployment branches to `main` only.
+6. Add the `CLAUDE_CODE_OAUTH_TOKEN` secret to that environment only.
+
+`claude setup-token` creates the OAuth token.
+`check-workflow-refs` fails until step 3 is complete.
+`internal/metadatautil/workflow_refs.go` reads `tests/fixtures/actions/inputs.tsv` for that check.
+The hosted-controls audit does not check the `claude-mention` environment.
 
 ## Action and tool pins
 

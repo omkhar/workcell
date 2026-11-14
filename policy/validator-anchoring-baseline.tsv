@@ -41,6 +41,12 @@ internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unrevie
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
 internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	claudeMentionPin	4a5debeb	test helper: finds the one pinned action reference so each test rewrites the real pin
+internal/metadatautil	TestClaudeMentionWorkflowRejectsChanges	f0b79fb3	test fixture: locates the text each negative row rewrites
+internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,7c7b6223	test reads decoded YAML fields: the gate expression and the claude_args value
+internal/metadatautil	checkClaudeMentionReach	bf0bcc67,bf0bcc67,f2e98a0c	finds expression spans and the action, secret or environment names in decoded YAML scalars; a match only rejects or adds checks
+internal/metadatautil	checkSecretsUse	6c1fd84d,b75c08fe	reads the secrets context in a decoded expression; anything but one literal secret name fails
+internal/metadatautil	normalizeClaudeMentionNode	04f5fe0b,ac3399b8	picks the action reference in the decoded uses value; the digest covers the rest
 internal/metadatautil	shellGrepIsQuiet	1541affc,a2afbe0b,d97760a1	the checks read the option words of one grep stage that shellQuietGrepStages cut at a pipe; they parse the grep options, not free text
 internal/metadatautil	shellQuietGrepStages	ff1b798d	the search cuts each later pipeline stage at the next shell operator in the comment-free command text
 internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
@@ -93,6 +99,7 @@ internal/metadatautil	afterDeclaration	8e5f5463	unreviewed debt: review the subj
 internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewrite the goose ARG pins, and the result must read back through gooseDockerfilePin as the target pin
 internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
 internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
+internal/metadatautil	validateClaudeMentionPlacement	77b0728d	a case-insensitive deny: any mention of the action, secret or environment outside claude-mention.yml fails, so over-matching only rejects
 internal/metadatautil	validateGooseInstall	20131f69	the search picks the RUN instruction that names the goose release URL among whole instructions; validateGooseInstallRun then reads its commands, and a second RUN with the URL fails
 internal/metadatautil	readGoosePinInstructions	39ba5691	the pattern checks a stable X.Y.Z version on the value of the one ARG instruction
 internal/metadatautil	applyPlanText	429ed54b,9666434d	unreviewed debt: review the subject, then port or justify

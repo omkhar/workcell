@@ -1,0 +1,169 @@
+name: Claude mention
+
+# The repository owner writes @claude in a new issue or in a new comment on an
+# issue or a pull request. This workflow then runs
+# anthropics/claude-code-action, which answers in a comment.
+#
+# Only the owner can start it. The job gate below compares numeric account ids,
+# not logins, because a login can be renamed and taken again. The owner is
+# omkhar, account id 22666538.
+#
+# Security review:
+# - issues and issue_comment run this file from the default branch, so the
+#   claude-mention environment allows main alone and a workflow on another
+#   branch cannot bind it. PR review triggers are left out: GitHub runs them
+#   from the PR merge ref, which the main-only rule would also refuse.
+# - No PR-target, workflow_run, repository_dispatch, workflow_call
+#   or workflow_dispatch trigger. No other workflow can start this one.
+# - Edited comments and edited issues do not trigger it (types: created and
+#   opened only).
+# - On a pull request, the owner must have opened it from this repository. The
+#   action reads the PR head, so fork or bot content (CLAUDE.md, .claude/)
+#   could steer it or run hooks.
+# - The action answers only: the tool deny list removes Bash, file edits and
+#   web access, so text in an issue cannot make it run a command, change a
+#   file, or send data to another host.
+
+on:
+  # zizmor flags issue_comment as a dangerous trigger. The job gate, the PR
+  # author and head checks and the answer-only tool list are the reviewed
+  # mitigations.
+  issue_comment: # zizmor: ignore[dangerous-triggers]
+    types:
+      - created
+  issues:
+    types:
+      - opened
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    name: Claude mention
+    # Gate: the event author, the event sender and the run actor must all be
+    # account 22666538, and the text must contain @claude. contains() ignores
+    # case. A bot, another account, or the Claude App's own reply fails here.
+    # On a pull request, the owner must also have opened it; a later step
+    # checks that its head is this repository.
+    if: >-
+      github.actor_id == '22666538' &&
+      github.event.sender.id == 22666538 &&
+      (
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.comment.user.id == 22666538 &&
+          (!github.event.issue.pull_request || github.event.issue.user.id == 22666538) &&
+          contains(github.event.comment.body, '@claude')
+        ) ||
+        (
+          github.event_name == 'issues' &&
+          github.event.issue.user.id == 22666538 && contains(github.event.issue.body, '@claude')
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The claude-mention environment holds CLAUDE_CODE_OAUTH_TOKEN. Its
+    # deployment branch rule allows main alone, so a workflow pushed to another
+    # branch cannot read it. check-pinned-inputs keeps every other workflow
+    # from binding the environment or reading the secret.
+    environment:
+      name: claude-mention
+    permissions:
+      # The action writes its comments and branches with the Claude GitHub App
+      # token that it gets through OIDC, not with this job token. This job
+      # token only checks out the code and reads the PR, so it stays read-only.
+      contents: read # Check out the repository for the action to read.
+      pull-requests: read # Read the PR author and head repository for the PR check.
+      id-token: write # Mint the OIDC token that the action exchanges for the Claude GitHub App token.
+    steps:
+      - name: Require the owner to start or rerun the run
+        # A rerun keeps the event payload, but GitHub records who started it
+        # as the triggering actor. The context gives only that login, so look
+        # up its current account id.
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_ID: "22666538"
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          if [[ ! "${TRIGGERING_ACTOR}" =~ ^[A-Za-z0-9](-?[A-Za-z0-9])*$ ]]; then
+            echo "::error::The triggering actor is not a user login."
+            exit 1
+          fi
+          triggering_id="$(gh api "users/${TRIGGERING_ACTOR}" --jq '.id')"
+          if [[ "${triggering_id}" != "${OWNER_ID}" ]]; then
+            echo "::error::Only the repository owner can start or rerun this workflow."
+            exit 1
+          fi
+
+      - name: Refuse pull requests the owner did not open here
+        # The action checks out the PR head and reads it with the secret
+        # present. Stop unless the owner opened the PR and its head is this
+        # repository, so neither fork nor bot content reaches the action.
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_PULL_URL: ${{ github.event.issue.pull_request.url }}
+          OWNER_ID: "22666538"
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          case "${EVENT_NAME}" in
+            issues)
+              echo "The mention is on a new issue."
+              exit 0
+              ;;
+            issue_comment) ;;
+            *)
+              echo "::error::Unexpected event ${EVENT_NAME}."
+              exit 1
+              ;;
+          esac
+          if [[ -z "${ISSUE_PULL_URL}" ]]; then
+            echo "The mention is on an issue, not a pull request."
+            exit 0
+          fi
+          if [[ ! "${ISSUE_NUMBER}" =~ ^[1-9][0-9]*$ || ! "${REPOSITORY_ID}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::The event does not name a pull request in this repository."
+            exit 1
+          fi
+          # A deleted fork leaves head.repo null, which does not match.
+          pr="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${ISSUE_NUMBER}" --jq '"\(.head.repo.id // 0) \(.user.id // 0)"')"
+          if [[ "${pr}" != "${REPOSITORY_ID} ${OWNER_ID}" ]]; then
+            echo "::error::Pull request ${ISSUE_NUMBER} is not an owner pull request from this repository. Claude does not run on its head."
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Answer the mention
+        # TODO(owner): replace the placeholder with the commit of the v1 tag:
+        #   gh api repos/anthropics/claude-code-action/commits/v1 --jq .sha
+        # Then add its tests/fixtures/actions/inputs.tsv row.
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          trigger_phrase: "@claude"
+          # Answer-only mode. Deny rules win over the action's own allow list.
+          # No Bash: git subcommands can read any file, for example git diff
+          # --no-index /proc/self/environ. No edits, no web access. The Read
+          # denies keep process environments, runner temporary files, Claude
+          # Code state and the git config, which holds the App token, out of a
+          # reply. /tmp/github-images, where the action saves comment images,
+          # stays readable.
+          claude_args: >-
+            --max-turns 30
+            --disallowedTools
+            "Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Read(//proc/**),Read(//tmp/claude*/**),Read(//home/runner/work/_temp/**),Read(~/.claude/**),Read(~/.claude.json),Read(./.git/**)"
