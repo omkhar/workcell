@@ -116,3 +116,17 @@ func TestLoadAllowlistRefusesSymlinkAndOversize(t *testing.T) {
 		t.Error("LoadAllowlist(oversize) error = nil, want error")
 	}
 }
+
+// TestAllowlistEndpointsAreCanonical lists each endpoint once in the spelling
+// the proxy routes by, so a host alias made from it matches the name the agent
+// looks up: lower case, no trailing dot (issue 823).
+func TestAllowlistEndpointsAreCanonical(t *testing.T) {
+	a, err := ParseAllowlist("API.OpenAI.com.:443 api.openai.com:443 x.example.:8080 B.example:443", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"api.openai.com:443", "b.example:443", "x.example:8080"}
+	if got := a.Endpoints(); !slices.Equal(got, want) {
+		t.Fatalf("Endpoints() = %q, want %q", got, want)
+	}
+}
