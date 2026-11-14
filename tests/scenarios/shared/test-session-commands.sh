@@ -147,38 +147,50 @@ mkdir -p "${SESSIONS_DIR}" "${LEGACY_STATE_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B
 WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
 WORKSPACE_B="$(cd "${WORKSPACE_B}" && pwd -P)"
 
+# sh_single_quote prints one POSIX sh word that stands for $1, so a path with
+# a quote, a space or a parenthesis (as under a hostile TMPDIR) stays one word
+# in the textconv and filter commands git runs through sh -c.
+sh_single_quote() {
+  local squote="'"
+  local escaped="'\\''"
+  printf "'%s'" "${1//${squote}/${escaped}}"
+}
+
 git -C "${WORKSPACE_A}" init >/dev/null
 cat >"${WORKSPACE_A}/textconv.sh" <<EOF
 #!/bin/sh
-touch '${TEXTCONV_MARKER}'
+touch $(sh_single_quote "${TEXTCONV_MARKER}")
 cat "\$1"
 EOF
 chmod +x "${WORKSPACE_A}/textconv.sh"
 cat >"${WORKSPACE_A}/filter.sh" <<EOF
 #!/bin/sh
-touch '${FILTER_MARKER}'
+touch $(sh_single_quote "${FILTER_MARKER}")
 cat
 EOF
 chmod +x "${WORKSPACE_A}/filter.sh"
-git -C "${WORKSPACE_A}" config diff.workcell.textconv "'${WORKSPACE_A}/textconv.sh'"
+git -C "${WORKSPACE_A}" config diff.workcell.textconv "$(sh_single_quote "${WORKSPACE_A}/textconv.sh")"
 git -C "${WORKSPACE_A}" config extensions.worktreeConfig true
-cat >"${FILTER_CONFIG}" <<EOF
-[filter "workcell-test"]
-	clean = '${WORKSPACE_A}/filter.sh'
-	smudge = cat
-EOF
+git config --file "${FILTER_CONFIG}" filter.workcell-test.clean "$(sh_single_quote "${WORKSPACE_A}/filter.sh")"
+git config --file "${FILTER_CONFIG}" filter.workcell-test.smudge cat
 git -C "${WORKSPACE_A}" config --worktree include.path "${FILTER_CONFIG}"
 printf '*.txt diff=workcell\n*.filter filter=workcell-test\n' >"${WORKSPACE_A}/.gitattributes"
 printf 'base\n' >"${WORKSPACE_A}/tracked.txt"
 printf 'seed\n' >"${WORKSPACE_A}/tracked.filter"
 git -C "${WORKSPACE_A}" add .gitattributes tracked.txt tracked.filter
 git -C "${WORKSPACE_A}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -m 'initial' >/dev/null
+# Positive controls: plain git runs the filter and the textconv, so the later
+# checks that workcell runs neither cannot pass because the drivers are broken.
+test -e "${FILTER_MARKER}"
 rm -f "${FILTER_MARKER}"
 GIT_BASE="$(git -C "${WORKSPACE_A}" rev-parse HEAD)"
 GIT_BRANCH="$(git -C "${WORKSPACE_A}" branch --show-current)"
 printf 'updated\n' >"${WORKSPACE_A}/tracked.txt"
 printf 'new file\n' >"${WORKSPACE_A}/new.txt"
 printf 'changed\n' >"${WORKSPACE_A}/tracked.filter"
+git -C "${WORKSPACE_A}" diff -- tracked.txt >/dev/null
+test -e "${TEXTCONV_MARKER}"
+rm -f "${TEXTCONV_MARKER}"
 
 cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
 {
