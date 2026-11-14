@@ -280,3 +280,75 @@ cleanup 1
 		}
 	}
 }
+
+// TestEgressProxyAliasesUseTheCanonicalHost builds the agent's host aliases
+// from the helper's canonical endpoints, not from the raw list: a dotted or
+// upper-case entry would otherwise alias a name the agent never looks up
+// (issue 823). A list the helper refuses stops the launch.
+func TestEgressProxyAliasesUseTheCanonicalHost(t *testing.T) {
+	lib, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `
+set -euo pipefail
+source "$LIB"
+SESSION_ID=s NETWORK_POLICY=allowlist EGRESS_PROXY=1
+go_hostutil() {
+  [[ "$1 $2" == "helper validate-egress-proxy-allowlist" ]] || return 9
+  case "$3" in
+    "API.OpenAI.com.:443 X.example.:8080") printf 'api.openai.com:443\nx.example:8080\n' ;;
+    *) return 1 ;;
+  esac
+}
+build_runtime_host_aliases "API.OpenAI.com.:443 X.example.:8080"
+printf '%s\n' "${RUNTIME_NETWORK_ARGS[@]}"
+if build_runtime_host_aliases "a.example:5432 b.example:5432"; then echo accepted; else echo refused; fi
+`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(), "LIB="+lib)
+	out, err := cmd.CombinedOutput()
+	want := "--network\nwc-s\n--dns\n127.0.0.1\n--add-host\napi.openai.com:egress-proxy-ip\n--add-host\nx.example:egress-proxy-ip\nrefused\n"
+	if err != nil || string(out) != want {
+		t.Fatalf("aliases = %q, %v; want %q", out, err, want)
+	}
+}
+
+// TestSessionStopOfAFailedSessionStopsTheProxyBeforeTheSeal stops a detached
+// session whose record turns failed and whose monitor is gone. The stop seals
+// the session itself, so the proxy stop that appends the deny records and the
+// broker summary must come first; a no-audit stop after the seal would leave
+// them out of the sealed chain (issue 823).
+func TestSessionStopOfAFailedSessionStopsTheProxyBeforeTheSeal(t *testing.T) {
+	got := runOrderProbe(t, launcherFunction(t, "session_stop_main")+launcherFunction(t, "finish_stopped_session_fallback")+`
+DIR="$(dirname "$STEPS")"
+session_run_cli_with_roots() { printf 'session_id=S\nforce=0\nprofile=prof\ncontainer_name=c\n'; }
+shellproto_field() { case "$2" in session_id) printf 'S\n' ;; force) printf '0\n' ;; *) printf '%s\n' "${3:-}" ;; esac; }
+resolve_host_tool() { :; }
+sanitize_host_docker_env() { :; }
+load_session_runtime_metadata() {
+  SESSION_META_PROFILE=prof SESSION_META_CONTAINER_NAME=c SESSION_META_RECORD_PATH="$DIR/S.json"
+  SESSION_META_CURRENT_ASSURANCE=managed-mutable
+  if [[ -e "$DIR/stopped" ]]; then SESSION_META_STATUS=failed SESSION_META_LIVE_STATUS=stopped
+  else SESSION_META_STATUS=running SESSION_META_LIVE_STATUS=running; fi
+  [[ ! -e "$DIR/S.audit-sig" ]] || SESSION_META_STATUS=failed
+}
+session_container_live_state() { printf 'running\n'; }
+session_monitor_pid_is_live() { return 1; }
+session_record_stop_request_marker() { :; }
+session_clear_stop_request_marker() { :; }
+emit_loaded_session_control_summary() { :; }
+write_session_record() { :; }
+run_profile_docker_command() { touch "$DIR/stopped"; }
+session_container_exit_code() { printf '7\n'; }
+append_session_control_audit_record() { printf 'record %s\n' "$3" >>"$STEPS"; }
+stop_egress_proxy_for_session() { printf 'proxy %s\n' "$*" >>"$STEPS"; }
+session_write_stop_requested_terminal_record() { printf 'terminal %s\n' "$2" >>"$STEPS"; }
+sign_session_audit_head_explicit() { printf 'seal\n' >>"$STEPS"; touch "$DIR/S.audit-sig"; }
+session_stop_main --id S >/dev/null
+`)
+	want := "record stop-request\nproxy prof S\nrecord exit\nterminal 7\nseal\nproxy prof S no-audit\n"
+	if got != want {
+		t.Fatalf("stop steps = %q, want %q", got, want)
+	}
+}

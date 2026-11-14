@@ -3627,11 +3627,15 @@ runtime_build_inputs_digest() {
 
 # The marker records the digest the image was built from: the current inputs
 # after a build, or the digest stored with a cached image when it is restored.
+# A short marker after a kill or a power loss would rebuild a valid image,
+# which can fail offline, so the publish helper stages the marker owner-only
+# in its directory, syncs it and the directory, and renames it into place.
 write_profile_image_marker() {
   local profile="$1"
   local image_id="$2"
   local build_inputs_sha256="$3"
-  local marker_path
+  local marker_path=""
+  local staged=""
 
   [[ "${build_inputs_sha256}" =~ ^[0-9a-f]{64}$ ]] || {
     echo "Workcell has no runtime image build-input digest for profile ${profile}." >&2
@@ -3640,9 +3644,15 @@ write_profile_image_marker() {
   marker_path="$(profile_image_marker_path "${profile}")"
   mkdir -p "$(dirname "${marker_path}")"
   umask 077
-  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\nbuild_inputs_sha256=%s\n' \
-    "${IMAGE_TAG}" "${image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${marker_path}"
-  chmod 0600 "${marker_path}" 2>/dev/null || true
+  staged="$(mktemp "${TMPDIR:-/tmp}/workcell-image-marker.XXXXXX")" || return 1
+  if ! printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\nbuild_inputs_sha256=%s\n' \
+    "${IMAGE_TAG}" "${image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${staged}" ||
+    ! go_hostutil helper publish-session-capture-file "${staged}" "${marker_path}" >/dev/null; then
+    rm -f "${staged}"
+    echo "Workcell could not record the prepared runtime image for profile ${profile}." >&2
+    return 1
+  fi
+  rm -f "${staged}"
 }
 
 current_image_id() {
@@ -4466,12 +4476,14 @@ session_stop_main() {
   case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
     stopped)
       if [[ "${SESSION_META_STATUS}" == "failed" ]]; then
-        stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
-        session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}"
-        # Sign only when the monitor is not live; a live monitor still owns
-        # finalize_session_audit signing, so signing here would double-sign.
-        if ! session_monitor_pid_is_live; then
-          sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
+        # A live monitor still owns the proxy stop and finalize_session_audit
+        # signing, so signing here would double-sign. Without one, the fallback
+        # stops the proxy, which appends the deny records, before it seals.
+        if session_monitor_pid_is_live; then
+          stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
+          session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}"
+        else
+          finish_stopped_session_fallback "${SESSION_META_PROFILE}" "${session_id}" "${record_path}" || exit 1
         fi
         load_session_runtime_metadata "${session_id}"
       fi
