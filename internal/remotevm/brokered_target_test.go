@@ -1073,7 +1073,7 @@ func TestBrokeredTargetRefusesASendWhoseConfirmedManifestCannotFit(t *testing.T)
 }
 
 // TestBrokeredTargetEndsTheLockWhenTheSendPanics panics in the broker
-// command after the commit. A later send of the same ID in this process
+// command while the lock is held. A later send of the same ID in this process
 // must not wait for the lock of the panicked send. A collection could close
 // a leaked descriptor and end its lock, so the test turns collection off.
 // Not parallel: it changes the collector setting.
@@ -1122,9 +1122,11 @@ func TestMaterializeRefusesAnEndedContextBeforeTheSwap(t *testing.T) {
 			cancel()
 		}
 		createArchiveFile = func(dir, pattern string) (*os.File, error) { cancel(); return os.CreateTemp(dir, pattern) }
+		// A late end comes after the broker argv is resolved, which precedes
+		// the context check.
 		var started bool
-		if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), &started).MaterializeWorkspace(ctx, second); !errors.Is(err, context.Canceled) || started {
-			t.Fatalf("late %v: MaterializeWorkspace() = %v, broker started = %v", late, err, started)
+		if _, err := fakeBrokerTarget(t, "receive", t.TempDir(), &started).MaterializeWorkspace(ctx, second); !errors.Is(err, context.Canceled) || started != late {
+			t.Fatalf("late %v: MaterializeWorkspace() = %v, broker argv resolved = %v", late, err, started)
 		}
 		assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
 	}
@@ -1158,17 +1160,29 @@ func TestMaterializeKeepsAKeptCopyThatRecoveryCannotScan(t *testing.T) {
 }
 
 // TestBrokeredTargetConfirmsTheLongestAckAtTheManifestLimit: an empty broker
-// command must fail and end the lock; at the limit of the size check the longest
-// ack is confirmed, one byte less stops the send before the broker. Not parallel.
+// command of a second send must fail, keep the host copy and its manifest, and
+// end the lock; at the limit of the size check the longest ack is confirmed,
+// one byte less stops the send before the broker. Not parallel.
 func TestBrokeredTargetConfirmsTheLongestAckAtTheManifestLimit(t *testing.T) {
 	defer func(limit int64) { maxManifestBytes = limit }(maxManifestBytes)
 	req := brokeredRequest(t, filepath.Join("testdata", "source-workspace"))
+	first, err := fakeBrokerTarget(t, "receive", t.TempDir(), new(bool)).MaterializeWorkspace(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := req
+	second.SourceWorkspace = secondSource(t)
 	empty := BrokeredTarget{Contract: DefaultGCPVMContract(), Command: func(string) []string { return nil }}
-	if _, err := empty.MaterializeWorkspace(t.Context(), req); err == nil || !strings.Contains(err.Error(), "broker command is empty") {
+	if _, err := empty.MaterializeWorkspace(t.Context(), second); err == nil || !strings.Contains(err.Error(), "broker command is empty") {
 		t.Fatalf("MaterializeWorkspace() = %v, want the empty broker command", err)
 	}
-	manifest := readHostManifest(t, req)
-	manifest.GuestTransfer, manifest.MaterializedWorkspace = "", strings.Repeat("\x00", archiveLineBytes)
+	assertHostCopyMatchesKeptManifest(t, req, first.Manifest.Entries)
+	if kept := readHostManifest(t, req); kept.GuestTransfer != "" || kept.ArchiveSHA256 != first.Manifest.ArchiveSHA256 {
+		t.Fatalf("kept manifest = guest_transfer %q, archive_sha256 %q; want the confirmed first send", kept.GuestTransfer, kept.ArchiveSHA256)
+	}
+	// The sends below wait for the lock, so they also show that it ended.
+	manifest := first.Manifest
+	manifest.MaterializedWorkspace = strings.Repeat("\x00", archiveLineBytes)
 	content, _ := manifestContent(manifest)
 	for _, size := range []int{len(content) - 1, len(content)} {
 		maxManifestBytes = int64(size)

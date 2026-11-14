@@ -196,9 +196,6 @@ func (b BrokeredTarget) brokerArgv(targetID string) ([]string, error) {
 // transfer. A broker that fails reports its exit status. A timeout sends
 // SIGTERM, and SIGKILL follows after brokerStopGrace.
 func runBroker(ctx context.Context, argv []string, transfer func(io.ReadWriter) (string, error)) (string, error) {
-	if len(argv) == 0 {
-		return "", errors.New("broker command is empty")
-	}
 	ctx, cancel := context.WithTimeout(ctx, brokerTransferTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
