@@ -560,11 +560,22 @@ func listen(path string) (*boundSocket, error) {
 		return nil, errors.New("credential broker socket verification failed")
 	}
 	bound.dev, bound.ino = uint64(leaf.Dev), uint64(leaf.Ino)
-	if err := unix.Fchmodat(int(parent.Fd()), name, 0o600, 0); err != nil {
+	if err := bound.restrict(); err != nil {
 		return fail(err)
 	}
-	if err := unix.Fstatat(int(parent.Fd()), name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || leaf.Mode&0o777 != 0o600 || !bound.bound(&leaf) {
-		return fail(errors.New("credential broker socket verification failed"))
-	}
 	return bound, nil
+}
+
+// restrict sets the socket's mode to 0600 through the pinned parent, then
+// checks that the name still holds the socket the broker bound, with that
+// mode. A socket swapped in under the name after the first check fails it.
+func (b *boundSocket) restrict() error {
+	if err := unix.Fchmodat(int(b.parent.Fd()), b.name, 0o600, 0); err != nil {
+		return err
+	}
+	var leaf unix.Stat_t
+	if err := unix.Fstatat(int(b.parent.Fd()), b.name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || leaf.Mode&0o777 != 0o600 || !b.bound(&leaf) {
+		return errors.New("credential broker socket verification failed")
+	}
+	return nil
 }

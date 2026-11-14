@@ -673,6 +673,37 @@ func TestSocketCleanupUnlinksOnlyTheSocketItBound(t *testing.T) {
 	}
 }
 
+// TestRestrictRefusesASocketSwappedInAfterTheBind binds the broker socket,
+// then puts another socket under its name, as a swap between the first check
+// and the mode change would. The final check compares the inode the first
+// check recorded, so it fails, and the cleanup leaves the other socket.
+func TestRestrictRefusesASocketSwappedInAfterTheBind(t *testing.T) {
+	path := filepath.Join(socketDir(t), "b.sock")
+	socket, err := listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := socket.restrict(); err != nil {
+		t.Fatalf("restrict on the bound socket = %v, want nil", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	other, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.SetUnlinkOnClose(false)
+	defer other.Close()
+	if err := socket.restrict(); err == nil {
+		t.Fatal("restrict accepted a socket the broker did not bind")
+	}
+	socket.close()
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("cleanup removed a socket the broker did not bind: %v", err)
+	}
+}
+
 // TestAncestryCheckFollowsThePinnedDirectory pins a directory, then moves its
 // tree under a world-writable non-sticky directory and puts a private tree at
 // the old pathname. The check walks up from the pinned descriptor, so it
