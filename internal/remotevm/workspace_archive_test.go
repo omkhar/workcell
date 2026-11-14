@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -54,9 +55,9 @@ func frameArchive(id string, archive []byte) []byte {
 	return append([]byte(fmt.Sprintf("%s %s %s %d\n", archiveMagic, id, hex.EncodeToString(sum[:]), len(archive))), archive...)
 }
 
-// lockWaitBound bounds how long a test waits for a receive to finish or for
-// the materializations lock to end, so a receive that keeps the lock fails
-// the test instead of hanging it until the go test timeout.
+// lockWaitBound bounds how long a test waits for a receive to finish, so a
+// receive that waits for a lock that an earlier receive kept fails the test
+// instead of hanging it until the go test timeout.
 const lockWaitBound = 15 * time.Second
 
 type receiveResult struct {
@@ -588,6 +589,11 @@ func materializationsLocked(t *testing.T, root string) bool {
 	defer dir.Close()
 	err = syscall.Flock(int(dir.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err == nil {
+		// The probe ends its own lock, which a forked child could
+		// otherwise hold past the close.
+		if err := syscall.Flock(int(dir.Fd()), syscall.LOCK_UN); err != nil {
+			t.Errorf("end the probe lock: %v", err)
+		}
 		return false
 	}
 	if !errors.Is(err, syscall.EWOULDBLOCK) {
@@ -596,21 +602,28 @@ func materializationsLocked(t *testing.T, root string) bool {
 	return true
 }
 
-// materializationsUnlockedWithin reports whether the lock on the
-// materializations under root ends within lockWaitBound. Go opens the lock
-// close-on-exec, but a child that a parallel test forks for an exec shares
-// the open file description, and with it the flock, from the fork until its
-// exec. So the lock can end a moment after the receive closes it.
-func materializationsUnlockedWithin(t *testing.T, root string) bool {
+// forkWhileTheTestRuns forks children for an exec of /bin/true on a few
+// goroutines until the test ends. Each child shares every open file
+// description of this process, and so every flock on one, from its fork to
+// its exec.
+func forkWhileTheTestRuns(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(lockWaitBound)
-	for wait := time.Millisecond; materializationsLocked(t, root); wait = min(2*wait, 50*time.Millisecond) {
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(wait)
+	if _, err := os.Stat("/bin/true"); err != nil {
+		t.Skipf("no /bin/true to exec: %v", err)
 	}
-	return true
+	var stop atomic.Bool
+	var forks sync.WaitGroup
+	for range 4 {
+		forks.Go(func() {
+			for !stop.Load() {
+				_ = exec.Command("/bin/true").Run()
+			}
+		})
+	}
+	t.Cleanup(func() {
+		stop.Store(true)
+		forks.Wait()
+	})
 }
 
 // TestReceiveWorkspaceKeepsTheCopyOfAConcurrentReceive starts a second receive
@@ -658,13 +671,11 @@ func (w *lockCheckingWriter) Write(p []byte) (int, error) {
 	return w.ack.Write(p)
 }
 
-// TestReceiveWorkspaceAcksBeforeItEndsTheLock: a receive must write its ok ack
-// while it still holds the lock, so a later receive of the same ID cannot
-// replace the copy before the ack names it.
-func TestReceiveWorkspaceAcksBeforeItEndsTheLock(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
+// receiveAndCheckTheLock receives one archive under root, and fails the test
+// unless the receive held the lock when it wrote its ok ack and ended the
+// lock when it returned.
+func receiveAndCheckTheLock(t *testing.T, root string) {
+	t.Helper()
 	writer := &lockCheckingWriter{t: t, root: root}
 	err := receiveWorkspace(struct {
 		io.Reader
@@ -673,7 +684,31 @@ func TestReceiveWorkspaceAcksBeforeItEndsTheLock(t *testing.T) {
 	if err != nil || !strings.HasPrefix(writer.ack.String(), "ok ") || !writer.locked {
 		t.Fatalf("receive = %q, %v; lock held at the ack = %v", writer.ack.String(), err, writer.locked)
 	}
-	if !materializationsUnlockedWithin(t, root) {
-		t.Fatalf("the lock outlived the receive by more than %v", lockWaitBound)
+	if materializationsLocked(t, root) {
+		t.Fatal("the lock outlived the receive")
+	}
+}
+
+// TestReceiveWorkspaceAcksBeforeItEndsTheLock: a receive must write its ok ack
+// while it still holds the lock, so a later receive of the same ID cannot
+// replace the copy before the ack names it.
+func TestReceiveWorkspaceAcksBeforeItEndsTheLock(t *testing.T) {
+	t.Parallel()
+
+	receiveAndCheckTheLock(t, t.TempDir())
+}
+
+// TestReceiveWorkspaceEndsTheLockWhileChildrenFork receives while this
+// process forks children for an exec. A child forked while a receive holds
+// the lock shares it until its exec, so a receive that only closed the lock
+// could leave it held after it returned, and an ack written after the close
+// could find it held. Each receive must still ack under the lock and end it.
+func TestReceiveWorkspaceEndsTheLockWhileChildrenFork(t *testing.T) {
+	t.Parallel()
+
+	forkWhileTheTestRuns(t)
+	root := t.TempDir()
+	for range 20 {
+		receiveAndCheckTheLock(t, root)
 	}
 }

@@ -209,19 +209,20 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 	defer materializations.Close()
 	// One receive at a time changes the materializations, so a late failure
 	// of one receive cannot remove the copy that another receive of the same
-	// ID acked. Closing the directory ends the lock.
-	lock, err := materializations.Open(".")
+	// ID acked. Closing the lock ends it.
+	dir, err := materializations.Open(".")
 	if err != nil {
 		return "", "", nil, err
 	}
+	lock := flockedFile{dir}
 	// Every return but the last ends the lock, also after a panic.
-	unlock := lock
+	held := true
 	defer func() {
-		if unlock != nil {
-			unlock.Close()
+		if held {
+			lock.Close()
 		}
 	}()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := syscall.Flock(int(dir.Fd()), syscall.LOCK_EX); err != nil {
 		return "", "", nil, err
 	}
 	if err := removeMaterialization(materializations, materializationID); err != nil {
@@ -234,8 +235,19 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 	if err != nil {
 		return "", "", nil, errors.Join(err, removeMaterialization(materializations, materializationID))
 	}
-	unlock = nil
+	held = false
 	return filepath.Join(root, "materializations", materializationID, MaterializedWorktree), digest, lock, nil
+}
+
+// flockedFile is a file that holds a flock. A child that a fork starts for an
+// exec shares the open file description, and with it the flock, until its
+// exec closes the copy, so a close alone can leave the lock held for that
+// gap. Close therefore ends the flock, for every copy of the description,
+// before it closes the file.
+type flockedFile struct{ *os.File }
+
+func (f flockedFile) Close() error {
+	return errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.File.Close())
 }
 
 // removeMaterialization removes the materialization id. A directory that the
