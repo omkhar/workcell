@@ -348,29 +348,36 @@ Any other lockfile change is out of scope, including an added or removed package
 ## Claude mention
 
 `claude-mention.yml` runs `anthropics/claude-code-action` when the repository owner writes `@claude`.
-It starts on a new issue, a new issue or PR comment, a submitted PR review, or a new PR review comment.
+It starts on a new issue or a new comment on an issue or a PR.
 An edit does not start it.
+It has no PR review trigger. GitHub runs a review event from the PR merge ref, not from `main`.
 
 The job gate compares numeric account IDs, not logins.
 The event author, the event sender, and the run actor must be account `22666538` (`omkhar`).
 The first step looks up the account ID of the actor that started or reran the run.
 Thus another account, a bot, or the reply of the Claude App cannot start the action.
 
-The gate accepts a PR review event only on a same-repository PR that the owner opened.
-GitHub runs these events from the PR merge ref, so a Dependabot bump of the action cannot run with the secret.
-A second step stops the job when the PR head is in another repository.
-The action reads the PR head, so fork content must not reach it with the secret.
+On a PR, the owner must have opened the PR from this repository.
+The gate checks the PR author, and a second step checks the author and head repository through the REST API.
+The action reads the PR head, so fork or bot content must not reach it with the secret.
 
 The action runs in answer-only mode.
 Its tool deny list removes Bash, file edits, and web access.
-It also denies reads of `/proc`, `/tmp`, the runner temporary directory, Claude Code state, and `.git`.
+It also denies reads of `/proc`, the runner temporary directory, Claude Code state, and `.git`.
+`/tmp/github-images` stays readable, so Claude can see images in comments.
 The `claude_args` input of `.github/workflows/claude-mention.yml` holds this list.
+
 The job token is read-only. The action writes with the Claude GitHub App token that it gets through OIDC.
 
 `internal/metadatautil/claude_mention.go` pins the parsed workflow to a reviewed digest.
 The digest ignores comments and the action commit, so a pin bump keeps it.
-Only `.github/workflows/claude-mention.yml` can name the action, its secret, or its environment.
-`check-pinned-inputs` runs both checks.
+Only `.github/workflows/claude-mention.yml` can name the action, its secret, or its environment, in any case.
+Another workflow cannot choose its environment by an expression.
+It also cannot read the secrets context by a computed index or as a whole, for example `toJSON(secrets)`.
+`check-pinned-inputs` runs these checks on PRs to `main`.
+
+These checks do not cover a branch that does not merge to `main`.
+The environment rule keeps the secret on `main`, so set it as step 5 says.
 
 Text from other people in the thread is still model input.
 It can change the answer, but it cannot run a command or change a file.
@@ -383,7 +390,7 @@ It can change the answer, but it cannot run a command or change a file.
 2. Replace the placeholder SHA in `.github/workflows/claude-mention.yml` with that SHA.
 3. Add the row for that SHA to `tests/fixtures/actions/inputs.tsv`.
 4. Install the Claude GitHub App on this repository only.
-5. Create the `claude-mention` environment with no required reviewers.
+5. Create the `claude-mention` environment with no required reviewers. Set its deployment branches to `main` only.
 6. Add the `CLAUDE_CODE_OAUTH_TOKEN` secret to that environment only.
 
 `claude setup-token` creates the OAuth token.

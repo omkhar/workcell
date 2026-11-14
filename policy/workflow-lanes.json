@@ -345,13 +345,11 @@
       "job_name": "Claude mention",
       "workflow_events": [
         "issue_comment",
-        "issues",
-        "pull_request_review",
-        "pull_request_review_comment"
+        "issues"
       ],
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "owner-only @claude responder; it runs only on an issue, issue comment, PR review or PR review comment event written by the repository owner, needs the claude-mention environment secret and the Claude GitHub App, and never gates a PR or release"
+      "github_only_reason": "owner-only @claude responder; it runs only on a new issue or issue comment written by the repository owner, needs the claude-mention environment secret and the Claude GitHub App, and never gates a PR or release"
     },
     {
       "id": "codeql.yml/analyze[build-mode=autobuild,language=go]",

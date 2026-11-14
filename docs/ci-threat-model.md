@@ -107,7 +107,8 @@ The App has no Workflows permission, so the job does not publish a candidate tha
 
 The Claude mention job uses the `claude-mention` environment.
 Its gate accepts only events that the repository owner writes, by numeric account ID.
-It stops before checkout on a PR from a fork.
+It runs only from `main`, and the environment permits the `main` branch only.
+On a PR, it stops before checkout unless the owner opened the PR from this repository.
 The action runs with no Bash, file edit, or web tool.
 See `docs/github-workflows.md`.
 
@@ -290,7 +291,7 @@ Residual risk describes the risk after the current controls.
 | 9 | A malicious change reaches a release. | Signed commits, signed tags, required checks, environment approval, and immutable releases protect publication. | Medium. One maintainer signs and approves releases. |
 | 10 | A large or hidden change avoids review. | The PR shape gate limits files, lines, areas, and binary changes. | Low. A reviewed exception can raise the limits. |
 | 11 | Script logging exposes the stored token. | The token is environment-scoped and the workflows do not print it. | Low. Read-only scope remains a provisioning rule. |
-| 12 | Text in an issue or PR steers the Claude mention action. | Only the owner can start it. It has no Bash, file edit, or web tool, and it refuses fork PRs. See `.github/workflows/claude-mention.yml`. | Medium. Other people's text in the thread can change the answer. The Claude App token can still write comments. |
+| 12 | Text in an issue or PR steers the Claude mention action. | Only the owner can start it. It has no Bash, file edit, or web tool, and it refuses fork and bot PRs. See `.github/workflows/claude-mention.yml`. | Medium. Other people's text in the thread can change the answer. The Claude App token can still write comments. |
 
 ## Signing-compromise incident response
 
