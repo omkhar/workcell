@@ -73,6 +73,7 @@ type workflowStep struct {
 	WorkDir         string            `yaml:"working-directory"`
 	If              yaml.Node         `yaml:"if"`
 	ContinueOnError any               `yaml:"continue-on-error"`
+	Timeout         yaml.Node         `yaml:"timeout-minutes"`
 	Uses            string            `yaml:"uses"`
 	Env             map[string]string `yaml:"env"`
 	Run             string            `yaml:"run"`
@@ -80,13 +81,24 @@ type workflowStep struct {
 }
 
 // decodeWorkflow decodes a workflow into the closed workflowDocument, so an
-// unmodelled key is an error rather than a field no validator reads.
+// unmodelled key is an error rather than a field no validator reads. Only the
+// rederive step of a rederive job may set a step timeout-minutes, and the
+// upstream refresh validator pins its value.
 func decodeWorkflow(content []byte) (workflowDocument, error) {
 	var document workflowDocument
 	decoder := yaml.NewDecoder(bytes.NewReader(content))
 	decoder.KnownFields(true)
-	err := decoder.Decode(&document)
-	return document, err
+	if err := decoder.Decode(&document); err != nil {
+		return document, err
+	}
+	for name, job := range document.Jobs {
+		for _, step := range job.Steps {
+			if step.Timeout.Kind != 0 && (name != "rederive" || step.ID != "rederive") {
+				return document, fmt.Errorf("job %s sets a step timeout-minutes, which only the rederive step may set", name)
+			}
+		}
+	}
+	return document, nil
 }
 
 // stepRuns returns the script a step is proved to run. GitHub skips a step
@@ -905,7 +917,73 @@ const (
 	upstreamRefreshPublishShell     = "bash --noprofile --norc -euo pipefail {0}"
 	upstreamRefreshScopeGuardRun    = `./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/provider/patch"`
 	upstreamRefreshScopeGuardResult = "${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}"
+	// The toolchain guard appends its verdict to the step output file only
+	// when it passes, so the job output is that verdict or failed.
+	upstreamRefreshToolchainGuardRun    = `./scripts/ci/upstream-refresh-scope-guard.sh --toolchain "${RUNNER_TEMP}/candidate/toolchain/patch" "${GITHUB_OUTPUT}"`
+	upstreamRefreshToolchainGuardResult = "${{ steps.toolchain_guard.outcome == 'success' && steps.toolchain_guard.outputs.verdict || 'failed' }}"
+	// The rederive step appends its verdict to the step output file only when
+	// the toolchain updater, run again from the base, gave the candidate tree.
+	upstreamRefreshRederiveResult = "${{ steps.rederive.outcome == 'success' && steps.rederive.outputs.verdict || 'failed' }}"
+	upstreamRefreshRederiveRun    = `token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+(umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+unset GITHUB_TOKEN GH_TOKEN
+trap 'rm -f "${token_file}"' EXIT
+WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/upstream-refresh-rederive.sh "${RUNNER_TEMP}/candidate/toolchain" "${GITHUB_OUTPUT}"`
+	// The rederive step times out before its job, so a slow re-derivation is a
+	// step failure that holds the toolchain candidate, not a job timeout that
+	// GitHub may report as cancelled.
+	upstreamRefreshRederiveJobTimeout  = "20"
+	upstreamRefreshRederiveStepTimeout = "15"
+	// publish runs when the rederive job failed, so a rederive failure holds
+	// only the toolchain candidate. It needs a refresh and a scope guard that
+	// succeeded, and it does not run in a cancelled run.
+	upstreamRefreshPublishIf = "${{ !cancelled() && github.ref == 'refs/heads/main' && needs.refresh.result == 'success' && needs.scope-guard.result == 'success' && needs.refresh.outputs.candidate == 'true' }}"
+	// A rederive job that did not succeed gives no verdict.
+	upstreamRefreshRederiveInput = "${{ needs.rederive.result == 'success' && needs.rederive.outputs.toolchain || 'failed' }}"
 )
+
+var upstreamRefreshRederiveEnv = map[string]string{
+	"GITHUB_TOKEN":                "${{ github.token }}",
+	"WORKCELL_DEBIAN_PLAN_RECORD": "${{ runner.temp }}/upstream-refresh-rederive-debian-plan.json",
+}
+
+// validateUpstreamRefreshRederiveJob keeps the rederive job a read-only
+// re-run of the toolchain updater. It holds only contents: read, needs only
+// refresh, and is exactly the reviewed checkout, candidate download, and
+// rederive steps, so no other step can write its verdict or replace its script.
+func validateUpstreamRefreshRederiveJob(path string, rederive workflowJob) error {
+	if !maps.Equal(rederive.Permissions, map[string]string{"contents": "read"}) {
+		return fmt.Errorf("%s rederive job must grant exactly contents: read", path)
+	}
+	if !needsExactly(rederive.Needs, []string{"refresh"}) {
+		return fmt.Errorf("%s rederive job must need exactly refresh", path)
+	}
+	if len(rederive.Env) != 0 || rederive.Defaults.Kind != 0 || rederive.Strategy.FailFast.Kind != 0 || len(rederive.Strategy.Matrix.Include) != 0 {
+		return fmt.Errorf("%s rederive job must not set job env, defaults, or a strategy", path)
+	}
+	if rederive.Timeout.Kind != yaml.ScalarNode || rederive.Timeout.Value != upstreamRefreshRederiveJobTimeout {
+		return fmt.Errorf("%s rederive job must set timeout-minutes: %s", path, upstreamRefreshRederiveJobTimeout)
+	}
+	if len(rederive.Outputs) != 1 || rederive.Outputs["toolchain"] != upstreamRefreshRederiveResult {
+		return fmt.Errorf("%s rederive job must export only toolchain from the rederive step: %q", path, upstreamRefreshRederiveResult)
+	}
+	// Only the rederive step may carry its id or a step timeout.
+	plain := func(step workflowStep) bool {
+		return step.If.Kind == 0 && step.WorkDir == "" && step.ContinueOnError == nil && step.Shell == "" && step.ID == "" && step.Timeout.Kind == 0
+	}
+	steps := rederive.Steps
+	if len(steps) != 3 || !upstreamRefreshReviewedUses(steps[0], true) || !plain(steps[0]) || !upstreamRefreshReviewedUses(steps[1], false) || !plain(steps[1]) {
+		return fmt.Errorf("%s rederive job must be the reviewed checkout, candidate download, and rederive steps", path)
+	}
+	if step := steps[2]; step.ID != "rederive" || step.If.Kind != 0 || step.WorkDir != "" || step.ContinueOnError != true || step.Uses != "" || len(step.With) != 0 ||
+		step.Shell != upstreamRefreshPublishShell || !maps.Equal(step.Env, upstreamRefreshRederiveEnv) || strings.TrimSpace(step.Run) != upstreamRefreshRederiveRun {
+		return fmt.Errorf("%s rederive job must run the reviewed rederive step: %q", path, upstreamRefreshRederiveRun)
+	}
+	if step := steps[2]; step.Timeout.Kind != yaml.ScalarNode || step.Timeout.Value != upstreamRefreshRederiveStepTimeout {
+		return fmt.Errorf("%s rederive step must set timeout-minutes: %s, below the job's %s", path, upstreamRefreshRederiveStepTimeout, upstreamRefreshRederiveJobTimeout)
+	}
+	return nil
+}
 
 var upstreamRefreshAppTokenInputs = map[string]string{
 	"client-id":                "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}",
@@ -983,18 +1061,22 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if err != nil {
 		return fmt.Errorf("%s: parse workflow YAML: %w", path, err)
 	}
-	if len(document.Jobs) != 4 {
-		return fmt.Errorf("%s must define exactly the refresh, scope-guard, publish, and report jobs", path)
+	if len(document.Jobs) != 5 {
+		return fmt.Errorf("%s must define exactly the refresh, scope-guard, rederive, publish, and report jobs", path)
 	}
 	// validateManualPrivilegedWorkflowRef pins the refresh job condition.
 	const onCandidate = "github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'"
-	for _, name := range []string{"refresh", "scope-guard", "publish", "report"} {
+	for _, name := range []string{"refresh", "scope-guard", "rederive", "publish", "report"} {
 		job, ok := document.Jobs[name]
 		if !ok {
 			return fmt.Errorf("%s must define the %s job", path, name)
 		}
-		if name != "refresh" && name != "report" && (job.If.Kind != yaml.ScalarNode || strings.TrimSpace(job.If.Value) != onCandidate) {
-			return fmt.Errorf("%s %s job must run only when %s", path, name, onCandidate)
+		want := onCandidate
+		if name == "publish" {
+			want = upstreamRefreshPublishIf
+		}
+		if name != "refresh" && name != "report" && (job.If.Kind != yaml.ScalarNode || strings.TrimSpace(job.If.Value) != want) {
+			return fmt.Errorf("%s %s job must run only when %s", path, name, want)
 		}
 		for _, step := range job.Steps {
 			if name != "publish" && strings.HasPrefix(step.Uses, "actions/create-github-app-token@") {
@@ -1080,17 +1162,22 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		return fmt.Errorf("%s scope-guard job must run the scope guard with only contents: read", path)
 	}
 	// The job is exactly the reviewed checkout, the candidate download, and the
-	// guard step. No other step can replace the script, write the result, or
-	// mask a failure, so the guard step outcome is the guard's real exit status.
-	if len(guard.Steps) != 3 ||
+	// two guard steps. No other step can replace a script, write a result, or
+	// mask a failure, so each guard step outcome is its guard's real exit status.
+	if len(guard.Steps) != 4 ||
 		!upstreamRefreshReviewedUses(guard.Steps[0], true) || !upstreamRefreshReviewedUses(guard.Steps[1], false) {
 		return fmt.Errorf("%s scope-guard job must be the reviewed checkout, candidate download, and guard steps", path)
 	}
-	if step := guard.Steps[2]; step.ID != "guard" || step.WorkDir != "" || step.ContinueOnError != true || step.Uses != "" || step.Shell != upstreamRefreshPublishShell || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
-		return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, upstreamRefreshScopeGuardRun)
+	for i, want := range []struct{ id, run string }{{"guard", upstreamRefreshScopeGuardRun}, {"toolchain_guard", upstreamRefreshToolchainGuardRun}} {
+		if step := guard.Steps[2+i]; step.ID != want.id || step.If.Kind != 0 || step.WorkDir != "" || step.ContinueOnError != true || step.Uses != "" || step.Shell != upstreamRefreshPublishShell || len(step.Env)+len(step.With) != 0 || strings.TrimSpace(step.Run) != want.run {
+			return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, want.run)
+		}
 	}
-	if guard.Outputs["result"] != upstreamRefreshScopeGuardResult {
+	if len(guard.Outputs) != 2 || guard.Outputs["result"] != upstreamRefreshScopeGuardResult {
 		return fmt.Errorf("%s scope-guard job must export result from the guard step outcome: %q", path, upstreamRefreshScopeGuardResult)
+	}
+	if guard.Outputs["toolchain"] != upstreamRefreshToolchainGuardResult {
+		return fmt.Errorf("%s scope-guard job must export toolchain from the toolchain guard step: %q", path, upstreamRefreshToolchainGuardResult)
 	}
 	publish := document.Jobs["publish"]
 	if !maps.Equal(publish.Permissions, map[string]string{"contents": "read", "issues": "write"}) {
@@ -1099,11 +1186,14 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if publish.Environment.Name != "upstream-refresh" {
 		return fmt.Errorf("%s publish job must bind the upstream-refresh environment", path)
 	}
-	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
-		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
+	if err := validateUpstreamRefreshRederiveJob(path, document.Jobs["rederive"]); err != nil {
+		return err
 	}
-	if len(publish.Env)+len(guard.Env) != 0 || publish.Defaults.Kind+guard.Defaults.Kind != 0 || document.Def.Run["working-directory"] != "" || len(document.Env) != 0 {
-		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env, job defaults, or a default working-directory (NODE_OPTIONS, BASH_ENV, or a moved directory would reach the guard or the App token)", path)
+	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard", "rederive"}) {
+		return fmt.Errorf("%s publish job must need exactly refresh, scope-guard, and rederive", path)
+	}
+	if len(publish.Env)+len(guard.Env) != 0 || publish.Defaults.Kind+guard.Defaults.Kind != 0 || !maps.Equal(document.Def.Run, map[string]string{"shell": upstreamRefreshPublishShell}) || len(document.Env) != 0 {
+		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env, job defaults, or workflow run defaults other than shell: %s (NODE_OPTIONS, BASH_ENV, another shell, or a moved directory would reach the guard or the App token)", path, upstreamRefreshPublishShell)
 	}
 	appTokenSteps := 0
 	publishRuns := 0
@@ -1155,7 +1245,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		}
 		beforePublisher = beforePublisher && !publisher
 		run := strings.TrimSpace(step.Run)
-		if publisher && (step.Shell != upstreamRefreshPublishShell || step.WorkDir != "" || len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
+		if publisher && (step.Shell != upstreamRefreshPublishShell || step.WorkDir != "" || len(step.Env) > 4 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
 			return fmt.Errorf("%s publish job step must run only the publish script", path)
 		}
 		if mint {
@@ -1166,12 +1256,24 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		}
 		for _, run := range commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
 			publishRuns++
-			// A literal second argument would pass an out-of-scope candidate.
-			if len(run.Args) != 3 || run.Args[1] != "${SCOPE_GUARD_RESULT}" {
+			// A literal guard argument would pass an out-of-scope candidate.
+			if len(run.Args) != 5 || run.Args[1] != "${SCOPE_GUARD_RESULT}" {
 				return fmt.Errorf("%s publish job must pass \"${SCOPE_GUARD_RESULT}\" as the second publish script argument", path)
+			}
+			if run.Args[2] != "${TOOLCHAIN_SCOPE_GUARD_RESULT}" {
+				return fmt.Errorf("%s publish job must pass \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" as the third publish script argument", path)
+			}
+			if run.Args[3] != "${TOOLCHAIN_REDERIVE_RESULT}" {
+				return fmt.Errorf("%s publish job must pass \"${TOOLCHAIN_REDERIVE_RESULT}\" as the fourth publish script argument", path)
 			}
 			if step.Env["SCOPE_GUARD_RESULT"] != "${{ needs.scope-guard.outputs.result }}" {
 				return fmt.Errorf("%s publish job must pass the scope-guard result to the publish script", path)
+			}
+			if step.Env["TOOLCHAIN_SCOPE_GUARD_RESULT"] != "${{ needs.scope-guard.outputs.toolchain }}" {
+				return fmt.Errorf("%s publish job must pass the toolchain scope-guard verdict to the publish script", path)
+			}
+			if step.Env["TOOLCHAIN_REDERIVE_RESULT"] != upstreamRefreshRederiveInput {
+				return fmt.Errorf("%s publish job must pass the rederive verdict to the publish script", path)
 			}
 			// The publisher writes only with the App token minted above.
 			if step.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" {
