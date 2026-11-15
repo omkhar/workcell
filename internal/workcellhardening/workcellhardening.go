@@ -2454,7 +2454,7 @@ var copilotUnsafeBareShortForms = []string{
 // attached short forms that the block once grepped for in provider-policy.sh
 // are now [flags] deny entries in adapters/copilot/adapter.toml, and
 // TestFlagInventoryEntriesMatchProviderPolicy runs each one (and each glued
-// short form) through reject_unsafe_copilot_args, so the manifest is their one
+// short form) through the Go Copilot policy, so the manifest is their one
 // owner.
 //
 // The block reads six files via the per-check targetFile / targetFiles fields:
@@ -2493,7 +2493,7 @@ func copilotUnsafeFlagsChecks() []check {
 	cs = append(cs,
 		check{
 			kind:       kindPresent,
-			pattern:    "reject_unsafe_copilot_args",
+			pattern:    `workcell_provider_policy_check copilot "$@"`,
 			message:    "Expected provider wrapper to re-check Copilot argv before launch",
 			targetFile: providerWrapperRelPath,
 		},
