@@ -25,12 +25,12 @@ var sealProtectedNames = []string{sealHelper, fallbackHelper, sealCommand, proxy
 
 // sealCalls is the reviewed number of calls of each helper in each definition
 // ("" is the code outside every function): the foreground launch and the
-// session monitor seal through the seal helper, and the two dead-monitor
+// session monitor seal through the seal helper, and the three dead-monitor
 // branches of session stop through the fallback helper.
 var sealCalls = map[string]map[string]int{
 	"":                     {sealHelper: 1},
 	"session_monitor_main": {sealHelper: 1},
-	"session_stop_main":    {fallbackHelper: 2},
+	"session_stop_main":    {fallbackHelper: 3},
 }
 
 // ValidateEgressDenySealOrder requires that every session seal in

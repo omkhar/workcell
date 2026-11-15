@@ -37,7 +37,10 @@ func TestFakeBrokerProcess(t *testing.T) {
 		io.Writer
 	}{os.Stdin, os.Stdout}
 	switch args[0] {
-	case "receive":
+	case "receive", "umask077":
+		if args[0] == "umask077" {
+			unix.Umask(0o077)
+		}
 		if err := receiveWorkspace(stdio, args[1], defaultWorkspaceLimits); err != nil {
 			os.Exit(3)
 		}
@@ -106,6 +109,39 @@ func TestBrokeredTargetMaterializesTheWorkspaceOnTheGuest(t *testing.T) {
 	written, err := os.ReadFile(result.ManifestPath)
 	if err != nil || !strings.Contains(string(written), result.Manifest.ArchiveSHA256) || !strings.Contains(string(written), guestRoot) {
 		t.Fatalf("host manifest does not record the guest copy: %s (%v)", written, err)
+	}
+	guestEntries, err := copyWorkspaceTree(result.MaterializedWorkspace, filepath.Join(t.TempDir(), "mirror"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(guestEntries, result.Manifest.Entries) {
+		t.Fatalf("guest entries differ from the manifest:\n%v\n%v", guestEntries, result.Manifest.Entries)
+	}
+}
+
+// TestBrokeredTargetKeepsTheSourceModesOnTheGuest runs the guest under a
+// strict umask, which must not change the modes that the manifest records.
+func TestBrokeredTargetKeepsTheSourceModesOnTheGuest(t *testing.T) {
+	t.Parallel()
+
+	source := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "open"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"shared", "open/tool"} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, mode := range map[string]os.FileMode{"open": 0o777, "open/tool": 0o777, "shared": 0o666} {
+		if err := os.Chmod(filepath.Join(source, name), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var started bool
+	result, err := fakeBrokerTarget(t, "umask077", t.TempDir(), &started).MaterializeWorkspace(context.Background(), brokeredRequest(t, source))
+	if err != nil {
+		t.Fatal(err)
 	}
 	guestEntries, err := copyWorkspaceTree(result.MaterializedWorkspace, filepath.Join(t.TempDir(), "mirror"), nil)
 	if err != nil {
