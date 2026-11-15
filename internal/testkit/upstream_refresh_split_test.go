@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/metadatautil"
 )
 
 // splitFixtureFiles are the repository files a mixed refresh changes.
@@ -59,8 +61,8 @@ func splitApplyProviderBump(t *testing.T, repo string) {
 // splitApplyToolchainBump edits files the toolchain updater owns, one of them
 // in the same Dockerfile as the provider pins. A tool pin bump changes only
 // policy/tool-pins.toml. With workflow set it also changes a workflow file,
-// which the updater never does, so the test proves the publish guard still
-// refuses a candidate that touches .github/workflows/.
+// which the updater never does, so the test proves the toolchain scope guard
+// refuses a candidate that touches .github/workflows/ and the App holds it.
 func splitApplyToolchainBump(t *testing.T, repo string, workflow bool) {
 	t.Helper()
 	splitEdit(t, repo, "runtime/container/Dockerfile", `(?m)^ARG GO_VERSION=.*$`, "ARG GO_VERSION=9.9.9")
@@ -98,7 +100,8 @@ func splitChangedLines(patch string) map[string]bool {
 // TestUpstreamRefreshSplitDryRun runs the refresh split locally. It applies a
 // mixed provider and toolchain refresh in the order the workflow does, builds
 // both candidates, and checks them with the real scope guard and the real
-// publish script against a fake gh.
+// publish script against a fake gh. The toolchain guard runs on the fixture
+// repository, as the workflow runs it on the candidate base checkout.
 func TestUpstreamRefreshSplitDryRun(t *testing.T) {
 	t.Parallel()
 	for _, tool := range []string{"jq", "shasum", "base64"} {
@@ -210,11 +213,29 @@ func TestUpstreamRefreshSplitDryRun(t *testing.T) {
 			if output, err := exec.Command(guard, filepath.Join(out, "toolchain", "patch")).CombinedOutput(); err == nil {
 				t.Fatalf("scope guard accepted the toolchain candidate:\n%s", output)
 			}
+			// The rederive job runs the real updater, which this fixture
+			// cannot. Stand in its verdict for the candidate it would accept.
+			toolchainVerdict, rederiveVerdict := "failed", "failed"
+			verdict, err := metadatautil.CheckUpstreamRefreshToolchainScope(repo, filepath.Join(out, "toolchain", "patch"))
+			switch {
+			case tc.workflow && err == nil:
+				t.Fatalf("toolchain scope guard accepted a workflow change: %s", verdict)
+			case tc.workflow && !strings.Contains(err.Error(), "out of toolchain scope: path .github/workflows/release.yml"):
+				t.Fatalf("toolchain scope guard error = %v, want the workflow path", err)
+			case !tc.workflow && err != nil:
+				t.Fatalf("toolchain scope guard rejected the toolchain candidate: %v", err)
+			case !tc.workflow:
+				if verdict.Base != base || verdict.Tree != metas["toolchain"].TreeOID {
+					t.Fatalf("toolchain verdict = %+v, want base %s and tree %s", verdict, base, metas["toolchain"].TreeOID)
+				}
+				toolchainVerdict = verdict.String()
+				rederiveVerdict = "rederived:" + base + ":" + metas["toolchain"].TreeOID
+			}
 
 			bin := writePublishFakeGH(t, root)
 			ghLog := filepath.Join(root, "gh.log")
 			audit := filepath.Join(root, "audit.md")
-			cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-publish.sh"), out, "passed", audit)
+			cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-publish.sh"), out, "passed", toolchainVerdict, rederiveVerdict, audit)
 			cmd.Dir = repo
 			cmd.Env = append(append(os.Environ(), env...),
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -237,21 +258,48 @@ func TestUpstreamRefreshSplitDryRun(t *testing.T) {
 			if strings.Count(gh, "pr merge") != 1 {
 				t.Fatalf("gh calls = %q, want auto-merge for the provider PR only", gh)
 			}
-			// The App never publishes the toolchain candidate: it waits for a
-			// toolchain scope guard, whether or not it changes a workflow.
-			if strings.Contains(gh, "upstream-refresh-toolchain-42") || strings.Contains(gh, "(toolchain)") {
-				t.Fatalf("the App published a toolchain candidate:\n%s", gh)
-			}
-			if want := "./scripts/publish-upstream-refresh-pr.sh --run-id 42 --candidate toolchain"; !strings.Contains(auditText, want) {
-				t.Fatalf("audit = %q, want the host command %q", auditText, want)
-			}
-			if want := "it waits for the toolchain scope guard"; !strings.Contains(auditText, want) {
-				t.Fatalf("audit = %q, want the toolchain hold %q", auditText, want)
-			}
-			// The guard and the verify scripts cover the provider candidate only.
 			bodies, _ := os.ReadFile(ghLog + ".bodies")
-			if strings.Count(string(bodies), "scope guard: passed") != 1 || strings.Contains(string(bodies), "scope guard: not-run") {
-				t.Fatalf("PR bodies = %q, want only the provider PR, with scope guard passed", bodies)
+			if strings.Count(string(bodies), "scope guard: passed\n") != 1 || strings.Contains(string(bodies), "scope guard: not-run") {
+				t.Fatalf("PR bodies = %q, want one provider PR with scope guard passed", bodies)
+			}
+			if tc.workflow {
+				// The guard failed, so the App holds the toolchain candidate
+				// before any GitHub call and names the host command.
+				if strings.Contains(gh, "upstream-refresh-toolchain-42") || strings.Contains(gh, "(toolchain)") {
+					t.Fatalf("the App published a toolchain candidate the guard rejected:\n%s", gh)
+				}
+				for _, want := range []string{"the toolchain scope guard did not pass", "./scripts/publish-upstream-refresh-pr.sh --run-id 42 --candidate toolchain"} {
+					if !strings.Contains(auditText, want) {
+						t.Fatalf("audit = %q, want %q", auditText, want)
+					}
+				}
+			} else {
+				// The guard passed, so the App publishes the toolchain PR for a
+				// person: labeled, no auto-merge, with its pin lines listed.
+				for _, want := range []string{
+					"--head codex/upstream-refresh-toolchain-42 --title Refresh pinned upstreams (toolchain)",
+					"--add-label needs-human-review",
+				} {
+					if !strings.Contains(gh, want) {
+						t.Fatalf("gh calls = %q, want %q", gh, want)
+					}
+				}
+				for _, want := range []string{
+					"- scope guard: passed on tree " + metas["toolchain"].TreeOID,
+					"## Pins\n\n```diff\npolicy/tool-pins.toml\n-cosign = ",
+					"+ARG GO_VERSION=9.9.9\n",
+					"+DEBIAN_SNAPSHOT=20991231T000000Z\n",
+				} {
+					if !strings.Contains(string(bodies), want) {
+						t.Fatalf("PR bodies = %q, want %q", bodies, want)
+					}
+				}
+				if strings.Contains(auditText, "--candidate toolchain") {
+					t.Fatalf("audit = %q, must not ask a person to publish the toolchain PR from a host", auditText)
+				}
+				if want := "labeled needs-human-review, no auto-merge (toolchain scope guard passed on this tree)"; !strings.Contains(auditText, want) {
+					t.Fatalf("audit = %q, want %q", auditText, want)
+				}
 			}
 			if strings.Count(auditText, "cool-off:") != 1 {
 				t.Fatalf("audit = %q, want the cool-off claim for the provider candidate only", auditText)

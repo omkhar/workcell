@@ -1029,6 +1029,20 @@
       "github_only_reason": "publication needs the upstream-refresh environment secrets, the GitHub App token, and GitHub-side commit signing"
     },
     {
+      "id": "upstream-refresh.yml/rederive",
+      "workflow_path": ".github/workflows/upstream-refresh.yml",
+      "workflow_name": "Upstream refresh",
+      "job_id": "rederive",
+      "job_name": "Re-derive toolchain candidate",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the rederive job reads the candidate artifact that the GitHub-hosted refresh job uploads"
+    },
+    {
       "id": "upstream-refresh.yml/refresh",
       "workflow_path": ".github/workflows/upstream-refresh.yml",
       "workflow_name": "Upstream refresh",
