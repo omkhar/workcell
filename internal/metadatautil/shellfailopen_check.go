@@ -29,6 +29,7 @@ import (
 // its status, so every one is a hit until the script repairs it.
 //
 // The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits each file carries today; a count above its row fails, and so does a count below it, so the row drops with the repair.
+// A row may only shrink: a row that the baseline at the merge base of HEAD with origin/main (or main) does not hold, or a count above that row's, fails, so a change cannot admit a new hit by adding its row.
 //
 // The scan reads lines with shellWords, the reader ShellInvocations uses, so
 // quotes, comments, heredocs and an open `$(` mean the same thing to both.
@@ -65,7 +66,17 @@ func CheckShellFailOpen(rootDir string) error {
 	if err != nil {
 		return err
 	}
+	base, err := mergeBaseShellFailOpenBaseline(rootDir)
+	if err != nil {
+		return err
+	}
 	var failures []string
+	for key, allowed := range baseline {
+		if allowed > base[key] {
+			failures = append(failures, fmt.Sprintf("%s: baseline row for %s allows %d, but the merge base allows %d; repair the hit instead of adding to the row",
+				key.path, key.rule, allowed, base[key]))
+		}
+	}
 	for key, count := range counts {
 		allowed := baseline[key]
 		switch {
@@ -187,8 +198,8 @@ var (
 	// ends the script or function, so the list after it never runs.
 	shellFailOpenTerminal   = regexp.MustCompile(`^\s*(?:(?:command|builtin)(?:\s+(?:-p|--))*\s+)?(?:exit|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`) // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit or die-style command, which ends the script, so the list after it never runs; a return fails outside a function, so it does not end the list.
 	shellFailOpenStatusRead = regexp.MustCompile(`\$(?:\?|\{\?\})(?:[^\w]|$)`)
-	shellFailOpenRunsFirst  = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&") // shellFailOpenRunsFirst is a substitution, a process substitution or an operator, which runs a command of its own before a later word. The & of a >& or <& redirection runs nothing.
-	shellFailOpenTested     = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
+	shellFailOpenRunsFirst  = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&|[;\n]") // shellFailOpenRunsFirst is a substitution, a process substitution, an operator or a command boundary, which runs a command of its own before a later word, as the true of { true; rc=$?; } does. The & of a >& or <& redirection runs nothing.
+	shellFailOpenTested     = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                               // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
 	// shellFailOpenList is a && or || operator, which joins two commands.
 	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
 	shellOutWord      = regexp.MustCompile(`[^\s;&|<>()]+`)
@@ -274,6 +285,21 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		current.code = shellCodeOnly(current.raw)
 		statements = append(statements, current)
 	}
+	// A wait "$!" covers a loop only when nothing in it may start a job the
+	// reader cannot see: a function this file may define, an eval or a
+	// source, or, once the file runs an eval or a source anywhere or sets a
+	// trap that runs mid-loop, any command, since that text may define a
+	// function by any name or start a job between commands.
+	// A script the definition reader could not finish may define any name.
+	defined, complete := shellFailOpenDefinedFunctions(script)
+	opaque := !complete || slices.ContainsFunc(statements, func(each logical) bool {
+		called, traps := shellFailOpenStartsUnseen(each.raw, func(string) bool { return false })
+		return called || traps
+	})
+	hidesJob := func(raw string) bool {
+		called, _ := shellFailOpenStartsUnseen(raw, func(name string) bool { return opaque || defined[name] })
+		return shellFailOpenBackgrounds(raw) || called
+	}
 	pipefail, nesting := false, 0
 	var findings []ShellFailOpenFinding
 	var seen []string // the raw text of each command read so far
@@ -322,7 +348,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			// stands, so it needs proof: a loop reports its inner status only
 			// through a completion sentinel its body sets or a wait "$!" after it.
 			loopForm := shellLoopSubst.MatchString(command)
-			looped := loopForm && shellFailOpenWaited(raws[at+1]) && shellFailOpenLastSubst(command) && !slices.ContainsFunc(append(body, raws[at]), shellFailOpenBackgrounds)
+			looped := loopForm && shellFailOpenWaited(raws[at+1]) && shellFailOpenLastSubst(command) && !slices.ContainsFunc(append(body, raws[at]), hidesJob)
 			if !looped && loopForm {
 				codes, following := commands[at+1:len(commands)-1], raws[at+1:len(raws)-1]
 				for _, later := range statements[index+1:] {
@@ -672,12 +698,76 @@ func shellFailOpenLastSubst(command string) bool {
 
 // shellFailOpenBackgrounds reports whether a command starts a job in the
 // background with & or coproc, which sets $! to that job, so a wait "$!"
-// after the loop no longer waits for the producer.
+// after the loop no longer waits for the producer. flattenSubstitutions moves
+// each substitution onto a line of its own first, since shellWords reads no
+// words on a line that holds a quoted one.
 func shellFailOpenBackgrounds(raw string) bool {
-	words, _, _, _, _, _ := shellWords(raw, nil)
-	return slices.ContainsFunc(words, func(each word) bool {
-		return !each.quoted && (each.text == "&" || each.text == "coproc")
-	})
+	for line := range strings.Lines(flattenSubstitutions(raw)) {
+		words, _, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
+		if slices.ContainsFunc(words, func(each word) bool {
+			return !each.quoted && (each.text == "&" || each.text == "coproc")
+		}) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellFailOpenDefinedFunctions returns the name of each function the script
+// may define, as the shared definedFunctionNames reads them: nested, in an if
+// or case arm, spelled name ( ), or in the literal text of an eval or a trap.
+// complete is false when the reader stopped short of the whole script.
+func shellFailOpenDefinedFunctions(script string) (defined map[string]bool, complete bool) {
+	names, complete := definedFunctionNames(script)
+	defined = map[string]bool{}
+	for _, name := range names {
+		defined[name] = true
+	}
+	return defined, complete
+}
+
+// shellFailOpenStartsUnseen reads raw with the reader under EveryShellCommand,
+// flattenSubstitutions and flattenedCommands, so a command in a substitution, a
+// case arm or after a redirection counts, and each name is the one after any
+// reserved word, assignment or wrapper such as command or env. It skips the
+// call expansion EveryShellCommand adds, since the caller reads each body
+// itself, and it anchors no validator: a command it finds only denies the wait
+// exemption, so a command it cannot see is text or sits behind an eval, a
+// source, an alias or a definition, each of which denies the exemption too.
+// calls reports whether a command runs eval, source or ., sets an alias,
+// which may name a function, runs a mapfile or readarray -C callback, which
+// bash runs as eval does, runs a command whose name an expansion computes, or
+// runs one whose name calls accepts; each is read past any assignment and any
+// command, builtin or time in front of it, so builtin trap counts as trap. A
+// mention of BASH_ALIASES counts as an alias, since an element of it is one.
+// traps reports whether raw sets a trap that can run while a loop runs: any
+// trap other than an EXIT trap, whose signal bash reads in any case.
+func shellFailOpenStartsUnseen(raw string, calls func(name string) bool) (called, traps bool) {
+	called = strings.Contains(strings.ReplaceAll(raw, "\\\n", ""), "BASH_ALIASES")
+	for _, words := range flattenedCommands(flattenSubstitutions(heredocsAsHereStrings(raw))) {
+		command := unwrapBuiltins(words[assignmentPrefix(words):])
+		if len(command) == 0 {
+			continue
+		}
+		name, args := command[0], command[1:]
+		called = called || slices.Contains([]string{"eval", "source", ".", "alias"}, name) || strings.ContainsAny(name, "$`") || calls(name) ||
+			slices.ContainsFunc(words, func(word string) bool { return strings.Contains(word, "BASH_ALIASES") }) ||
+			(name == "mapfile" || name == "readarray") && slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "-") && strings.Contains(arg, "C") })
+		if name != "trap" {
+			continue
+		}
+		if len(args) > 0 && args[0] == "--" {
+			args = args[1:]
+		}
+		if len(args) < 2 || strings.HasPrefix(args[0], "-") {
+			continue
+		}
+		traps = traps || slices.ContainsFunc(args[1:], func(signal string) bool {
+			signal = strings.ToUpper(signal)
+			return signal != "EXIT" && signal != "0" && signal != "SIGEXIT"
+		})
+	}
+	return called, traps
 }
 
 // shellSubstMasked reports whether a tool substitution's status is lost: the
@@ -1022,6 +1112,55 @@ func loadShellFailOpenBaseline(path string) (map[shellFailOpenKey]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", shellFailOpenBaselinePath, err)
 	}
+	return parseShellFailOpenBaseline(content)
+}
+
+// mergeBaseShellFailOpenBaseline reads the baseline at the merge base of HEAD
+// with origin/main, or with main when origin/main is missing, as the testkit
+// exec ratchet does. A merge base with no baseline file allows no row. A
+// missing base ref or any other git failure is an error, so the ratchet fails
+// closed.
+func mergeBaseShellFailOpenBaseline(rootDir string) (map[shellFailOpenKey]int, error) {
+	git := func(args ...string) (string, error) {
+		out, err := exec.Command("git", append([]string{"-C", rootDir}, args...)...).Output()
+		return string(out), err
+	}
+	ref := ""
+	for _, candidate := range []string{"refs/remotes/origin/main", "refs/heads/main"} {
+		_, err := git("rev-parse", "--verify", "--quiet", candidate+"^{commit}")
+		if exitErr, missing := err.(*exec.ExitError); missing && exitErr.ExitCode() == 1 {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("probe %s for the %s ratchet: %w", candidate, shellFailOpenBaselinePath, err)
+		}
+		ref = candidate
+		break
+	}
+	if ref == "" {
+		return nil, fmt.Errorf("no origin/main or main ref to ratchet %s against", shellFailOpenBaselinePath)
+	}
+	mergeBase, err := git("merge-base", ref, "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("find the merge base of HEAD with %s for %s: %w", ref, shellFailOpenBaselinePath, err)
+	}
+	mergeBase = strings.TrimSpace(mergeBase)
+	listed, err := git("ls-tree", "--name-only", mergeBase, "--", shellFailOpenBaselinePath)
+	if err != nil {
+		return nil, fmt.Errorf("list %s at the merge base: %w", shellFailOpenBaselinePath, err)
+	}
+	if strings.TrimSpace(listed) == "" {
+		return map[shellFailOpenKey]int{}, nil
+	}
+	content, err := git("show", mergeBase+":"+shellFailOpenBaselinePath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s at the merge base: %w", shellFailOpenBaselinePath, err)
+	}
+	return parseShellFailOpenBaseline([]byte(content))
+}
+
+// parseShellFailOpenBaseline parses the baseline rows of content.
+func parseShellFailOpenBaseline(content []byte) (map[shellFailOpenKey]int, error) {
 	baseline := map[shellFailOpenKey]int{}
 	for number, line := range strings.Split(string(content), "\n") {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {

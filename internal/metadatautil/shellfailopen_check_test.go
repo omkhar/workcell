@@ -313,6 +313,39 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"quiet grep without pipefail", "echo \"$x\" | grep -q y || exit 1\n", ""},
 		{"grep that reads all input", "set -o pipefail\necho \"$x\" | grep -F -- y >/dev/null || exit 1\n", ""},
 		{"quiet grep after ||", "set -o pipefail\ntest -n \"$x\" || grep -q y f || exit 1\n", ""},
+		{"a grouped command before the status read", "git -C /missing fetch 2>/dev/null; { true; rc=$?; }; echo done\n", "dev-null"},
+		{"a subshell command before the status read", "git -C /missing fetch 2>/dev/null; ( true; rc=$? ); echo done\n", "dev-null"},
+		{"a grouped command on the next line before the status read", "git -C /missing fetch 2>/dev/null\n{ true; rc=$?; }\necho done\n", "dev-null"},
+		{"a grouped && before the status read", "git -C /missing fetch 2>/dev/null; { true && rc=$?; }; echo done\n", "dev-null"},
+		{"a handler group that runs a command before its status read", "git -C /missing fetch 2>/dev/null || { echo failed; rc=$?; exit \"$rc\"; }\n", "dev-null"},
+		{"a status read first in a group", "git -C /missing fetch 2>/dev/null; { rc=$?; }; [ \"$rc\" -eq 0 ] || exit 1\ngit gc 2>/dev/null; (rc=$?; exit \"$rc\") || exit 1\n", ""},
+		{"a loop that calls a function that starts a job", "launch() { : &\n}\nwhile read -r f; do launch; done < <(printf 'x\\n'; false)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that calls a function the file defines later", "while read -r f; do launch \"$f\"; done < <(find . -type f)\nwait \"$!\"\nlaunch() { :; }\n", "process-substitution"},
+		{"a loop that runs eval", "while read -r f; do eval \"$f\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that calls a wrapped function", "launch() { : & }\nwhile read -r f; do command launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a script that sources a file may define the function", "source ./lib.sh\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that calls no function keeps the wait", "f() { :; }\nwhile read -r line; do printf '%s\\n' \"$line\"; done < <(find . -type f)\nwait \"$!\"\n", ""},
+		{"a loop that calls a function with a quoted substitution", "launch() { : & }\nwhile read -r f; do launch \"$(basename \"$f\")\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that evals a quoted substitution", "while read -r f; do eval \"$(printf '%s' \"$f\")\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a script that sources a quoted substitution path", "source \"$(dirname \"$0\")/lib.sh\"\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a DEBUG trap whose action is a quoted substitution", "trap \"$(printf 'sleep 1 &')\" DEBUG\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that calls a function in a case arm", "launch() { : & }\nwhile read -r f; do case $f in a) launch ;; esac; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that runs eval in a case arm", "while read -r f; do case $f in a) eval \"$f\" ;; esac; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a function defined inside an if", "if true; then launch() { : & }; fi\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a function header spelled name ( )", "launch ( ) {\n  : &\n}\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that backgrounds a command beside a quoted substitution", "while read -r f; do sleep 1 & printf '%s' \"$(date)\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a loop that backgrounds a quoted substitution", "while read -r f; do\n  printf '%s' \"$(date)\" &\ndone < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"an alias may name a function", "alias l=launch\nlaunch() { : & }\nwhile read -r f; do l; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a function called after a redirection", "launch() { : & }\nwhile read -r f; do >/dev/null launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a builtin trap that runs mid-loop", "builtin trap 'sleep 1 &' DEBUG\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a builtin alias may name a job", "shopt -s expand_aliases\nbuiltin alias l='sleep 1 &'\nwhile read -r f; do l; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a BASH_ALIASES element is an alias", "shopt -s expand_aliases\nBASH_ALIASES[l]='sleep 1 &'\nwhile read -r f; do l; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a mapfile callback runs text as eval does", "while read -r f; do mapfile -C 'sleep 1 &' -c1 a <<<x; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a lowercase exit trap keeps the wait", "trap 'rm -f x' exit\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", ""},
+		{"a loop that runs a command a variable names", "while read -r f; do \"$f\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"a DEBUG trap may start a job in the loop", "trap 'sleep 1 &' DEBUG\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"an EXIT trap keeps the wait", "trap 'rm -f x' EXIT\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", ""},
+		{"a function defined past the definition reader's bound", "x=\"" + strings.Repeat("a \\\n", 20000) + "\"\nlaunch() { : & }\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"marked quiet grep", "set -o pipefail\n# fail-closed: find stops after one line\nfind . -print -quit | grep -q . || exit 1\n", ""},
 	}
 	for _, testCase := range cases {
@@ -427,12 +460,81 @@ func fixtureRepo(t *testing.T, script, baseline string) string {
 			t.Fatal(err)
 		}
 	}
-	for _, args := range [][]string{{"init", "-q"}, {"add", "."}} {
-		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"add", "."}, {"commit", "-q", "-m", "base"}} {
+		fixtureGit(t, root, args...)
 	}
 	return root
+}
+
+// fixtureGit runs git in the fixture repository root, with a fixed identity
+// and no signing.
+func fixtureGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	full := append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)
+	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// A baseline row may only shrink against the merge base with main, so a change
+// cannot admit a new hit by adding its row or raising its count.
+func TestCheckShellFailOpenRatchetsTheBaselineAgainstTheMergeBase(t *testing.T) {
+	t.Parallel()
+	planted := "#!/bin/bash\ngit fetch origin || true\n"
+	row := "scripts/a.sh\tor-true\t1\tpredates the rule\n"
+	cases := []struct {
+		name, baseScript, baseRows, script, rows, want string
+	}{
+		{"new row fails", "#!/bin/bash\n", "", planted, row, "the merge base allows 0"},
+		{"raised row fails", planted, row, planted + "git gc || true\n", strings.Replace(row, "\t1\t", "\t2\t", 1), "the merge base allows 1"},
+		{"row for another rule fails", planted, row, planted + "git gc 2>/dev/null\n", row + "scripts/a.sh\tdev-null\t1\tnew\n", "the merge base allows 0"},
+		{"kept row passes", planted, row, planted, row, ""},
+		{"lowered row passes", planted + "git gc || true\n", strings.Replace(row, "\t1\t", "\t2\t", 1), planted, row, ""},
+		{"removed row passes", planted, row, "#!/bin/bash\n", "", ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			root := fixtureRepo(t, testCase.baseScript, testCase.baseRows)
+			for name, body := range map[string]string{"scripts/a.sh": testCase.script, "policy/shell-fail-open-baseline.tsv": testCase.rows} {
+				if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := metadatautil.CheckShellFailOpen(root)
+			if testCase.want == "" {
+				if err != nil {
+					t.Fatalf("error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+	t.Run("a committed new row fails", func(t *testing.T) {
+		t.Parallel()
+		root := fixtureRepo(t, "#!/bin/bash\n", "")
+		fixtureGit(t, root, "switch", "-q", "-c", "topic")
+		for name, body := range map[string]string{"scripts/a.sh": planted, "policy/shell-fail-open-baseline.tsv": row} {
+			if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fixtureGit(t, root, "commit", "-q", "-am", "topic")
+		if err := metadatautil.CheckShellFailOpen(root); err == nil || !strings.Contains(err.Error(), "the merge base allows 0") {
+			t.Fatalf("error = %v, want the merge-base refusal", err)
+		}
+	})
+	t.Run("no main ref fails closed", func(t *testing.T) {
+		t.Parallel()
+		root := fixtureRepo(t, "#!/bin/bash\n", "")
+		fixtureGit(t, root, "branch", "-q", "-m", "main", "topic")
+		if err := metadatautil.CheckShellFailOpen(root); err == nil || !strings.Contains(err.Error(), "no origin/main or main ref") {
+			t.Fatalf("error = %v, want the missing-ref refusal", err)
+		}
+	})
 }
 
 // Negative control and ratchet: a planted hit fails, the same hit passes with a baseline row, and a row that is too high or stale fails.
