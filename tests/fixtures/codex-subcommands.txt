@@ -25,6 +25,9 @@
 # The reviewed provider updater advances the stamp automatically only when the exact
 # authoritative token set is unchanged; any addition or removal fails before pin
 # mutation and requires an explicit classification change.
+# A reviewed classification may land ahead of the pin: a name that the next
+# release adds is listed here once provider-policy.sh classifies it, so the
+# updater's exact-set check passes for that release and advances the stamp.
 # One name per line; blank/`#` lines are ignored.
 agents
 tcp-tunnel
@@ -32,6 +35,7 @@ exec
 e
 review
 login
+git-credential
 logout
 mcp
 plugin
@@ -51,6 +55,7 @@ queue
 archive
 delete
 migrate-rollouts
+migrate-nfs-db
 unarchive
 fork
 cloud
