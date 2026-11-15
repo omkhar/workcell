@@ -131,7 +131,7 @@ func TestLaneScriptsReadsTheRootAndShadowingFunctions(t *testing.T) {
 		{"other function", laneRoot + "\nrun() { \"$@\"; }\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n", "", "wired"},
 		{"set prelude with a comment", "set -o pipefail # strict\n" + laneRoot + "\n" + gate, "", "wired"},
 		{"set prelude that moves", "set -e; cd /tmp\n" + laneRoot + "\n" + gate, "", "unwired"},
-		{"set prelude that defines pwd", "set -e; pwd() { echo /tmp; }\n" + laneRoot + "\n" + gate, "", "unwired"},
+		{"set prelude that defines pwd", "set -e; pwd() { echo /tmp; }\n" + laneRoot + "\n" + gate, "", "instead of the builtin this reader reads"},
 		{"set prelude that opens a function", "set -e; f() {\n" + laneRoot + "\n}\n" + gate, "", "unwired"},
 		{"root name continued across lines", laneRoot + "\nROOT\\\n_DIR=/tmp\n" + gate, "", "unwired"},
 		{"root name by brace expansion", laneRoot + "\nexport ROOT{_,}DIR=/tmp\n" + gate, "", "declares a name this reader cannot spell"},
@@ -635,7 +635,7 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		{"a local declared in a branch a callee writes", "f() {\n  if [[ -n x ]]; then\n    local fd\n  fi\n  fd=x\n}\ng() {\n  local fd=20\n  f\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
 		{"a local declared after a condition a callee writes", "f() {\n  [[ -n x ]] && local fd\n  fd=x\n}\ng() {\n  local fd=20\n  f\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
 		{"a callee writes a name before it declares it local", "f() {\n  fd=x\n  local fd=1\n}\ng() {\n  local fd=20\n  f\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
-		{"nine guards, the first of which lapses", "f() {\n" + nineGuards + "  eval \"exec ${v0}<&-\"\n}\n", spelling},
+		{"nine guards, the first of which lapses", "f() {\n" + nineGuards + "  eval \"exec ${v0}<&-\"\n}\n", "limit of 8 guards"},
 		{"eight guards", "f() {\n" + eightGuards + "  eval \"exec ${v1}<&-\"\n}\n", "wired"},
 		{"an eval with a redirection", "f() {\n  local n=1\n  eval \": ${n}\" 2>/dev/null\n}\n", spelling},
 		{"an eval of a backquoted substitution", "f() {\n  local n=1\n  eval \"exec ${n}<`echo f`\"\n}\n", spelling},
@@ -679,11 +679,66 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		{"a spelled eval whose number may be empty", "f() {\n  local n=1\n  eval \"${n}hash -p /bin/true bash\"\n}\n", "binds a name to a path"},
 		{"an eval of a local number with no number written", "f() {\n  local fd=\"${X}\"\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
 	}
+	// Each row below is a lane that bash runs without ever reaching the gate,
+	// with the library it sources, when the reader would call it wired.
+	const (
+		x       = `'0>&0; bash() { :; } #'`
+		guarded = `f() { local fd; fd="$1"; [[ $fd =~ ^[0-9]+$ ]] || return; eval "exec $fd<&-"; }; `
+		looped  = `f() { local fd=""; for fd in "$@"; do [[ $fd =~ ^[0-9]+$ ]] || continue; eval "exec $fd<&-"; done; }; `
+		shadow  = "instead of the builtin this reader reads"
+		source  = `source "${ROOT_DIR}/scripts/lib/l.sh"; `
+	)
+	lanes := []struct{ name, lane, library, want string }{
+		{"a function named return", `return() { :; }; ` + guarded + `f ` + x, "", shadow},
+		{"a function named return by the function keyword", `function return { :; }; ` + guarded + `f ` + x, "", shadow},
+		{"a function named return defined after its caller", guarded + `return() { :; }; f ` + x, "", shadow},
+		{"a function named return an eval defines", `eval 'return() { :; }'; ` + guarded + `f ` + x, "", shadow},
+		{"a function named return a library defines", source + guarded + `f ` + x, "return() { :; }\n", shadow},
+		{"a function named continue", `continue() { :; }; ` + looped + `f ` + x, "", shadow},
+		{"a function named set", `set() { exit 0; }; set -e`, "", shadow},
+		{"an eval by the same text proven elsewhere, in a case branch on its header's line", `f() { local fd=7; eval "exec $fd<&-"; }; f; g() { local fd=` + x + `; case x in x) eval "exec $fd<&-" ;; esac; }; g`, "", spelling},
+		{"an eval by the same text proven elsewhere, redirected after", `f() { local fd=7; eval "exec $fd<&-"; }; f; g() { local fd=` + x + `; eval "exec $fd<&-" 2>/dev/null; }; g`, "", spelling},
+		{"the same eval twice, both proven", `f() { local fd=7; eval "exec $fd<&-"; }; g() { local fd=8; eval "exec $fd<&-"; }; f; g`, "", "wired"},
+		{"a callee unsets a local, baring its caller's", `outer() { local fd=` + x + `; f; }; f() { local fd=7; h; eval "exec $fd<&-"; }; h() { unset fd; }; outer`, "", spelling},
+		{"a callee unsets a guarded local", `outer() { local fd=` + x + `; f 7; }; ` + `f() { local fd; fd="$1"; [[ $fd =~ ^[0-9]+$ ]] || return; h; eval "exec $fd<&-"; }; h() { unset fd; }; outer`, "", spelling},
+		{"a library callee unsets a local", source + `outer() { local fd=` + x + `; f; }; f() { local fd=7; h; eval "exec $fd<&-"; }; outer`, "h() { unset fd; }\n", spelling},
+		{"a callee unsets a local, baring the inherited value", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { unset fd; }; f`, "", spelling},
+		{"a callee unsets a local by -v", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { unset -v fd; }; f`, "", spelling},
+		{"a callee unsets a local by an element", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { unset 'fd[0]'; }; f`, "", spelling},
+		{"a callee unsets an exported local", `export fd=` + x + `; f() { local fd=7; h; eval "exec $fd<&-"; }; h() { unset fd; }; f`, "", spelling},
+		{"a callee unsets a local by a name it lists", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { local name; for name in fd; do unset "${name}"; done; }; f`, "", spelling},
+		{"a callee unsets a local by a prefix it lists", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { local name; for name in "${!f@}"; do unset "${name}"; done; }; f`, "", spelling},
+		{"a callee unsets its own local", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { local fd; unset fd; }; f`, "", "wired"},
+		{"a callee unsets a function", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { unset -f fd; }; f`, "", "wired"},
+		{"a callee unsets names the eval does not read", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { local name; for name in CC "${!GO@}"; do unset "${name}"; done; }; f`, "", "wired"},
+		{"a library unsets BASH_ENV", source, "unset BASH_ENV ENV\n", "wired"},
+		{"a lane unsets BASH_ENV", `unset BASH_ENV ENV`, "", "wired"},
+		{"a local declared with a redirection apart", `f() { local fd=7 2> "${log}"; eval "exec $fd<&-"; }; f`, "", "wired"},
+		{"a callee unsets a program variable by a prefix it lists", `f() { local p=go; h; "$p" x; }; h() { local name; for name in "${!p@}"; do unset "${name}"; done; }; f`, "", program},
+		{"a library unsets PATH", source, "unset PATH\n", "assigns PATH"},
+		{"a callee unsets a local program variable", `f() { local p=go; h; "$p" 'bash() { :; }'; }; h() { unset p; }; f`, "", program},
+		{"a loop value quoted like a redirection", `fd=7; for fd in ` + x + `; do :; done; eval "exec $fd<&-"`, "", spelling},
+		{"a callee's loop over a local", `f() { local fd=7; h; eval "exec $fd<&-"; }; h() { for fd in ` + x + `; do :; done; }; f`, "", spelling},
+		{"a loop over a guarded local", `f() { local fd; fd="$1"; [[ $fd =~ ^[0-9]+$ ]] || return; for fd in ` + x + `; do :; done; eval "exec $fd<&-"; }; f 7`, "", spelling},
+		{"a select loop value quoted like a redirection", `fd=7; select fd in ` + x + `; do break; done <<<1; eval "exec $fd<&-"`, "", spelling},
+		{"a guard that runs a quoted return", `f() { local fd; fd="$1"; [[ $fd =~ ^[0-9]+$ ]] || "return"; eval "exec $fd<&-"; }; f 7`, "", spelling},
+		{"a guard that returns two statuses", `f() { local fd; fd="$1"; [[ $fd =~ ^[0-9]+$ ]] || return 1 2; eval "exec $fd<&-"; }; f 7`, "", spelling},
+		{"a guard that returns an expanded status", `f() { local fd; fd="$1"; [[ $fd =~ ^[0-9]+$ ]] || return $x; eval "exec $fd<&-"; }; f 7`, "", spelling},
+	}
+	for _, form := range []string{`"eval"`, `\eval`, `e""val`, `2>/dev/null eval`, `command eval`, `builtin eval`, `Y=1 eval`} {
+		lanes = append(lanes, struct{ name, lane, library, want string }{"an eval by the same text proven elsewhere, as " + form, `f() { local fd=7; eval "exec $fd<&-"; }; f; g() { local fd=` + x + `; ` + form + ` "exec $fd<&-"; }; g`, "", spelling})
+	}
+	for _, name := range strings.Fields("return continue break local unset set declare typeset read printf export readonly shift exit builtin command") {
+		lanes = append(lanes, struct{ name, lane, library, want string }{"a bare function named " + name, name + `() { :; }`, "", "defines a function named"})
+	}
 	for _, tc := range cases {
+		lanes = append(lanes, struct{ name, lane, library, want string }{tc.name, `source "${ROOT_DIR}/scripts/lib/l.sh"`, tc.library, tc.want})
+	}
+	for _, tc := range lanes {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			writeLaneTree(t, root, map[string]string{"scripts/validate-repo.sh": "#!/bin/bash\n" + laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n",
+			writeLaneTree(t, root, map[string]string{"scripts/validate-repo.sh": "#!/bin/bash\nset -euo pipefail\n" + laneRoot + "\n" + tc.lane + "\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n",
 				"scripts/lib/l.sh": tc.library, "scripts/ci/job-x.sh": "true\n", ".github/workflows/w.yml": "name: w\n"})
 			got, err := metadatautil.LaneScripts(root)
 			if tc.want == "wired" {

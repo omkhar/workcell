@@ -303,6 +303,14 @@ The proof lasts until a write to the name or the end of that body. An `eval`
 whose every expansion is such a number counts, and the reader reads each text
 it may run.
 
+The reader refuses a function named after a builtin or a reserved word
+(`internal/metadatautil/lane_reading.go`). Bash would call that function in
+place of the builtin. An `eval` counts only when it stands bare and every
+other `eval` of the same text counts too. An `unset` of a name counts as a
+write that may expose the copy a caller holds. That holds for a name it reads
+from a list as well. A `for` or `select` loop over the name counts as a write
+too.
+
 The name that `unset` or `-v` reads, and the name in `${!x}`, must be literal.
 It may also be a variable that holds only names from a literal list or a
 `${!PREFIX@}` listing.

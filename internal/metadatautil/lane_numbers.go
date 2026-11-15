@@ -75,7 +75,7 @@ func laneGuardExit(args []word) string {
 	if len(words) == 0 || len(words) > 2 || args[0].quoted {
 		return ""
 	}
-	if len(words) == 2 && (args[1].quoted || !laneDigits.MatchString(words[1])) {
+	if len(words) == 2 && !laneDigits.MatchString(words[1]) { // quoted digits are the same status
 		return ""
 	}
 	return words[0]
@@ -97,6 +97,20 @@ func laneEvalOperands(args []word) ([]word, bool) {
 		return nil, false
 	}
 	return operands, true
+}
+
+// laneEvalSites returns the operands, joined, of an eval a command runs by a
+// spelling laneEvalOperands does not read, as "eval", command eval, X=1 eval or
+// an eval with a redirection does, read both as the shell reader keeps its
+// words and with each redirection read from its syntax, or none.
+func laneEvalSites(args []word) []string {
+	var keys []string
+	for _, words := range [][]string{laneUnredirected(texts(args)), texts(laneUnredirectedWords(args))} {
+		if command := laneCommand(laneLeading(words)); firstOf(command) == "eval" && slices.ContainsFunc(command[1:], laneExpands) {
+			keys = append(keys, strings.Join(command[1:], "\x00"))
+		}
+	}
+	return keys
 }
 
 // laneEvalSpelling returns the texts an eval may run when each expansion of
