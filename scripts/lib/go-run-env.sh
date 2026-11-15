@@ -27,6 +27,261 @@ default_go_cache_root() {
   printf '%s\n' "${TMPDIR:-/tmp}/workcell-go-${user_suffix}"
 }
 
+# The cache lock (issue 812). workcell --gc removes a Workcell cache root, a
+# directory named workcell under a cache home, so a writer and gc share a
+# flock(2) lock on the file beside that root, ROOT.lock, which gc never
+# removes. A writer opens the lock file on a descriptor of its own shell and
+# takes a shared lock on it before it creates anything under the root. Every
+# child of the shell inherits the descriptor, and flock(2) locks the open
+# file, so the lock lasts until the shell and every child that keeps the
+# descriptor, such as a go build left running, exit. gc takes an exclusive
+# lock without waiting, skips a root it cannot lock, and holds the lock while
+# it removes the root. scripts/lib/workcell-cache-lock.pl checks the file and
+# takes the lock, since macOS has no flock(1). The memo below lists the locked
+# paths and their descriptors. It is per shell and never exported: a new
+# process takes its own lock, and a subshell uses its parent's. Sourcing this
+# file again in the same shell keeps the memo, so release_all still finds
+# every descriptor.
+if [[ "$(declare -p WORKCELL_CACHE_LOCK_FDS 2>/dev/null)" != "declare -- WORKCELL_CACHE_LOCK_FDS="* ]]; then
+  unset WORKCELL_CACHE_LOCKS_SEEN WORKCELL_CACHE_LOCK_FDS
+  WORKCELL_CACHE_LOCKS_SEEN=""
+  WORKCELL_CACHE_LOCK_FDS=""
+fi
+
+# workcell_cache_lock_normal PATH prints PATH as an absolute path without
+# empty or . components and without a trailing slash, so XDG_CACHE_HOME=~/.cache/
+# and ~/.cache//workcell match. A relative PATH is taken from the working
+# directory, where mkdir would create it.
+workcell_cache_lock_normal() {
+  local path="$1"
+
+  [[ "${path}" == /* ]] || path="${PWD%/}/${path}"
+  while [[ "${path}" == *//* ]]; do
+    path="${path%%//*}/${path#*//}"
+  done
+  while [[ "${path}" == */./* ]]; do
+    path="${path%%/./*}/${path#*/./}"
+  done
+  while [[ "${path}" == */. ]]; do
+    path="${path%/.}"
+  done
+  while [[ "${path}" == */ && "${path}" != / ]]; do
+    path="${path%/}"
+  done
+  printf '%s\n' "${path:-/}"
+}
+
+# workcell_cache_lock_physical PATH prints normal PATH with its longest
+# existing prefix resolved through symlinks. The rest is taken as written,
+# with .. dropping the component before it, since a missing directory is no
+# symlink. It fails when the existing prefix cannot be resolved.
+workcell_cache_lock_physical() {
+  local head="$1"
+  local rest=""
+  local part=""
+  local out=""
+
+  while [[ "${head}" != / && ! -d "${head}" ]]; do
+    rest="/${head##*/}${rest}"
+    head="${head%/*}"
+    head="${head:-/}"
+  done
+  out="$(CDPATH='' cd -P -- "${head}" 2>/dev/null && pwd -P)" || return 1
+  out="${out%/}"
+  while [[ -n "${rest}" ]]; do
+    rest="${rest#/}"
+    part="${rest%%/*}"
+    if [[ "${rest}" == */* ]]; then
+      rest="/${rest#*/}"
+    else
+      rest=""
+    fi
+    case "${part}" in
+      "" | .) ;;
+      ..) out="${out%/*}" ;;
+      *) out="${out}/${part}" ;;
+    esac
+  done
+  printf '%s\n' "${out:-/}"
+}
+
+# workcell_cache_lock_match PATH [HOME...] prints the lock file of the
+# Workcell cache root in normal PATH, the root's path plus .lock. A cache root
+# is a directory named workcell in a cache home: a directory named .cache or
+# Caches, or one of the HOMEs. It fails for a PATH in no such root.
+workcell_cache_lock_match() {
+  local dir="$1"
+  local parent=""
+  local home=""
+  shift
+
+  while [[ -n "${dir}" && "${dir}" != / ]]; do
+    parent="${dir%/*}"
+    if [[ "${dir##*/}" == workcell ]]; then
+      if [[ "${parent##*/}" == .cache || "${parent##*/}" == Caches ]]; then
+        printf '%s.lock\n' "${dir}"
+        return 0
+      fi
+      for home in "$@"; do
+        if [[ -n "${home}" && "${parent:-/}" == "${home}" ]]; then
+          printf '%s.lock\n' "${dir}"
+          return 0
+        fi
+      done
+    fi
+    dir="${parent}"
+  done
+  return 1
+}
+
+# workcell_cache_lock_path DIR prints the lock file of the Workcell cache root
+# that holds DIR. These are the roots that workcell --gc removes, however the
+# home is spelled: a spelling with .. or through a symlinked alias of a cache
+# home is compared by its resolved path, since perl and gc meet the same lock
+# file through any spelling. It prints nothing for a DIR in no such root, and
+# returns 2 when it cannot resolve DIR to tell.
+workcell_cache_lock_path() {
+  local dir=""
+  local xdg=""
+  local physical=""
+  local home=""
+  local -a homes=()
+
+  dir="$(workcell_cache_lock_normal "$1")"
+  if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    xdg="$(workcell_cache_lock_normal "${XDG_CACHE_HOME}")"
+  fi
+  if [[ "${dir}/" != */../* ]] && workcell_cache_lock_match "${dir}" "${xdg}"; then
+    return 0
+  fi
+  physical="$(workcell_cache_lock_physical "${dir}")" || return 2
+  for home in "${xdg}" "${HOME:+${HOME%/}/.cache}" "${HOME:+${HOME%/}/Library/Caches}"; do
+    [[ -n "${home}" && -d "${home}" ]] || continue
+    # A home that cannot be resolved cannot hold DIR's root, so skip it.
+    home="$(workcell_cache_lock_physical "$(workcell_cache_lock_normal "${home}")")" || continue
+    homes+=("${home}")
+  done
+  workcell_cache_lock_match "${physical}" "${xdg}" ${homes[@]+"${homes[@]}"} || true
+}
+
+# workcell_cache_lock_available succeeds when this host can run the lock
+# helper. Without /usr/bin/perl or the helper, as in a partial copy of this
+# library, no run can lock, so that is a lasting refusal (69).
+workcell_cache_lock_available() {
+  [[ -x /usr/bin/perl && -r "${GO_RUN_ENV_REPO_ROOT}/scripts/lib/workcell-cache-lock.pl" ]]
+}
+
+# workcell_cache_lock_perl runs the lock helper with a clean environment, so
+# no PERL5OPT or PERL5LIB in the caller's environment loads code into it.
+workcell_cache_lock_perl() {
+  /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    /usr/bin/perl "${GO_RUN_ENV_REPO_ROOT}/scripts/lib/workcell-cache-lock.pl" "$@"
+}
+
+# workcell_cache_lock_take_shared LOCK opens LOCK on the first free
+# descriptor from 20 up, which no Workcell script uses, and takes the shared
+# lock on it. It returns the helper's status, such as 73 when the lock
+# directory cannot be made, 69 without the helper, and 71 when no
+# descriptor opens.
+workcell_cache_lock_take_shared() {
+  local lock="$1"
+  local target=""
+  local fd=20
+  local rc=0
+
+  workcell_cache_lock_available || return 69
+  # prepare creates a missing cache home owner-only, since the helper refuses
+  # one that other users can change, and a root run gives it to the user.
+  target="$(workcell_cache_lock_perl prepare "${lock}")" || return "$?"
+  [[ "${target}" == /* && "${target}" != *$'\n'* ]] || return 64
+  while [[ -e "/dev/fd/${fd}" ]]; do
+    fd=$((fd + 1))
+    [[ "${fd}" -lt 100 ]] || return 71
+  done
+  # Bash 3.2, the macOS /bin/bash, has no {fd} redirection, so name it.
+  eval "exec ${fd}<\"\${target}\"" || return 71
+  workcell_cache_lock_perl lock-shared "${fd}" "${target}" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    eval "exec ${fd}<&-"
+    return "${rc}"
+  fi
+  WORKCELL_CACHE_LOCK_FDS+="${fd} "
+}
+
+# workcell_cache_lock_shared DIR takes a shared lock on the Workcell cache
+# root that holds DIR for this shell and the children it starts. A lasting
+# refusal, 69 (no flock(2) here) or 77 (an unsafe lock file), lets the run go
+# on unlocked after one warning. That is safe: gc cannot lock that root
+# either, so it keeps it. Any other failure, such as a failed fork, EMFILE or
+# a full disk, is tried three times and then returns 1, since gc could lock
+# the root later and remove it while this run writes it.
+# A DIR that cannot be resolved to tell whether it is in a cache root also
+# goes on after a warning. The memo keeps each DIR and lock to one try.
+workcell_cache_lock_shared() {
+  local lock=""
+  local rc=0
+  local tries=0
+
+  case $'\n'"${WORKCELL_CACHE_LOCKS_SEEN}" in
+    *$'\n'"dir:$1"$'\n'*) return 0 ;;
+  esac
+  lock="$(workcell_cache_lock_path "$1")" || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "Workcell warning: cannot resolve $1 to find its Workcell cache root; it is in use without the cache lock" >&2
+    WORKCELL_CACHE_LOCKS_SEEN+="dir:$1"$'\n'
+    return 0
+  fi
+  if [[ -z "${lock}" ]]; then
+    WORKCELL_CACHE_LOCKS_SEEN+="dir:$1"$'\n'
+    return 0
+  fi
+  case $'\n'"${WORKCELL_CACHE_LOCKS_SEEN}" in
+    *$'\n'"${lock}"$'\n'*) return 0 ;;
+  esac
+  while :; do
+    rc=0
+    workcell_cache_lock_take_shared "${lock}" || rc=$?
+    case "${rc}" in
+      0 | 69 | 77) break ;;
+    esac
+    tries=$((tries + 1))
+    if [[ "${tries}" -ge 3 ]]; then
+      echo "Workcell error: cannot take the cache lock on ${lock%.lock} (status ${rc}); stopping so workcell --gc cannot remove it in use" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "Workcell warning: ${lock%.lock} is in use without the cache lock; workcell --gc keeps it" >&2
+  fi
+  WORKCELL_CACHE_LOCKS_SEEN+="${lock}"$'\n'"dir:$1"$'\n'
+}
+
+# workcell_cache_lock_release_all closes this shell's lock descriptors, so
+# workcell --gc can lock the roots that only it was using; a child that still
+# runs keeps its copy and its lock. In a subshell it closes only that
+# subshell's copies: run it there before starting a helper that outlives the
+# run, such as a Colima VM, so the helper never holds the lock.
+workcell_cache_lock_release_all() {
+  local fd=""
+
+  for fd in ${WORKCELL_CACHE_LOCK_FDS}; do
+    [[ "${fd}" =~ ^[0-9]+$ ]] || continue
+    eval "exec ${fd}<&-"
+  done
+  WORKCELL_CACHE_LOCKS_SEEN=""
+  WORKCELL_CACHE_LOCK_FDS=""
+}
+
+# workcell_cache_lock_run_exclusive LOCK COMMAND [ARG...] runs COMMAND under
+# an exclusive lock on LOCK. It returns 75 at once when a writer holds the
+# lock or the lock file changed, 64, 69, 71, 73 or 77 when the lock cannot be
+# taken safely, and COMMAND's status otherwise.
+workcell_cache_lock_run_exclusive() {
+  workcell_cache_lock_available || return 69
+  workcell_cache_lock_perl run-exclusive "$@"
+}
+
 ensure_go_run_env() {
   local cache_root
   cache_root="$(default_go_cache_root)"
