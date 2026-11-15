@@ -328,7 +328,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.316
+ARG CLAUDE_VERSION=2.1.319
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -340,7 +340,7 @@ ARG CODEX_VERSION=0.163.0
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
 # state.
-ARG COPILOT_VERSION=1.0.105
+ARG COPILOT_VERSION=1.0.106
 ARG CODEX_RELEASE_URL=
 ARG CODEX_CODE_MODE_HOST_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
@@ -417,11 +417,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="55cdb8e162d190432696ea54010e0fca2e18d06fa7a7127fd563b9ffd4f22624"; \
+      CLAUDE_SHA256="a7e687fd1cb054d651c7588223de3786c99d4c682365e3c3ae1e59ce7f3a591f"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="fd13c70000fec3f2116dfbcbb6121210b4a29328bf0e46210a59dd594a67d824"; \
+      CLAUDE_SHA256="dabafec82ca1319fa43d8be36a10fc61b1d11821cb98ad5df04ad95e199b8eed"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -521,11 +521,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="e7b488cc04ac3e2ed800e1bf0aace33ada42dcf167529b3d2f48a61e1535a847"; \
+      COPILOT_SHA256="1591b72a0e01c286ab3e3aba98f6a204b6895cf6f994d14e3769831c8d37e72c"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="aba1f06f27bc0447656647f76e0a4cf58b4b2a341c75ff04a750982b6aeb6bd2"; \
+      COPILOT_SHA256="bb2ac6a50c2d7ceffee3b489f278fb9ba4fd39d4678dd75b5b021d4feedcc3ef"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \

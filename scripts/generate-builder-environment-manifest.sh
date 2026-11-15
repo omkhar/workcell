@@ -35,6 +35,22 @@ COSIGN_VERSION_TARGET="${WORKCELL_COSIGN_VERSION:-}"
 QEMU_IMAGE="${WORKCELL_QEMU_IMAGE:-}"
 SYFT_VERSION_TARGET="${WORKCELL_SYFT_VERSION:-}"
 
+# A set image must name its reviewed repository with no registry host or other
+# prefix, in the format policy/tool-pins.toml requires. The QEMU image runs
+# privileged below. The bracket lists are spelled out so the match does not
+# depend on the locale.
+readonly IMAGE_TAG_DIGEST_RE=':[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_][ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-]*@sha256:[0123456789abcdef]{64}$'
+readonly BUILDKIT_IMAGE_RE="^moby/buildkit${IMAGE_TAG_DIGEST_RE}"
+readonly QEMU_IMAGE_RE="^tonistiigi/binfmt${IMAGE_TAG_DIGEST_RE}"
+if [[ -n "${BUILDKIT_IMAGE}" && ! "${BUILDKIT_IMAGE}" =~ ${BUILDKIT_IMAGE_RE} ]]; then
+  echo "WORKCELL_BUILDKIT_IMAGE must be moby/buildkit:<tag>@sha256:<digest>, found: ${BUILDKIT_IMAGE}" >&2
+  exit 1
+fi
+if [[ -n "${QEMU_IMAGE}" && ! "${QEMU_IMAGE}" =~ ${QEMU_IMAGE_RE} ]]; then
+  echo "WORKCELL_QEMU_IMAGE must be tonistiigi/binfmt:<tag>@sha256:<digest>, found: ${QEMU_IMAGE}" >&2
+  exit 1
+fi
+
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "Missing required tool: $1" >&2
