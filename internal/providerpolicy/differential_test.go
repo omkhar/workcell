@@ -450,13 +450,52 @@ func codexLeakWord(args []string) bool {
 	return false
 }
 
+// goStricter reports whether a Go refusal that the shell policy lacks is one
+// of the reviewed tightenings of the port. A separate Codex profile value
+// that starts with "=" (`--profile =strict`, `--profile==strict`) is the
+// literal profile name, which the shell stripped to the managed profile. A
+// Gemini or Copilot long option name with a control or non-ASCII byte is
+// refused, because bash under a UTF-8 locale folded U+0130 and U+212A to
+// ASCII letters. The refusal must name the word that it is about.
+// goStricter returns the index of that word. The shell may refuse too: then
+// it refused a later word, and compareCorpus checks that the shell allows
+// every word before the tightened one.
+func goStricter(c diffCase, goR diffResult) (int, bool) {
+	if goR.code != 2 {
+		return 0, false
+	}
+	for i, a := range c.args {
+		switch c.id {
+		case "codex":
+			equalValue := strings.HasPrefix(a, "--profile==") ||
+				((a == "-p" || a == "--profile") && i+1 < len(c.args) && strings.HasPrefix(c.args[i+1], "="))
+			if equalValue && goR.stderr == "Workcell blocked unsafe Codex override: --profile\n" {
+				return i, true
+			}
+		case "gemini", "copilot":
+			if !strings.HasPrefix(a, "--") || !hasUnsafeByte(beforeEqual(a)) {
+				continue
+			}
+			prefix := "Workcell blocked unsafe Gemini override: "
+			if c.id == "copilot" {
+				prefix = "Workcell blocked unsafe Copilot override: "
+			}
+			if goR.stderr == prefix+a+"\n" || goR.stderr == prefix+beforeEqual(a)+"\n" {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // compareCorpus runs cases through both policies and fails on any result
-// that differs, except the shell status leak. It returns the number of shell
-// status leaks.
+// that differs, except the shell status leak and the reviewed tightenings.
+// It returns the number of shell status leaks.
 func compareCorpus(t *testing.T, cases []diffCase, errexit, pid1 bool) int {
 	t.Helper()
 	shell := runShell(t, cases, errexit, pid1)
-	denied, leaks := 0, 0
+	denied, leaks, stricter := 0, 0, 0
+	var prefixes []diffCase
 	for i, c := range cases {
 		got := c.goResult()
 		switch {
@@ -467,10 +506,29 @@ func compareCorpus(t *testing.T, cases []diffCase, errexit, pid1 bool) int {
 		case shellStatusLeak(c, got, shell[i], errexit):
 			leaks++
 		default:
-			t.Errorf("%s: go %+v, shell %+v", c, got, shell[i])
+			at, ok := goStricter(c, got)
+			if !ok {
+				t.Errorf("%s: go %+v, shell %+v", c, got, shell[i])
+				break
+			}
+			stricter++
+			if shell[i].code == 2 {
+				before := c
+				before.args = c.args[:at]
+				prefixes = append(prefixes, before)
+			}
 		}
 	}
-	t.Logf("%d cases: %d refused by both, %d shell status leaks", len(cases), denied, leaks)
+	// Both refuse, the Go policy at a tightened word and the shell at a
+	// later one. The shell must allow every word before the tightened word.
+	if len(prefixes) > 0 {
+		for k, r := range runShell(t, prefixes, errexit, pid1) {
+			if r.code == 2 {
+				t.Errorf("%s: the shell refuses a word before the Go tightening: %+v", prefixes[k], r)
+			}
+		}
+	}
+	t.Logf("%d cases: %d refused by both, %d shell status leaks, %d Go tightenings", len(cases), denied, leaks, stricter)
 	if denied == 0 || denied == len(cases) {
 		t.Fatalf("degenerate corpus: %d of %d refused", denied, len(cases))
 	}
