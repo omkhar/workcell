@@ -71,12 +71,6 @@ defaults:
   run:
     shell: bash --noprofile --norc -euo pipefail {0}
 
-env:
-  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
-  # Pinned identically to ci.yml and release.yml so all three workflows
-  # share validator-image layer caches deterministically.
-  WORKCELL_BUILDX_VERSION: v0.38.1
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -94,14 +88,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - id: pins
+        name: Load tool pins
+        run: ./scripts/ci/load-tool-pins.sh
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: true
-          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
-          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+          driver-opts: image=${{ steps.pins.outputs.buildkit }}
+          version: ${{ steps.pins.outputs.buildx }}
 
       - name: Check docs spelling and manpage
         env:
+          WORKCELL_BUILDKIT_IMAGE: ${{ steps.pins.outputs.buildkit }}
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
           # Shares the validator-main / validator-pr-* cache scopes with

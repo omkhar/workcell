@@ -42,7 +42,7 @@ func (check *pinnedInputsCheck) validateCosignReleaseBindings() error {
 		{check.pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"},
 		{check.upstreamRefreshWorkflow, ".github/workflows/upstream-refresh.yml"},
 	} {
-		if !strings.Contains(workflow.text, "cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}") {
+		if !strings.Contains(workflow.text, "cosign-release: ${{ steps.pins.outputs.cosign }}") {
 			return fmt.Errorf("%s must pin the installed cosign binary release", workflow.path)
 		}
 	}
@@ -64,11 +64,11 @@ func (check *pinnedInputsCheck) validateCosignRefsAndBuildxSetup() error {
 	}
 	return requireTextRequirements(
 		textRequirement{
-			text: check.ciWorkflow, needle: "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}",
+			text: check.ciWorkflow, needle: "driver-opts: image=${{ steps.pins.outputs.buildkit }}",
 			err: errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action"),
 		},
 		textRequirement{
-			text: check.releaseWorkflow, needle: "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}",
+			text: check.releaseWorkflow, needle: "driver-opts: image=${{ steps.pins.outputs.buildkit }}",
 			err: errors.New(".github/workflows/release.yml must pin the BuildKit daemon image used by setup-buildx-action"),
 		},
 		textRequirement{
@@ -167,17 +167,9 @@ func (check *pinnedInputsCheck) validateReleaseBuildAndSyft() error {
 	); err != nil {
 		return err
 	}
-	value, err := requireYAMLKey(check.releaseWorkflow, "WORKCELL_SYFT_VERSION", ".github/workflows/release.yml")
-	if err != nil {
-		return err
-	}
-	if !pinnedReleaseTagPattern.MatchString(value) {
-		return fmt.Errorf("WORKCELL_SYFT_VERSION must be an exact pinned release, found %q", value)
-	}
-	check.toolPins.syft = value
 	return requireTextRequirements(
 		textRequirement{
-			text: check.releaseWorkflow, needle: "syft-version: ${{ env.WORKCELL_SYFT_VERSION }}",
+			text: check.releaseWorkflow, needle: "syft-version: ${{ steps.pins.outputs.syft }}",
 			err: errors.New(".github/workflows/release.yml must pin the Syft version used for release SBOM generation"),
 		},
 		textRequirement{
@@ -404,7 +396,12 @@ func (check *pinnedInputsCheck) validateReleaseArtifactFlows() error {
 		},
 		func() error { return ValidateReleaseWorkflowGitHubAttestationFlow(check.releaseWorkflow) },
 		func() error { return ValidateReleaseWorkflowPublicationGate(check.releaseWorkflow) },
-		func() error { return ValidateReleaseWorkflowAuthoritySplit(check.releaseWorkflow) },
+		func() error {
+			return ValidateReleaseWorkflowAuthoritySplit(check.releaseWorkflow, ReleaseSignerPins{
+				OrasVersion:          check.pins.OrasVersion,
+				OrasLinuxAMD64SHA256: check.pins.OrasLinuxAMD64SHA256,
+			})
+		},
 	)
 }
 
