@@ -608,6 +608,7 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"library heredoc whose delimiter this reader cannot end", source + gate, map[string]string{library: ": <<$'\\x45OF'\nx\nEOF\nbash() { :; }\n"}, "heredoc"},
 		{"eval heredoc whose delimiter this reader cannot end", "eval ': <<\"EO\\\nF\"\nx\nEOF\nbash() { :; }'\n" + gate, nil, "more text than this reader parses"},
 		{"lane heredoc whose delimiter this reader cannot end", ": <<$'\\x45OF'\nx\nEOF\nbash() { :; }\n" + gate, nil, "heredoc"},
+		{"lane command continued past the lines this reader joins", "echo " + strings.Repeat("a\\\n", 65) + "b\n" + gate, nil, "continues a command over more than 64 lines, past what this reader joins"},
 		{"library sets PATH", source + gate, map[string]string{library: "PATH=/tmp/x:$PATH\n"}, "assigns PATH"},
 		{"library passes PATH to a program env runs by its path", source + gate, map[string]string{library: "lock() {\n  /usr/bin/env -i PATH=/usr/bin:/bin \\\n    /usr/bin/perl lock.pl \"$@\"\n}\n"}, "wired"},
 		{"library passes PATH to a program env looks up", source + gate, map[string]string{library: "/usr/bin/env -i PATH=/tmp/x perl lock.pl\n"}, "assigns PATH"},

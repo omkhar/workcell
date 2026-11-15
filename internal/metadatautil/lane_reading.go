@@ -287,8 +287,8 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 	}
 	for at, text := range bodies {
 		where := laneWhere(at)
-		if _, ended := rewriteHeredocsEnding(text); !ended {
-			return false, fmt.Errorf("lane wiring is unreadable: a %s opens a heredoc whose end this reader cannot find, so it cannot read what runs after it", where)
+		if _, unended := rewriteHeredocsEnding(text); unended != "" {
+			return false, fmt.Errorf("lane wiring is unreadable: a %s %s, so it cannot read what runs after it", where, unended)
 		}
 		scanned, children, complete, unended := laneScanCases(text)
 		if !complete {
@@ -1059,10 +1059,10 @@ func laneScanCases(text string) (commands []command, children []string, complete
 	budget := 16*len(text) + 1<<16
 	var scan func(text string, depth int) bool
 	scan = func(text string, depth int) bool {
-		rewritten, ended := rewriteHeredocsEnding(text)
+		rewritten, heredoc := rewriteHeredocsEnding(text)
 		flat, cased := flattenGroupedCases(rewritten, true)
 		unended = unended || cased
-		return depth <= 8 && ended && shellLines(flat, &budget, func(each command) bool {
+		return depth <= 8 && heredoc == "" && shellLines(flat, &budget, func(each command) bool {
 			each.nested = depth > 0
 			commands = append(commands, each)
 			inner, child, found := laneInnerText(texts(each.args))

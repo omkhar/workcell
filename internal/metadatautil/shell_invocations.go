@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"encoding/hex"
+	"fmt"
 	"maps"
 	"path"
 	"regexp"
@@ -712,11 +713,12 @@ func heredocsAsHereStrings(script string) string {
 	return text
 }
 
-// rewriteHeredocsEnding is heredocsAsHereStrings, and whether every body ends at a
-// line this reader matches. A body that does not, as one whose delimiter is
-// unresolved, runs to the end of script, so whatever bash runs after its
-// real end is missing from the text.
-func rewriteHeredocsEnding(script string) (string, bool) {
+// rewriteHeredocsEnding is heredocsAsHereStrings, and why a body does not
+// end at a line this reader matches, or "" when every body does. A body that
+// does not, as one whose delimiter is unresolved or one the reader stops
+// joining lines to open, runs to the end of script, so whatever bash runs
+// after its real end is missing from the text.
+func rewriteHeredocsEnding(script string) (string, string) {
 	var out, body strings.Builder
 	var opened, pending []heredoc
 	var bodies []string
@@ -725,6 +727,7 @@ func rewriteHeredocsEnding(script string) (string, bool) {
 	var opener string // the opening line a backslash-newline continues, without it
 	var lines string  // the physical lines of that opening line, as written
 	var joins int     // the physical lines joined into that opening line so far
+	unended := "opens a heredoc whose end this reader cannot find"
 	var prefix string // the end of a quoted span the opening line starts with
 	var openQuote byte
 	var stack []byte
@@ -794,6 +797,7 @@ func rewriteHeredocsEnding(script string) (string, bool) {
 			// the script as a body it cannot end, as for a delimiter it
 			// cannot resolve.
 			found = append(found, heredoc{unresolved: true, start: len(text), end: len(text)})
+			unended = fmt.Sprintf("continues a command over more than %d lines, past what this reader joins", openerJoinLimit)
 		}
 		joins = 0
 		whole, quoted := lines, prefix
@@ -811,12 +815,13 @@ func rewriteHeredocsEnding(script string) (string, bool) {
 		}
 		pending, held = opened, line
 	}
-	ended := len(pending) == 0
-	if !ended {
+	if len(pending) == 0 {
+		unended = ""
+	} else {
 		release()
 	}
 	out.WriteString(lines)
-	return out.String(), ended
+	return out.String(), unended
 }
 
 // heredocExpanded is the here-string of a body bash expands, as it expands a
