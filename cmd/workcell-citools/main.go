@@ -90,6 +90,7 @@ func subcommands() []subcommand {
 		{"list-hosted-control-environments", "POLICY_PATH", 1, 1, cmdListHostedControlEnvironments},
 		{"verify-github-hosted-controls", "TMP_DIR REPO POLICY_PATH", 3, 3, cmdVerifyGitHubHostedControls},
 		{"upstream-refresh-scope-guard", "PATCH_FILE", 1, 1, cmdUpstreamRefreshScopeGuard},
+		{"upstream-refresh-toolchain-scope-guard", "PATCH_FILE", 1, 1, cmdUpstreamRefreshToolchainScopeGuard},
 		{"extract-dockerfile-arg", "DOCKERFILE_PATH ARG_NAME", 2, 2, cmdExtractDockerfileArg},
 		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
@@ -390,6 +391,18 @@ func cmdUpstreamRefreshScopeGuard(args []string) error {
 		return err
 	}
 	fmt.Println("scope-guard: patch is inside the agent-bump surface")
+	return nil
+}
+
+// cmdUpstreamRefreshToolchainScopeGuard checks the toolchain candidate patch
+// against HEAD of the working directory and prints only the verdict on stdout.
+func cmdUpstreamRefreshToolchainScopeGuard(args []string) error {
+	verdict, err := metadatautil.CheckUpstreamRefreshToolchainScope(".", args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "toolchain scope guard: tree %s on base %s is inside the toolchain surface\n", verdict.Tree, verdict.Base)
+	fmt.Println(verdict.String())
 	return nil
 }
 

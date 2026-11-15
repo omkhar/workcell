@@ -42,11 +42,15 @@ internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: re
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
 internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ShellInvocations	271020c4,309ab859,d01d658c	the comparisons find the entry guard's fixed assignment line and any use of workcell_entry_root other than its plain expansion, which the reader keeps no words for
+internal/metadatautil	TestCheckPinnedInputsRejectsBaseImageOnAnotherRepository	9b6d6e87	test fixture: the anchored pattern locates the one whole ARG line that each case rewrites
 internal/metadatautil	claudeMentionPin	4a5debeb	test helper: finds the one pinned action reference so each test rewrites the real pin
 internal/metadatautil	TestClaudeMentionWorkflowRejectsChanges	f0b79fb3	test fixture: locates the text each negative row rewrites
 internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,7c7b6223	test reads decoded YAML fields: the gate expression and the claude_args value
 internal/metadatautil	checkClaudeMentionReach	bf0bcc67,bf0bcc67,f2e98a0c	finds expression spans and the action, secret or environment names in decoded YAML scalars; a match only rejects or adds checks
 internal/metadatautil	checkSecretsUse	6c1fd84d,b75c08fe	reads the secrets context in a decoded expression; anything but one literal secret name fails
+internal/metadatautil	compareToolchainVersions	94d21a70,a6fb3cfe	reads the digit runs of a pin value that matchToolchainPin already matched against an anchored format
+internal/metadatautil	countToolchainPrefix	b69b9526	counts whole lines of a git blob that start with a pin key, so a second assignment of the key fails the toolchain guard
+internal/metadatautil	matchToolchainPin	2e58db5e	matches the value of one whole git blob line, after its exact key prefix and before its exact suffix, against a format anchored at both ends
 internal/metadatautil	normalizeClaudeMentionNode	04f5fe0b,ac3399b8	picks the action reference in the decoded uses value; the digest covers the rest
 internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherRepository	30d03cdc	a test builds the expected error text from the repository it mutates in the fixture policy file
 internal/metadatautil	TestCheckPinnedInputsRejectsWorkflowToolPinBypass	a687f1b3	a test precondition on the fixture text that the test itself rewrites
@@ -113,6 +117,12 @@ internal/metadatautil	afterDeclaration	8e5f5463	unreviewed debt: review the subj
 internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewrite the goose ARG pins, and the result must read back through gooseDockerfilePin as the target pin
 internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
 internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
+internal/metadatautil	toolchainQEMUImageRE	27499df4	builds an anchored pin value format from fixed constants
+internal/metadatautil	toolchainRustImageRE	93c09f8c	builds an anchored pin value format from fixed constants
+internal/metadatautil	toolchainScopeGit.blob	bc48f987	checks an object id that git diff-tree printed against an anchored hex format before git reads it
+internal/metadatautil	toolchainScopeGit.run	96c43cf3	drops inherited GIT_ variables by name from the process environment, not from file content
+internal/metadatautil	toolchainSemverRE	d1fb2285	builds an anchored pin value format from fixed constants
+internal/metadatautil	toolchainTagRE	21ea3602	builds an anchored pin value format from fixed constants
 internal/metadatautil	validateClaudeMentionPlacement	77b0728d	a case-insensitive deny: any mention of the action, secret or environment outside claude-mention.yml fails, so over-matching only rejects
 internal/metadatautil	toolPinImagePattern	34674b86,bcbe3cfe	builds the anchored per-repository image format from a fixed repository constant
 internal/metadatautil	toolPinRefs	42addc7b,b4bf0af4	the patterns read pins step references in a decoded workflow YAML scalar, and a loose pattern that sees more references than the strict one fails the step
@@ -246,7 +256,7 @@ internal/metadatautil	requireEvasions	0ed6284d	unreviewed debt in a test: review
 internal/metadatautil	requireGoDirective	231f780e,a91335ef,d72b74d4	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireNoRegistryBootstrapMCP	52bf575b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireOrderedText	ba2afe75	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	requirePinnedBaseImage	171e479c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requirePinnedBaseImage	f08eedae	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireRegex	26bdecfe,48e55ec8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireTOMLString	13dcfc02,30abd784,31804416	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireTextCount	e9ad5856	unreviewed debt: review the subject, then port or justify
@@ -477,6 +487,7 @@ internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePubl
 internal/testkit	TestUpdateUpstreamPinsCheckReusesRecordedDebianPlan	565a5a3f,e7267aca,e7267aca,f1211436	the search checks the output of an updater fixture run that reuses a recorded plan, not script text
 internal/testkit	TestUpdateUpstreamPinsDebianArchiveOutage	15d9b107,3d7d78ab,e59f2b53,edf34290	the search checks the output and the resolution log of an updater fixture run, not script text
 internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateUpstreamPinsRefusesImageOutsideItsRepository	510ec2d4	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestUpdateUpstreamPinsToolPinBumpChangesNoWorkflow	8ac3433b	a test assertion on the summary output that the updater under test produces
 internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	edeb6dc4	unreviewed debt in a test: review the subject, then port or justify
@@ -485,6 +496,7 @@ internal/testkit	TestUpstreamRefreshOverlapStep	30ee2c4a,ef7903e0	unreviewed deb
 internal/testkit	TestUpstreamRefreshPublishLocalChecks	4fbe5eab,bdc0220f,bdc0220f,fd7decae	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshScopeGuard	5d2dcbca	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,356845cb,4561edc6,809ad8df,84d882d1,b12cdf05,b8f34d1a,b8f34d1a,f1d02810,fbdcbbb8	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshToolchainScopeGuardScript	d48af49d,d6ea62d5,edd8763b	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestValidateRepoExecutesPublicContractHistoryGate	4e0b3a69	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoRejectsStaleMarkdownlintInstall	bef5cf72,e6974c0f	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoUsesLockedMarkdownlint	06f3db68,56939475,cccd41de	unreviewed debt in a test: review the subject, then port or justify
