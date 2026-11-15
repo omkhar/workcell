@@ -67,6 +67,8 @@ func TestCodexPolicy(t *testing.T) {
 
 		{[]string{"--yolo"}, codexUnsafe + "--yolo"},
 		{[]string{"--yolo=true"}, codexUnsafe + "--yolo=true"},
+		{[]string{"--trust"}, codexUnsafe + "--trust"},
+		{[]string{"exec", "--trust=1", "hi"}, codexUnsafe + "--trust=1"},
 		{[]string{"--dangerously-bypass-approvals-and-sandbox"}, codexUnsafe + "--dangerously-bypass-approvals-and-sandbox"},
 		{[]string{"--dangerously-bypass-hook-trust=1"}, codexUnsafe + "--dangerously-bypass-hook-trust=1"},
 		{[]string{"--profile", "breakglass", "--version"}, codexUnsafe + "--profile"},
@@ -102,6 +104,8 @@ func TestCodexPolicy(t *testing.T) {
 		{[]string{"-m", "--", "plugin"}, codexSub + "plugin"},
 		{[]string{"tcp-tunnel"}, codexSub + "tcp-tunnel"},
 		{[]string{"mcp-server"}, codexSub + "mcp-server"},
+		{[]string{"git-credential"}, codexSub + "git-credential"},
+		{[]string{"migrate-nfs-db"}, codexSub + "migrate-nfs-db"},
 		{[]string{"debug", "app-server"}, codexSub + "debug"},
 		{[]string{"app"}, "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: app"},
 		{[]string{"features", "enable", "x"}, codexSub + "features enable"},

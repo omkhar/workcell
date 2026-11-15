@@ -37,11 +37,6 @@ import (
 //     success(), which would run it after a failed load with empty pins;
 //   - a job with a pins step runs it under the workflow's reviewed bash
 //     default: no job defaults or container, and no other workflow shell.
-//
-// TEMPORARY bridge: until the workflows move to the pins step they hold their
-// pins inline, so this contract applies once any workflow runs or names a pins
-// step (toolPinBridgeInline). The cleanup change that follows the workflow
-// switch (PR 4 of the tool-pin split) removes the bridge.
 
 const (
 	toolPinsStepID    = "pins"
@@ -178,9 +173,6 @@ func (check *pinnedInputsCheck) validateWorkflowToolPinBindings() error {
 	if len(paths) == 0 {
 		return fmt.Errorf("no workflow files found in %s", check.cfg.WorkflowsDir)
 	}
-	if inline, err := check.toolPinBridgeInline(); err != nil || inline {
-		return err
-	}
 	for _, workflowPath := range paths {
 		text, err := readText(workflowPath)
 		if err != nil {
@@ -192,44 +184,6 @@ func (check *pinnedInputsCheck) validateWorkflowToolPinBindings() error {
 		}
 	}
 	return nil
-}
-
-// toolPinBridgeStepPattern finds a step id of pins in raw workflow text.
-var toolPinBridgeStepPattern = regexp.MustCompile(`(?mi)^\s*(-\s+)?id:\s*["']?pins["']?\s*$`)
-
-// toolPinBridgeInline reports whether the workflows still hold their tool pins
-// inline: no workflow runs the loader, has a pins step, or names one.
-//
-// TEMPORARY bridge for the move of the tool pins out of the workflows. While
-// it holds, the inline-value checks run exactly as before and the binding
-// checks wait. Once any workflow uses the pins step, every workflow gets the
-// binding checks, which reject any inline pin left in another workflow, and
-// the inline-value checks stop. It reads raw text, so a comment that names the
-// pins step also ends the bridge, which only turns stricter checks on. The
-// cleanup change (PR 4 of the tool-pin split) removes it.
-func (check *pinnedInputsCheck) toolPinBridgeInline() (bool, error) {
-	for _, workflowPath := range workflowYAMLFiles(check.cfg.WorkflowsDir) {
-		text, err := readText(workflowPath)
-		if err != nil {
-			return false, err
-		}
-		if strings.Contains(text, toolPinsLoaderRel) || toolPinAnyRefPattern.MatchString(text) || toolPinBridgeStepPattern.MatchString(text) {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-// inlineToolPinCheck runs one of the inline-value checks only while the bridge
-// holds (see toolPinBridgeInline). TEMPORARY: PR 4 of the tool-pin split
-// removes it with those checks.
-func (check *pinnedInputsCheck) inlineToolPinCheck(validate func() error) func() error {
-	return func() error {
-		if inline, err := check.toolPinBridgeInline(); err != nil || !inline {
-			return err
-		}
-		return validate()
-	}
 }
 
 // validateWorkflowToolPinBindingsText checks one workflow against the tool-pin
