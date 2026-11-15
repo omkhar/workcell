@@ -13,27 +13,6 @@ import (
 )
 
 type workflowText struct{ text, path string }
-type toolPinCheck struct{ name, actual, expected string }
-
-func (check *pinnedInputsCheck) validateCosignVersions() error {
-	var ciValue, releaseValue, hygieneValue, upstreamValue string
-	if err := loadPinnedStrings(requireYAMLKey, []pinnedStringInput{
-		{&ciValue, check.ciWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/ci.yml"},
-		{&releaseValue, check.releaseWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/release.yml"},
-		{&hygieneValue, check.pinHygieneWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/pin-hygiene.yml"},
-		{&upstreamValue, check.upstreamRefreshWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/upstream-refresh.yml"},
-	}); err != nil {
-		return err
-	}
-	if len(map[string]struct{}{ciValue: {}, releaseValue: {}, hygieneValue: {}, upstreamValue: {}}) != 1 {
-		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
-	}
-	if !pinnedReleaseTagPattern.MatchString(ciValue) {
-		return fmt.Errorf("WORKCELL_COSIGN_VERSION must be an exact pinned release, found %q", ciValue)
-	}
-	check.toolPins.cosign = ciValue
-	return nil
-}
 
 func (check *pinnedInputsCheck) validateCosignReleaseBindings() error {
 	for _, workflow := range []workflowText{
@@ -183,72 +162,6 @@ func (check *pinnedInputsCheck) loadSecurityWorkflow() error {
 	return loadPinnedTextInputs([]pinnedTextInput{
 		{filepath.Join(check.cfg.WorkflowsDir, "security.yml"), &check.securityWorkflow},
 	})
-}
-
-func (check *pinnedInputsCheck) validateActionlintPins() error {
-	var securityVersion, releaseVersion, securitySHA, releaseSHA string
-	if err := loadWorkflowEnvs([]workflowEnvInput{
-		{&securityVersion, check.securityWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security actionlint version", ".github/workflows/security.yml"},
-		{&releaseVersion, check.releaseWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release actionlint version", ".github/workflows/release.yml"},
-	}); err != nil {
-		return err
-	}
-	if securityVersion != releaseVersion {
-		return errors.New("ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
-	}
-	if err := loadWorkflowEnvs([]workflowEnvInput{
-		{&securitySHA, check.securityWorkflow, "ACTIONLINT_SHA256", `[0-9a-f]{64}`, "security actionlint sha", ".github/workflows/security.yml"},
-		{&releaseSHA, check.releaseWorkflow, "ACTIONLINT_SHA256", `[0-9a-f]{64}`, "release actionlint sha", ".github/workflows/release.yml"},
-	}); err != nil {
-		return err
-	}
-	if securitySHA != releaseSHA {
-		return errors.New("ACTIONLINT_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
-	}
-	check.toolPins.actionlintVersion = securityVersion
-	check.toolPins.actionlintSHA = securitySHA
-	return nil
-}
-
-func (check *pinnedInputsCheck) validateZizmorPins() error {
-	var securityVersion, securitySHA, releaseVersion, releaseSHA string
-	if err := loadWorkflowEnvs([]workflowEnvInput{
-		{&securityVersion, check.securityWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security zizmor version", ".github/workflows/security.yml"},
-		{&securitySHA, check.securityWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "security zizmor sha", ".github/workflows/security.yml"},
-		{&releaseVersion, check.releaseWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release zizmor version", ".github/workflows/release.yml"},
-		{&releaseSHA, check.releaseWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "release zizmor sha", ".github/workflows/release.yml"},
-	}); err != nil {
-		return err
-	}
-	if securityVersion != releaseVersion {
-		return errors.New("ZIZMOR_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
-	}
-	if securitySHA != releaseSHA {
-		return errors.New("ZIZMOR_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
-	}
-	check.toolPins.zizmorVersion = securityVersion
-	check.toolPins.zizmorSHA = securitySHA
-	return nil
-}
-
-func (check *pinnedInputsCheck) validateToolPinPolicy() error {
-	values := check.toolPins
-	for _, pin := range []toolPinCheck{
-		{"WORKCELL_COSIGN_VERSION", values.cosign, check.pins.Cosign},
-		{"WORKCELL_BUILDX_VERSION", values.buildx, check.pins.Buildx},
-		{"WORKCELL_BUILDKIT_IMAGE", values.buildkit, check.pins.Buildkit},
-		{"WORKCELL_QEMU_IMAGE", values.qemu, check.pins.QEMU},
-		{"WORKCELL_SYFT_VERSION", values.syft, check.pins.Syft},
-		{"ACTIONLINT_VERSION", values.actionlintVersion, check.pins.ActionlintVersion},
-		{"ACTIONLINT_SHA256", values.actionlintSHA, check.pins.ActionlintSHA256},
-		{"ZIZMOR_VERSION", values.zizmorVersion, check.pins.ZizmorVersion},
-		{"ZIZMOR_SHA256", values.zizmorSHA, check.pins.ZizmorSHA256},
-	} {
-		if pin.actual != pin.expected {
-			return fmt.Errorf("%s pin %q does not match policy/tool-pins.toml %q; the workflow and the policy must stay in lockstep (scripts/update-upstream-pins.sh rewrites both)", pin.name, pin.actual, pin.expected)
-		}
-	}
-	return nil
 }
 
 func (check *pinnedInputsCheck) validateSecurityToolDownloads() error {
