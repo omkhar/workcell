@@ -34,13 +34,13 @@ workcell_adapter_tier() {
 workcell_manifest_flags() {
   case "$1:$2" in
     amp:allow)
-      printf '%s\n' '--all' '--color' '--execute' '--fast' '--features' '-h' '--help' '-l' '--label' '--log-level' '-m' '--mode' '--no-archive-after-execute' '--no-color' '--no-ide' '--no-notifications' '--no-remote-control-terminal' '--notifications' '--plugin-ready-timeout' '--stream-json' '--stream-json-input' '--stream-json-thinking' '--timings' '--title' '-V' '-v' '--version' '-x'
+      printf '%s\n' '--all' '--color' '--effort' '--execute' '--fast' '--features' '-h' '--help' '-l' '--label' '--log-level' '-m' '--mode' '--model' '--no-archive-after-execute' '--no-color' '--no-ide' '--no-notifications' '--no-remote-control-terminal' '--notifications' '--plugin-ready-timeout' '--stream-json' '--stream-json-input' '--stream-json-thinking' '--timings' '--title' '-V' '-v' '--version' '-x'
       ;;
     amp:deny)
-      printf '%s\n' '--amp-env' '--attach' '--dangerously-allow-all' '--desktop' '--executor' '--ide' '--log-file' '--mcp-config' '--no-tui' '-ox' '--orb-execute' '--orb-size' '--project' '--remote-control-terminal' '--runner-dir' '--settings-file' '--share' '--visibility'
+      printf '%s\n' '--amp-env' '--attach' '--dangerously-allow-all' '--desktop' '--executor' '--ide' '--log-file' '--mcp-config' '--no-tui' '-ox' '--orb-execute' '--orb-provider' '--orb-size' '--profile' '--project' '--remote-control-terminal' '--runner-dir' '--settings-file' '--share' '--share-network' '--space' '--visibility'
       ;;
     amp:other_commands)
-      printf '%s\n' 'account' 'add-chatgpt-sub' 'app' 'apps' 'attach-executor-diagnostics' 'clone' 'completions' 'config' 'diagnostics' 'domains' 'files' 'git-credential-helper' 'git-setup' 'headless-bootstrap' 'install' 'internal' 'keyboard-tester' 'l' 'last' 'mcp' 'net' 'oauth-clients' 'orb' 'perma-orbs' 'permission' 'permissions' 'plugin' 'plugins' 'portal' 'projects' 'report' 'report-bug' 'review' 'runner' 'secrets' 'sign-commit' 'skill' 'skills' 'st' 'status' 'svc' 'sync' 't' 'thread' 'threads' 'tool' 'tools' 'top' 'up' 'update' 'usage'
+      printf '%s\n' 'account' 'add-chatgpt-sub' 'app' 'apps' 'attach-executor-diagnostics' 'box-supervisor' 'boxes' 'clone' 'completions' 'config' 'diagnostics' 'domains' 'files' 'git-credential-helper' 'git-setup' 'headless-bootstrap' 'install' 'internal' 'keyboard-tester' 'l' 'last' 'mcp' 'net' 'oauth-clients' 'orb' 'perma-orbs' 'permission' 'permissions' 'plugin' 'plugins' 'portal' 'profile' 'projects' 'report' 'report-bug' 'review' 'runner' 'secrets' 'sign-commit' 'skill' 'skills' 'space' 'spaces' 'st' 'status' 'svc' 'sync' 't' 'thread' 'threads' 'tool' 'tools' 'top' 'up' 'update' 'usage'
       ;;
     goose:allow)
       printf '%s\n' '--check' '--debug' '--edit' '--fork' '-h' '--help' '--history' '-i' '--instructions' '--interactive' '--max-tool-repetitions' '--max-turns' '--model' '-n' '--name' '--no-profile' '--no-session' '--output-format' '--path' '--provider' '-q' '--quiet' '-r' '--resume' '-s' '--session-id' '--stats' '--system' '-t' '--text' '-V' '-v' '--verbose' '--version'
