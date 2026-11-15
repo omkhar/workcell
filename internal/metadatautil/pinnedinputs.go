@@ -127,9 +127,13 @@ func requireArg(text, name, path string) (string, error) {
 	return strings.TrimSpace(match[1]), nil
 }
 
-func requirePinnedBaseImage(image, label, path string) error {
-	if !regexp.MustCompile(`^[^@]+@sha256:[0-9a-f]{64}$`).MatchString(image) {
-		return fmt.Errorf("%s in %s must be pinned by immutable digest, found %q", label, path, image)
+// requirePinnedBaseImage requires image to name exactly repository on Docker
+// Hub, with no registry host or other prefix, a tag, and an immutable digest:
+// repository:tag@sha256:digest. A pin on another registry or repository, even
+// one pinned by digest, fails.
+func requirePinnedBaseImage(image, repository, label, path string) error {
+	if !toolPinImagePattern(repository).MatchString(image) {
+		return fmt.Errorf("%s in %s must be pinned by immutable digest as %s:<tag>@sha256:<digest>, found %q", label, path, repository, image)
 	}
 	return nil
 }
