@@ -1,13 +1,13 @@
 # Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446
+ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
 
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.99.1-slim-trixie@sha256:b8e062b1c3a80183df83d9ba187cadd2b5ab84bc78d453dbfeb2fccd5f982247
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.100.0-slim-trixie@sha256:e9d95b74296f7126a83ae3d041aeaba1ff4c478f13abc5cc034fcf7c131c3d4a
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -190,9 +190,9 @@ RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstra
 
 FROM --platform=$BUILDPLATFORM ${NODE_BASE_IMAGE} AS apt-broker-builder
 
-ARG GO_VERSION=1.27.3
-ARG GO_LINUX_X86_64_SHA256=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
-ARG GO_LINUX_ARM64_SHA256=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49
+ARG GO_VERSION=1.27.4
+ARG GO_LINUX_X86_64_SHA256=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
+ARG GO_LINUX_ARM64_SHA256=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92
 ARG BUILDARCH
 ARG TARGETARCH
 ARG SOURCE_DATE_EPOCH
@@ -297,9 +297,9 @@ RUN install-provider-packages.sh /opt/workcell/providers-uncertified \
 # second RUN is one set -eu command list, so the pinned-input check reads the
 # commands it runs. scripts/verify-upstream-goose-release.sh checks these pins
 # against the GitHub release digests.
-ARG GOOSE_VERSION=1.57.0
-ARG GOOSE_SHA256_ARM64=00a32522f0421ed72fc06f36bfc44c8e51cffefb4daf22a81bb84ccd29d1a1ce
-ARG GOOSE_SHA256_AMD64=6c3a05e30e1a425dc06a410dbe24b3f3697c9721b1ea2340434ddda6b64267ae
+ARG GOOSE_VERSION=1.59.0
+ARG GOOSE_SHA256_ARM64=63124ef1fdc2f3c6b38155aaab3a3a5ad73b053e2ff327c224c888816d85f5d7
+ARG GOOSE_SHA256_AMD64=6da57ce8775f712ab146bcf244b69e2b15f85368836bff2ba3306fdefdac8f31
 RUN case "${TARGETARCH}" in \
     arm64) echo aarch64-unknown-linux-musl ;; \
     amd64) echo x86_64-unknown-linux-musl ;; \
@@ -328,7 +328,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.319
+ARG CLAUDE_VERSION=2.1.323
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -340,11 +340,11 @@ ARG CODEX_VERSION=0.163.0
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
 # state.
-ARG COPILOT_VERSION=1.0.106
+ARG COPILOT_VERSION=1.0.110
 ARG CODEX_RELEASE_URL=
 ARG CODEX_CODE_MODE_HOST_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
-ARG RUST_VERSION=1.99.1
+ARG RUST_VERSION=1.100.0
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
@@ -417,11 +417,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="a7e687fd1cb054d651c7588223de3786c99d4c682365e3c3ae1e59ce7f3a591f"; \
+      CLAUDE_SHA256="452dddff140b5caf00a5410333a3d6db82c73ea2dec74b1541fae18e97d47dca"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="dabafec82ca1319fa43d8be36a10fc61b1d11821cb98ad5df04ad95e199b8eed"; \
+      CLAUDE_SHA256="604d29a6869409106b6a1110bdadcc8b72e8654a5a865d23258f938a696e348e"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -521,11 +521,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="1591b72a0e01c286ab3e3aba98f6a204b6895cf6f994d14e3769831c8d37e72c"; \
+      COPILOT_SHA256="4edd232fa4597064c46f84a1e87d69dff94fa4618b49e50209ac697e1b7f6f41"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="bb2ac6a50c2d7ceffee3b489f278fb9ba4fd39d4678dd75b5b021d4feedcc3ef"; \
+      COPILOT_SHA256="0c8eaeded78ecb87a403c3e447e4ce0fe9d6d90c13605872873dbe2f9c2f92c4"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \

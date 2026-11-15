@@ -1,11 +1,12 @@
 # Option inventory for the PINNED runtime amp CLI. The stamp must equal the pin.
-# amp-version: 0.0.1793966450-gc1122d
+# amp-version: 0.0.1794571247-g07b20f
 # Regenerate: workcell-citools flag-inventory write with the help from the runtime-uncertified image. Classify: adapters/amp/adapter.toml [flags].
 --all
 --amp-env
 --attach
 --color
 --desktop
+--effort
 --execute
 --executor
 --fast
@@ -17,6 +18,7 @@
 --log-level
 --mcp-config
 --mode
+--model
 --no-archive-after-execute
 --no-color
 --no-ide
@@ -25,13 +27,17 @@
 --no-tui
 --notifications
 --orb-execute
+--orb-provider
 --orb-size
 --plugin-ready-timeout
+--profile
 --project
 --remote-control-terminal
 --runner-dir
 --settings-file
 --share
+--share-network
+--space
 --stream-json
 --stream-json-input
 --stream-json-thinking
