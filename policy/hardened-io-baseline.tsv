@@ -102,7 +102,7 @@ internal/remotevm/conformance.go	os.Stat	538339a6	remote VM contract and fake ta
 internal/remotevm/contract.go	os.ReadFile	75a20133	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.OpenFile	fbf3ee94	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/remotevm/fake_target.go	os.Stat	6ed6cd03,04a89384	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
-internal/remotevm/fake_target.go	os.WriteFile	c88deaf2	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
+internal/remotevm/fake_target.go	os.WriteFile	540c7a07	remote VM contract and fake target over repository and harness-owned paths; migrate before a real target ships
 internal/scenarios/scenario_manifest.go	os.ReadFile	c695bb02	CI tooling over the checked-out repository tree; no operator-controlled path
 internal/scenarios/scenario_manifest.go	os.Stat	aee45cbc	CI tooling over the checked-out repository tree; no operator-controlled path
 internal/sessionctl/monitor.go	os.Open	a3435e48	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
