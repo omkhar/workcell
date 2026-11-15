@@ -128,10 +128,10 @@ func (validator *dockerPinnedInputValidator) validateBaseAndBootstrapInputs() er
 }
 
 func (validator *dockerPinnedInputValidator) validateBaseImages() error {
-	if err := requirePinnedBaseImage(validator.runtimeBaseImage, "NODE_BASE_IMAGE", validator.cfg.RuntimeDockerfilePath); err != nil {
+	if err := requirePinnedBaseImage(validator.runtimeBaseImage, "node", "NODE_BASE_IMAGE", validator.cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
-	return requirePinnedBaseImage(validator.validatorBaseImage, "VALIDATOR_BASE_IMAGE", validator.cfg.ValidatorDockerfilePath)
+	return requirePinnedBaseImage(validator.validatorBaseImage, "node", "VALIDATOR_BASE_IMAGE", validator.cfg.ValidatorDockerfilePath)
 }
 
 func (validator *dockerPinnedInputValidator) validateBootstrapAndMCPInputs() error {
