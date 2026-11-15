@@ -35,6 +35,9 @@ import (
 // truncated or corrupt stream before the guest unpacks a byte.
 const archiveMagic = "workcell-workspace-v1"
 
+// archiveLineBytes bounds the host read of the guest ack line.
+const archiveLineBytes = 4096
+
 // archiveEntryOverhead bounds the tar bytes per entry beyond file content: a
 // header block, a PAX header for a long name and link target, and padding.
 const archiveEntryOverhead = 16 << 10
@@ -125,7 +128,7 @@ func sendWorkspaceArchive(conn io.ReadWriter, materializationID string, archive 
 	if _, err := io.CopyN(conn, archive, size); err != nil {
 		return "", err
 	}
-	line, err := readArchiveLine(bufio.NewReaderSize(conn, 4096))
+	line, err := readArchiveLine(bufio.NewReaderSize(conn, archiveLineBytes))
 	if err != nil {
 		return "", fmt.Errorf("read workspace ack: %w", err)
 	}

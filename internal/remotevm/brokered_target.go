@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/omkhar/workcell/internal/rootio"
 	"io"
 	"os"
 	"os/exec"
@@ -82,30 +83,35 @@ func validateBrokerArgs(cliPath string, receiverPort int, values ...string) erro
 	return nil
 }
 
-// createArchiveFile and swapStep are replaced only by tests that inject a
-// failure or a kill.
+// createArchiveFile, swapStep and writeManifestAt are replaced only by tests
+// that inject a failure or a kill.
 var (
 	createArchiveFile = os.CreateTemp
-	swapStep          = func(string) error { return nil }
+	swapStep          = func(string, *os.File) error { return nil }
+	writeManifestAt   = rootio.WriteFileAtomicAtNoFollow
 )
 
-func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (MaterializeResult, error) {
+func (b BrokeredTarget) MaterializeWorkspace(ctx context.Context, req MaterializeRequest) (_ MaterializeResult, err error) {
 	// The target id becomes a positional broker argument.
 	if strings.HasPrefix(req.TargetID, "-") {
 		return MaterializeResult{}, fmt.Errorf("target id must not start with '-': %q", req.TargetID)
 	}
-	result, staged, err := stageInStateRoot(b.Contract, req)
+	result, staged, err := stageInStateRoot(ctx, b.Contract, req)
 	if err != nil {
 		return MaterializeResult{}, err
 	}
+	// Closing ends the lock, also after a panic in the send, so that a later
+	// send of this ID in the same process does not wait for it.
+	defer func() { err = errors.Join(err, staged.close()) }()
 	// No error path removes the host manifest. Before the host copy is put
 	// in place, the manifest of an earlier run with this ID still describes
 	// the host copy in place. After that, the unconfirmed manifest is the
 	// record that the guest can hold a workspace: a lost acknowledgment, a
 	// refusal that kept an earlier guest copy, and a host crash all leave it
 	// for an operator to reconcile.
+	// The confirmed manifest is written before close ends the lock.
 	guestWorkspace, err := b.sendStagedWorkspace(ctx, req.TargetID, &result, staged)
-	if err = errors.Join(err, staged.close()); err != nil {
+	if err != nil {
 		return MaterializeResult{}, err
 	}
 	result.MaterializedWorkspace = guestWorkspace
@@ -140,17 +146,26 @@ func (b BrokeredTarget) sendStagedWorkspace(ctx context.Context, targetID string
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
 	result.Manifest.ArchiveSHA256 = digest
+	// The confirmed manifest records the path that the guest acks, which one
+	// ack line bounds. It must fit the limit with the longest such path, which
+	// JSON escapes to six bytes a byte, or a guest copy could never be
+	// confirmed.
+	confirmed := result.Manifest
+	confirmed.MaterializedWorkspace = strings.Repeat("\x00", archiveLineBytes)
+	if _, err := manifestContent(confirmed); err != nil {
+		return "", err
+	}
 	// A broker command that cannot run sends nothing, so it must fail before
 	// the manifest records a send.
 	argv, err := b.brokerArgv(targetID)
 	if err != nil {
 		return "", err
 	}
-	// A send whose context has ended starts no broker.
+	result.Manifest.GuestTransfer = GuestTransferUnconfirmed
+	// A send whose context has ended must not replace the host copy.
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	result.Manifest.GuestTransfer = GuestTransferUnconfirmed
 	if err := staged.commit(result.ManifestPath, result.Manifest); err != nil {
 		return "", err
 	}
