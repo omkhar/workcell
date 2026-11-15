@@ -223,6 +223,9 @@ func TestOpenLogRequiresAnOwnerOnlySingleLinkedRegularFile(t *testing.T) {
 	if err := os.WriteFile(shared, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(shared, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	linked := filepath.Join(dir, "linked")
 	if err := os.WriteFile(linked, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -242,6 +245,10 @@ func TestOpenLogRequiresAnOwnerOnlySingleLinkedRegularFile(t *testing.T) {
 	}
 	own := filepath.Join(dir, "own")
 	if err := os.WriteFile(own, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The umask applies to the create; the broker wants exactly 0600.
+	if err := os.Chmod(own, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	file, err := openLog(own)
@@ -322,5 +329,41 @@ func TestOpenLogRefusesAParentWithAnExtendedACL(t *testing.T) {
 	}
 	if !errors.Is(err, rootio.ErrExtendedACL) {
 		t.Fatalf("openLog under a parent with an extended ACL = %v, want ErrExtendedACL", err)
+	}
+}
+
+// TestOpenLogStagesANewLogOwnerOnlyUnderAnyUmask creates a missing log by a
+// staged, synced rename. O_CREAT on the final name took the umask, so a
+// restrictive one failed the mode check after the name already existed, and
+// the failed start left an empty log behind.
+func TestOpenLogStagesANewLogOwnerOnlyUnderAnyUmask(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "log")
+	old := syscall.Umask(0o277)
+	file, err := openLog(path)
+	syscall.Umask(old)
+	if err != nil {
+		t.Fatalf("openLog under umask 0277 = %v", err)
+	}
+	if _, err := file.WriteString("x\n"); err != nil {
+		t.Fatalf("write the new log: %v", err)
+	}
+	_ = file.Close()
+	if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("log mode = %v, %v; want 0600", info, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("log directory holds %v, %v; want the log only", entries, err)
+	}
+	// A second start appends to the log the first one created.
+	file, err = openLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString("y\n")
+	_ = file.Close()
+	if data, _ := os.ReadFile(path); string(data) != "x\ny\n" {
+		t.Fatalf("log = %q, want both starts' lines", data)
 	}
 }

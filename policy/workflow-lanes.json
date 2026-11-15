@@ -338,6 +338,20 @@
       "local_order": 20
     },
     {
+      "id": "claude-mention.yml/claude",
+      "workflow_path": ".github/workflows/claude-mention.yml",
+      "workflow_name": "Claude mention",
+      "job_id": "claude",
+      "job_name": "Claude mention",
+      "workflow_events": [
+        "issue_comment",
+        "issues"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "owner-only @claude responder; it runs only on a new issue or issue comment written by the repository owner, needs the claude-mention environment secret and the Claude GitHub App, and never gates a PR or release"
+    },
+    {
       "id": "codeql.yml/analyze[build-mode=autobuild,language=go]",
       "workflow_path": ".github/workflows/codeql.yml",
       "workflow_name": "CodeQL",
@@ -414,6 +428,24 @@
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
+    },
+    {
+      "id": "dependabot-follow-up.yml/regenerate",
+      "workflow_path": ".github/workflows/dependabot-follow-up.yml",
+      "workflow_name": "Dependabot follow-up",
+      "job_id": "regenerate",
+      "job_name": "Regenerate Dependabot fixtures",
+      "workflow_events": [
+        "pull_request"
+      ],
+      "workflow_path_globs": {
+        "pull_request": [
+          ".github/workflows/**"
+        ]
+      },
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the job runs only on a Dependabot pull request; locally, refresh-action-inputs runs on the bump branch"
     },
     {
       "id": "docs.yml/spelling-and-manpage",

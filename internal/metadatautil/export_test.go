@@ -8,3 +8,6 @@ var GooseDockerfilePin = gooseDockerfilePin
 
 // ValidateGooseInstallRun exposes the goose RUN check to the shared evasion corpus.
 var ValidateGooseInstallRun = validateGooseInstallRun
+
+// ValidateClaudeMentionPlacement exposes the claude-mention placement check.
+var ValidateClaudeMentionPlacement = validateClaudeMentionPlacement

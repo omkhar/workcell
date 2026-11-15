@@ -72,5 +72,5 @@ deny = [
   "--no-sandbox", "--output-format", "--plan", "--plugin-dir", "-r", "--remote",
   "--remote-export", "--resume", "--sandbox", "--secret-env-vars",
   "--session-id", "--share", "--share-gist", "-w", "--worktree", "--yolo",
-  "--host-compute-id", "--host-environment", "--sync-session", "--trust-folder",
+  "--sync-session", "--trust-folder",
 ]
