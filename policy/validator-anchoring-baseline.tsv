@@ -159,7 +159,7 @@ internal/metadatautil	goLanguageVersionFromToolchain	14ed36af	unreviewed debt: r
 internal/metadatautil	hardenedFSImportNames	b021fc13	the search finds the last slash of an import path, not file content
 internal/metadatautil	helperGraph.reaches	5aba8db9,fc9cebdc	the digit test tells a first-parameter forwarder word from an all-parameters one among parsed command words
 internal/metadatautil	heredocDelimiter	029b3cac	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	rewriteHeredocs	b96012ff	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	rewriteHeredocsEnding	ca6b515b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	hostedPosixRunner	12852e51	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	isAutomatedEvidencePath	09872e90,bb2d0e7f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	isCodexCfgAttribute	39a1ea68	unreviewed debt: review the subject, then port or justify
@@ -224,12 +224,14 @@ internal/metadatautil	laneChildNamesRoot	623ba690	fails closed: a child shell wh
 internal/metadatautil	laneDeclaration	1eba7c5a,72f9179d	fails closed: a declared name it cannot match makes the lane unreadable
 internal/metadatautil	laneExpands	4d870f23	fails closed: a word with an expansion is read as one this reader cannot spell
 internal/metadatautil	laneInnerText	7a693089	the checks read the command words laneCommand returns for an eval operand with an expansion and a trap option; they parse words, not free text
+internal/metadatautil	laneAssigns	36f3eb76,b8e7a45b	the checks read laneScan command words for the shape of a bare assignment, a declaration or a for loop; any other command counts as no write, which fails closed
+internal/metadatautil	laneEnvOperands	1cb09415	the checks read laneScan command words for env and the program it runs by an absolute path; any other command keeps every shaped write, which fails closed
 internal/metadatautil	laneLeading	5521dc8a	the check reads one word a closed reader returns for the shape of an assignment, to tell it from a case pattern; it parses a word, not free text
 internal/metadatautil	laneLiteralOptions	337d65e9,a4f48ac8,b76466b5,ea7ffe16	fails closed: an option word with an expansion makes the lane unreadable
 internal/metadatautil	laneOption	63c8cdd6,e5e919d3	fails closed: an option word with a letter that changes what runs makes the lane unreadable
 internal/metadatautil	laneOutputName	0dd42f68,6537f911	fails closed: a name that is not a plain identifier, or names a variable bash reads or ROOT_DIR, makes the lane unreadable
 internal/metadatautil	laneProgramWord	bdc2a2e6	fails closed: a value that is not a plain program name or path makes the lane unreadable
-internal/metadatautil	laneReadable	532c91a7,8a60283b	fails closed: an arithmetic assignment to a computed name or one bash reads, or a BASH_CMDS or BASH_ALIASES name, makes the lane unreadable
+internal/metadatautil	laneReadable	24a9644f,532c91a7,8a60283b	fails closed: an arithmetic assignment to a computed name or one bash reads, or a BASH_CMDS, BASH_ALIASES or localvar_inherit name, makes the lane unreadable
 internal/metadatautil	laneReading.callReason	0ef736ec	fails closed: a command word with a glob or a brace group makes the lane unreadable
 internal/metadatautil	laneReading.expandedReason	25256dad,2b860056,65907a4e,7eae08b2,b9d78721,fed703bb	fails closed: a command word it cannot read as a pinned root, a path or one program variable makes the lane unreadable
 internal/metadatautil	laneReading.outputs	ad697d63,c5f63017	the checks read the words a closed reader returns for a local copy of a positional parameter and a computed name; a write it cannot match makes the lane unreadable

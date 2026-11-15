@@ -420,6 +420,8 @@ func continuesLine(word string) bool {
 type command struct {
 	args        []word
 	conditional bool
+	piped       bool // a pipeline stage or a background job, which runs in a subshell
+	nested      bool // text an eval, a trap or a child shell runs, as the lane reader reads it
 }
 
 // splitCommands cuts one logical line into the separate commands bash runs, at
@@ -447,7 +449,10 @@ func splitCommands(words []word) []command {
 			continue
 		}
 		if !each.quoted && isOperator(each.text) {
-			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||"})
+			piped := each.text == "|" || each.text == "|&"
+			last := &commands[len(commands)-1]
+			last.piped = last.piped || piped || each.text == "&"
+			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", piped: piped})
 			continue
 		}
 		last := &commands[len(commands)-1]
@@ -663,6 +668,15 @@ func heredocsAsHereStrings(script string) string {
 // the text of a body bash expands too, as the here-string heredocExpanded
 // spells, so a reader of expansions reads it.
 func rewriteHeredocs(script string, expanded bool) string {
+	text, _ := rewriteHeredocsEnding(script, expanded)
+	return text
+}
+
+// rewriteHeredocsEnding is rewriteHeredocs, and whether every body ends at a
+// line this reader matches. A body that does not, as one whose delimiter is
+// unresolved, runs to the end of script, so whatever bash runs after its
+// real end is missing from the text.
+func rewriteHeredocsEnding(script string, expanded bool) (string, bool) {
 	var out, body strings.Builder
 	var opened, pending []heredoc
 	var bodies []string
@@ -727,10 +741,11 @@ func rewriteHeredocs(script string, expanded bool) string {
 		}
 		pending, held = opened, line
 	}
-	if len(pending) > 0 {
+	ended := len(pending) == 0
+	if !ended {
 		release()
 	}
-	return out.String()
+	return out.String(), ended
 }
 
 // heredocExpanded is the here-string of a body bash expands, as it expands a
