@@ -209,8 +209,8 @@ The workflow makes two candidates. Each candidate starts from the same `main` co
 
 | Candidate | Updater | Contents | Result |
 | --- | --- | --- | --- |
-| `provider` | `update-provider-pins.sh --apply` | Provider pins only | Scope guard, then auto-merge |
-| `toolchain` | `update-upstream-pins.sh --apply --toolchain-only` | All other pins | Held for host publication |
+| `provider` | `update-provider-pins.sh --apply` | Provider pins only | Scope guard, then auto-merge after approval |
+| `toolchain` | `update-upstream-pins.sh --apply --toolchain-only` | All other pins | Toolchain scope guard and re-derivation, then human review |
 
 The `provider` candidate contains only these changes:
 
@@ -229,7 +229,8 @@ Both candidates can change `runtime/container/Dockerfile`, but they do not chang
 | Job | Environment | Token | Purpose |
 | --- | --- | --- | --- |
 | `refresh` | none | `contents: read`, `issues: write`, `pull-requests: read` | Builds the candidates and updates the tracking issue. |
-| `scope-guard` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-scope-guard.sh` on the `provider` patch. |
+| `scope-guard` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-scope-guard.sh` on the `provider` patch, and with `--toolchain` on the `toolchain` patch. |
+| `rederive` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-rederive.sh` on the `toolchain` candidate. |
 | `publish` | `upstream-refresh` | GitHub App token | Opens the PRs with `scripts/ci/upstream-refresh-publish.sh`. |
 | `report` | none | none | Fails the run when a kind failed. |
 
@@ -264,6 +265,8 @@ It applies the patch to `base_sha`. It stops if the tree differs from `tree_oid`
 It commits with the GraphQL `createCommitOnBranch` mutation, so GitHub signs the commit.
 It checks the commit tree and the signature, and then opens the PR on branch `codex/upstream-refresh-<kind>-<run id>`.
 
+The PR body takes its diffstat from the applied tree and its run link from the workflow context, not from the artifact.
+
 It skips a candidate that is stale against `main`. It skips a candidate when a refresh PR of the same kind from another run is open.
 If an earlier attempt of the same run opened the PR, `publish` resumes that PR. It checks the PR head commit and then applies the merge or label step.
 If a run stops after it opens the PR, rerun that run or close the PR.
@@ -271,9 +274,48 @@ The job output `result` is `passed` only when the guard step exits 0.
 
 The App has no Workflows permission, and it must not get one.
 `publish` does not publish a candidate that changes `.github/workflows/`.
-`publish` does not publish the `toolchain` candidate either, because no scope guard reviews it yet.
-A tool pin bump changes only `policy/tool-pins.toml`, so the workflow rule alone no longer holds it back.
-`scripts/ci/upstream-refresh-publish.sh` stops before any GitHub call for that kind.
+It publishes the `toolchain` candidate only when the toolchain guard and the re-derivation both passed.
+
+The job output `toolchain` is the toolchain guard verdict `passed:<base commit>:<tree>` when the toolchain guard step exits 0.
+Otherwise it is `failed`.
+`publish` stops if the verdict does not name the `base_sha` and `tree_oid` of the candidate.
+So the tree check binds the commit to the tree that the guard checked.
+
+The toolchain guard checks the shape of each changed line, not its value.
+The `rederive` job checks the values.
+It runs on its own runner, apart from the `refresh` job, with a `contents: read` token.
+`scripts/ci/upstream-refresh-rederive.sh` runs `update-upstream-pins.sh --apply --toolchain-only` again from a clean checkout of the base commit.
+Then it runs the `--check` mode and `scripts/check-pinned-inputs.sh`.
+The job installs no tools, because the toolchain updater runs no `cosign`.
+
+The updater looks the Debian snapshot up itself, as in the `refresh` job, so the candidate does not choose it.
+`scripts/ci/upstream-refresh-rederive.sh` requires that snapshot to equal the snapshot of the candidate.
+A run that crosses midnight UTC can find a newer snapshot, and then the candidate waits for the host command.
+
+The `rederive` job output `toolchain` is `rederived:<base commit>:<tree>` when the tree it gets equals `tree_oid`.
+Otherwise it is `failed`.
+`publish` stops if that verdict does not name the `base_sha` and `tree_oid` of the candidate.
+So a second run of the updater, in a job that cannot write, got each version, digest, and checksum in the PR.
+If upstream moved between the two runs, the trees differ, and the candidate waits for the host command.
+
+The guard and rederive scripts remove the runner command files, such as `GITHUB_OUTPUT`, from the environment of their child processes.
+That is hygiene, not a boundary, because a child can still read the path from the environment or command line of its parent in `/proc`.
+
+The verdict holds for other reasons.
+The job output takes the verdict only when the step outcome is `success`.
+The guard exits 0 only when the tree it checked passes, and its verdict names that tree.
+The rederive script exits 0 only when the tree it rebuilt equals `tree_oid`.
+And `publish` acts only on a verdict that names the `base_sha` and `tree_oid` of the candidate.
+
+`internal/metadatautil/workflows.go` pins each step of the `scope-guard` and `rederive` jobs, and the workflow default shell.
+The `rederive` step times out at 15 minutes, before its job at 20.
+So a slow re-derivation fails the step and holds the toolchain candidate.
+GitHub may report a job that timed out as cancelled, which would stop `publish`.
+
+In `.github/workflows/upstream-refresh.yml`, `publish` still runs when the `rederive` job fails, and then it holds only the `toolchain` candidate.
+It does not run when the `refresh` or `scope-guard` job failed, or when the run was cancelled.
+
+If the toolchain guard or the re-derivation did not pass, `scripts/ci/upstream-refresh-publish.sh` stops before any GitHub call for that kind.
 The tracking issue and the audit comment then show the host command for that candidate:
 
 ```bash
@@ -290,7 +332,7 @@ This command gives the refresh PR the full PR shape budget on first publication 
 
 `publish` also fails closed if GitHub drops the mode of a changed executable file, because the tree check then fails. Publish such a candidate on the host.
 
-The scope guard allows only these changes:
+The provider scope guard allows only these changes:
 
 - Provider version `ARG` lines and SHA-256 assignments in `runtime/container/Dockerfile`
 - The pinned Gemini CLI version line in `runtime/container/providers/package.json`
@@ -300,11 +342,45 @@ The scope guard allows only these changes:
 A lockfile change to any other package, for example a new transitive dependency, fails the guard.
 
 If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-commit` on the signed `provider` commit.
-Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible. The required checks still gate the merge.
+Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible.
+The required checks and a person's approval still gate the merge.
 
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.
 If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.
-A `toolchain` PR, which a person publishes from a host, always gets the `needs-human-review` label.
+A `toolchain` PR always gets the `needs-human-review` label, and `publish` never enables auto-merge on it.
+Its PR body and the audit comment list each pin line it changes, the old line and then the new line.
+
+The toolchain scope guard applies the patch to the base commit in a private index.
+Then it compares each changed file of the new tree with the base tree.
+It allows only an edit in place of a regular file, with the same mode and the same number of lines.
+Each changed line must stay a pin line of the same key.
+That key must appear once in the file.
+Some pin lines change only with another pin line of the same file:
+
+- A Go, Hadolint, `rustup-init`, `actionlint`, or `zizmor` SHA-256 line changes only with its version line.
+- An OpenSSL or CA certificate package path changes only with `DEBIAN_SNAPSHOT`.
+- An OpenSSL or CA certificate SHA-256 line changes only with its package path.
+
+It allows only these files and pin lines:
+
+- `go.mod`: the `go` and `toolchain` lines
+- `policy/tool-pins.toml`: `cosign`, `buildx`, `syft`, `buildkit`, `qemu`, and the `actionlint` and `zizmor` version and SHA-256 lines
+- `runtime/container/Dockerfile`: `NODE_BASE_IMAGE`, `RUST_TOOLCHAIN_IMAGE`, `GO_VERSION`, the two Go SHA-256 lines, and `RUST_VERSION`
+- `tools/validator/Dockerfile`: `VALIDATOR_BASE_IMAGE`, the Go and Rust lines of the runtime Dockerfile, and the Hadolint, `deadcode`, and `rustup` pins
+- `runtime/container/debian-bootstrap.env`: the snapshot, and the path and SHA-256 lines of the OpenSSL and CA certificate packages
+- `runtime/container/rust/Cargo.toml`: `rust-version`
+- `runtime/container/rust/rust-toolchain.toml`: `channel`
+- `scripts/ci/build-validator-image.sh`: the default `BUILDKIT_IMAGE`
+- `scripts/check-dead-code.sh`: `DEADCODE_VERSION`
+
+An image pin keeps its repository and its tag, and only its digest changes.
+The Rust and QEMU images are the exception: their tag carries the version.
+A version or a snapshot does not move back.
+Any other change fails the guard, for example a `.github/workflows/` change, a new file, or an edit to a `RUN` line.
+A release that moves a version back, for example a backport, fails the guard, so a person publishes it from a host.
+
+The guard cannot tell a real digest or checksum from a false one.
+So a change of the digest alone, and any other value, publishes only when the re-derivation got the same value.
 
 `publish` posts an audit comment on the tracking issue.
 The comment lists each PR, its commit, the merge decision, the cool-off policy, and the bumped versions.
@@ -329,12 +405,12 @@ Revisit this risk when a second maintainer gets write access.
    Install it on this repository only.
 2. Add two secrets to the `upstream-refresh` environment:
    `WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID` and `WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY`.
-3. Set `upstream_refresh_app_id` under `[branch_review]` in `policy/github-hosted-controls.toml` to the App ID. Add the App to the pull-request review bypass list of the `main` ruleset.
-   Add no other actor. A bot cannot approve its own PR, so this bypass replaces the approval.
+3. Set `upstream_refresh_app_id` under `[branch_review]` in `policy/github-hosted-controls.toml` to the App ID.
 
-Without the bypass, auto-merge waits for a human review.
+The App is not on the review bypass list of the `main` ruleset.
+So a `provider` PR with auto-merge armed merges only after a person approves it.
 The hosted-controls audit permits these two secrets and no others in this environment.
-It accepts the App as a bypass actor on the review ruleset only.
+On the review ruleset, the audit allows at most one bypass actor, and only this App.
 
 An operator can still use `./scripts/publish-upstream-refresh-pr.sh --candidate <kind>` for host publication.
 The default kind is `toolchain`.
