@@ -967,8 +967,9 @@ func validateUpstreamRefreshRederiveJob(path string, rederive workflowJob) error
 	if len(rederive.Outputs) != 1 || rederive.Outputs["toolchain"] != upstreamRefreshRederiveResult {
 		return fmt.Errorf("%s rederive job must export only toolchain from the rederive step: %q", path, upstreamRefreshRederiveResult)
 	}
+	// Only the rederive step may carry its id or a step timeout.
 	plain := func(step workflowStep) bool {
-		return step.If.Kind == 0 && step.WorkDir == "" && step.ContinueOnError == nil && step.Shell == ""
+		return step.If.Kind == 0 && step.WorkDir == "" && step.ContinueOnError == nil && step.Shell == "" && step.ID == "" && step.Timeout.Kind == 0
 	}
 	steps := rederive.Steps
 	if len(steps) != 3 || !upstreamRefreshReviewedUses(steps[0], true) || !plain(steps[0]) || !upstreamRefreshReviewedUses(steps[1], false) || !plain(steps[1]) {
