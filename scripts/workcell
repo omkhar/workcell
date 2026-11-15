@@ -704,7 +704,7 @@ run_host_colima() {
   fi
   (
     cd "${safe_cwd}" &&
-      HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+      HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" XDG_CACHE_HOME="$(colima_child_cache_home)" "${HOST_COLIMA_BIN}" "$@"
   )
 }
 
@@ -3897,6 +3897,7 @@ reject_symlinked_colima_staging_cache_roots() {
   reject_symlinked_host_path_components "${cache_root}/workcell-host-inputs" "Workcell host-input staging root" || return $?
   reject_symlinked_host_path_components "${cache_root}/workcell-shadow" "Workcell shadow staging root" || return $?
   reject_symlinked_host_path_components "${cache_root}/workcell-token-handoff" "Workcell token handoff staging root" || return $?
+  reject_symlinked_host_path_components "$(colima_child_cache_home)/colima" "Colima cache root" || return $?
 }
 
 prepare_colima_staging_cache_roots() {
@@ -3904,7 +3905,8 @@ prepare_colima_staging_cache_roots() {
 
   reject_symlinked_colima_staging_cache_roots || return $?
   cache_root="$(colima_staging_cache_root)"
-  mkdir -p "${cache_root}/workcell-host-inputs" "${cache_root}/workcell-shadow" "${cache_root}/workcell-token-handoff"
+  mkdir -p "${cache_root}/workcell-host-inputs" "${cache_root}/workcell-shadow" "${cache_root}/workcell-token-handoff" \
+    "$(colima_child_cache_home)/colima"
   reject_symlinked_colima_staging_cache_roots
 }
 
@@ -5948,14 +5950,34 @@ cleanup_workcell_cache_root() {
   # A cache root is stale only when nothing under it changed within the
   # threshold, so a running Workcell that writes the cache keeps it. The root's
   # own mtime moves only when a direct entry changes. A failed walk keeps it.
+  # <cache_root>/colima-xdg holds the Colima cache root that every managed VM
+  # mounts read-only (colima_child_cache_home), so gc keeps it and does not
+  # count it as recent use of the other entries.
   if [[ "${stale_minutes}" -gt 0 ]]; then
-    if ! recent="$(find "${cache_root}" -mmin "-${stale_minutes}" -print -quit 2>/dev/null)"; then
+    if ! recent="$(find "${cache_root}" -maxdepth 0 -mmin "-${stale_minutes}" -print 2>/dev/null)"; then
       return 0
     fi
     [[ -z "${recent}" ]] || return 0
+    for entry in "${cache_root}"/* "${cache_root}"/.[!.]* "${cache_root}"/..?*; do
+      [[ -e "${entry}" || -L "${entry}" ]] || continue
+      [[ "${entry}" != "${cache_root}/colima-xdg" ]] || continue
+      if ! recent="$(find "${entry}" -mmin "-${stale_minutes}" -print -quit 2>/dev/null)"; then
+        return 0
+      fi
+      [[ -z "${recent}" ]] || return 0
+    done
   fi
-  make_workcell_tree_user_writable "${cache_root}"
-  rm -rf "${cache_root}"
+  if [[ ! -e "${cache_root}/colima-xdg" && ! -L "${cache_root}/colima-xdg" ]]; then
+    make_workcell_tree_user_writable "${cache_root}"
+    rm -rf "${cache_root}"
+    return 0
+  fi
+  for entry in "${cache_root}"/* "${cache_root}"/.[!.]* "${cache_root}"/..?*; do
+    [[ -e "${entry}" || -L "${entry}" ]] || continue
+    [[ "${entry}" != "${cache_root}/colima-xdg" ]] || continue
+    make_workcell_tree_user_writable "${entry}"
+    rm -rf "${entry}"
+  done
 }
 
 cleanup_workcell_cache_roots() {
@@ -6881,6 +6903,20 @@ reject_snapshot_store_overlap() {
   fi
 }
 
+# Colima mounts its cache root read-only into every managed VM, and drops the
+# mount when a user mount covers it.  A workspace that overlaps it could write
+# Colima downloads that later VMs boot from.
+reject_colima_cache_overlap() {
+  local path="$1"
+  local colima_cache_home=""
+
+  colima_cache_home="$(colima_child_cache_home)"
+  if host_path_within_root "${path}" "${colima_cache_home}" || host_path_within_root "${colima_cache_home}" "${path}"; then
+    echo "Refusing workspace mount that overlaps the Colima cache root: ${path}" >&2
+    exit 2
+  fi
+}
+
 reject_broad_or_sensitive_workspace() {
   local path="$1"
 
@@ -6895,6 +6931,7 @@ reject_broad_or_sensitive_workspace() {
   fi
 
   reject_snapshot_store_overlap "${path}"
+  reject_colima_cache_overlap "${path}"
 }
 
 validate_workspace() {

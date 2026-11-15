@@ -5,6 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-agent-launch-scenario.XXXXXX")"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+# workcell_colima: every colima run here sets the Colima cache root as the
+# launcher does, so a restart keeps the staging root out of lima.yaml.
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 
 REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-als-$$"
@@ -28,8 +32,8 @@ cleanup() {
     done
   fi
   if command -v colima >/dev/null 2>&1; then
-    colima stop --profile "${PROFILE}" >/dev/null 2>&1 || true
-    colima delete --profile "${PROFILE}" --force >/dev/null 2>&1 || true
+    workcell_colima colima "${REAL_HOME}/.colima" stop --profile "${PROFILE}" >/dev/null 2>&1 || true
+    workcell_colima colima "${REAL_HOME}/.colima" delete --profile "${PROFILE}" --force >/dev/null 2>&1 || true
   fi
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${REAL_HOME}/.colima/_lima/colima-${PROFILE}"
@@ -139,7 +143,7 @@ TARGET_STATE_DIR="$(sed -n 's/^target_state_dir=//p' "${TMP_DIR}/inspect.stdout"
 [[ -n "${TARGET_STATE_DIR}" ]]
 [[ ! -e "${TARGET_STATE_DIR}/workcell.builder-owned" ]]
 BUILDER_PREFIX="buildx_buildkit_workcell-runtime-${PROFILE}"
-COLIMA_HOME="${REAL_HOME}/.colima" colima start --profile "${PROFILE}" >/dev/null
+workcell_colima colima "${REAL_HOME}/.colima" start --profile "${PROFILE}" >/dev/null
 {
   env DOCKER_HOST="unix://${REAL_HOME}/.colima/${PROFILE}/docker.sock" docker ps -a --format '{{.Names}}'
   env DOCKER_HOST="unix://${REAL_HOME}/.colima/${PROFILE}/docker.sock" docker volume ls --format '{{.Name}}'

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/omkhar/workcell/internal/colimautil"
 )
 
 // ColimaTimeoutExitCode mirrors GNU coreutils `timeout`'s exit code for a
@@ -184,19 +186,26 @@ func newColimaCommand(ctx context.Context, inv HostColimaInvocation) (*exec.Cmd,
 func colimaChildEnv(inv HostColimaInvocation) []string {
 	// Start from the current process env (which the bash caller has
 	// already cleansed via `env -i PATH=... HOME=... LC_ALL=C LANG=C`),
-	// then override HOME and COLIMA_HOME with the trusted values
-	// supplied by the launcher.  Mirrors the bash invocation:
-	//   HOME=${REAL_HOME} COLIMA_HOME=${COLIMA_STATE_ROOT} colima "$@"
+	// then override HOME, COLIMA_HOME and XDG_CACHE_HOME with the trusted
+	// values supplied by the launcher.  Mirrors the bash invocation:
+	//   HOME=${REAL_HOME} COLIMA_HOME=${COLIMA_STATE_ROOT}
+	//   XDG_CACHE_HOME=$(colima_child_cache_home) colima "$@"
+	// XDG_CACHE_HOME moves the cache root that Colima mounts read-only
+	// into the VM away from the Workcell staging root.  An inherited value
+	// is always dropped; without a real home Colima uses its default root,
+	// which ValidateRuntimeMounts refuses.
 	base := os.Environ()
-	out := make([]string, 0, len(base)+2)
+	out := make([]string, 0, len(base)+3)
 	for _, entry := range base {
-		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "COLIMA_HOME=") {
+		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "COLIMA_HOME=") ||
+			strings.HasPrefix(entry, "XDG_CACHE_HOME=") {
 			continue
 		}
 		out = append(out, entry)
 	}
 	if inv.RealHome != "" {
 		out = append(out, "HOME="+inv.RealHome)
+		out = append(out, "XDG_CACHE_HOME="+colimautil.ChildCacheHome(inv.RealHome))
 	}
 	if inv.ColimaHome != "" {
 		out = append(out, "COLIMA_HOME="+inv.ColimaHome)
