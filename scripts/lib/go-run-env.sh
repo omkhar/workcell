@@ -46,8 +46,13 @@ default_go_cache_root() {
 # paths and their descriptors. It is per shell and never exported: a new
 # process takes its own lock, and a subshell uses its parent's. Sourcing this
 # file again in the same shell keeps the memo, so release_all still finds
-# every descriptor.
-if [[ "$(declare -p WORKCELL_CACHE_LOCK_FDS 2>/dev/null)" != "declare -- WORKCELL_CACHE_LOCK_FDS="* ]]; then
+# every descriptor. A memo that is not a plain scalar of this shell, such as
+# one from the environment, is reset. The first declare -p runs in the if
+# condition, where bash ignores its status, so an unset memo trips no ERR
+# trap of the caller: bash 3.2 runs an inherited ERR trap inside a command
+# substitution even under an if.
+if ! declare -p WORKCELL_CACHE_LOCK_FDS >/dev/null 2>&1 ||
+  [[ "$(declare -p WORKCELL_CACHE_LOCK_FDS 2>/dev/null)" != "declare -- WORKCELL_CACHE_LOCK_FDS="* ]]; then
   unset WORKCELL_CACHE_LOCKS_SEEN WORKCELL_CACHE_LOCK_FDS
   WORKCELL_CACHE_LOCKS_SEEN=""
   WORKCELL_CACHE_LOCK_FDS=""

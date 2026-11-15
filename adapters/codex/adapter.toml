@@ -41,7 +41,7 @@ subcommands = [
 other_commands = [
   "agents", "mcp", "plugin", "app-server", "remote-control", "update",
   "sandbox", "debug", "queue", "migrate-rollouts", "cloud", "exec-server",
-  "help", "e", "a",
+  "help", "e", "a", "git-credential", "migrate-nfs-db",
 ]
 allow = [
   "--all", "--ascii", "--base", "-c", "--color", "--commit",
@@ -49,7 +49,8 @@ allow = [
   "--force", "-h", "--help", "-i",
   "--ignore-user-config", "--image",
   "--include-non-interactive", "--json", "--last", "--local-provider", "-m",
-  "--model", "--no-alt-screen", "--no-color", "--no-daemon", "-o", "--oss",
+  "--model", "--network-only", "--no-alt-screen", "--no-color", "--no-daemon",
+  "-o", "--oss",
   "--output-last-message", "--output-schema", "--skip-git-repo-check",
   "--strict-config", "--summary", "--thread-source", "--title", "--uncommitted",
   "-V", "--version", "--with-access-token", "--with-api-key", "--worktree",
@@ -60,5 +61,5 @@ deny = [
   "--dangerously-bypass-hook-trust", "--disable", "--enable", "--full-auto",
   "--ignore-rules",
   "--not-so-yolo", "-p", "--profile", "--remote", "--remote-auth-token-env",
-  "-s", "--sandbox", "--search", "--yolo",
+  "-s", "--sandbox", "--search", "--trust", "--yolo",
 ]
