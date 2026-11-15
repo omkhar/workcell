@@ -428,6 +428,9 @@ A new publisher requires a reviewed policy change.
 - It requires each value to match the format of its key, with no leading zero in a version part.
 - It requires the BuildKit image to name `moby/buildkit` and the QEMU image to name `tonistiigi/binfmt`, with no registry host, as `scripts/ci/build-validator-image.sh` also requires.
 
+`internal/metadatautil/pinnedinputs_toolpins.go` also holds the checks for a workflow that binds its pins from a `pins` step.
+They apply once any workflow runs or names that step, and the inline-value checks then stop.
+
 ## Dependabot follow-up
 
 A Dependabot bump of a GitHub Action changes a `uses:` pin.
