@@ -47,6 +47,9 @@ internal/metadatautil	TestClaudeMentionWorkflowRejectsChanges	f0b79fb3	test fixt
 internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,7c7b6223	test reads decoded YAML fields: the gate expression and the claude_args value
 internal/metadatautil	checkClaudeMentionReach	bf0bcc67,bf0bcc67,f2e98a0c	finds expression spans and the action, secret or environment names in decoded YAML scalars; a match only rejects or adds checks
 internal/metadatautil	checkSecretsUse	6c1fd84d,b75c08fe	reads the secrets context in a decoded expression; anything but one literal secret name fails
+internal/metadatautil	compareToolchainVersions	94d21a70,a6fb3cfe	reads the digit runs of a pin value that matchToolchainPin already matched against an anchored format
+internal/metadatautil	countToolchainPrefix	b69b9526	counts whole lines of a git blob that start with a pin key, so a second assignment of the key fails the toolchain guard
+internal/metadatautil	matchToolchainPin	2e58db5e	matches the value of one whole git blob line, after its exact key prefix and before its exact suffix, against a format anchored at both ends
 internal/metadatautil	normalizeClaudeMentionNode	04f5fe0b,ac3399b8	picks the action reference in the decoded uses value; the digest covers the rest
 internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherRepository	30d03cdc	a test builds the expected error text from the repository it mutates in the fixture policy file
 internal/metadatautil	TestCheckPinnedInputsRejectsWorkflowToolPinBypass	a687f1b3	a test precondition on the fixture text that the test itself rewrites
@@ -113,6 +116,12 @@ internal/metadatautil	afterDeclaration	8e5f5463	unreviewed debt: review the subj
 internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewrite the goose ARG pins, and the result must read back through gooseDockerfilePin as the target pin
 internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
 internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
+internal/metadatautil	toolchainQEMUImageRE	27499df4	builds an anchored pin value format from fixed constants
+internal/metadatautil	toolchainRustImageRE	93c09f8c	builds an anchored pin value format from fixed constants
+internal/metadatautil	toolchainScopeGit.blob	bc48f987	checks an object id that git diff-tree printed against an anchored hex format before git reads it
+internal/metadatautil	toolchainScopeGit.run	96c43cf3	drops inherited GIT_ variables by name from the process environment, not from file content
+internal/metadatautil	toolchainSemverRE	d1fb2285	builds an anchored pin value format from fixed constants
+internal/metadatautil	toolchainTagRE	21ea3602	builds an anchored pin value format from fixed constants
 internal/metadatautil	validateClaudeMentionPlacement	77b0728d	a case-insensitive deny: any mention of the action, secret or environment outside claude-mention.yml fails, so over-matching only rejects
 internal/metadatautil	toolPinImagePattern	34674b86,bcbe3cfe	builds the anchored per-repository image format from a fixed repository constant
 internal/metadatautil	toolPinRefs	42addc7b,b4bf0af4	the patterns read pins step references in a decoded workflow YAML scalar, and a loose pattern that sees more references than the strict one fails the step
