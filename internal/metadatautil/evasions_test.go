@@ -4,6 +4,7 @@
 package metadatautil_test
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -428,10 +429,17 @@ var gatedEvasions = map[string]bool{
 	"step condition if: false": true, "step condition && false": true,
 }
 
-// RequireRejectsTextEvasions runs the corpus for a validator that reads EveryShellCommand. validate must accept each gated row, where the command stays, and reject every other row, where the command became text.
-func RequireRejectsTextEvasions(t *testing.T, artifact, anchor, want string, validate func(string) error) {
+// RequireRejectsTextEvasions runs the corpus for a validator that reads EveryShellCommand. validate must accept each gated row, where the command stays, and reject every other row, where the command became text, and each gated row named in refused, which that validator reads as unreachable.
+func RequireRejectsTextEvasions(t *testing.T, artifact, anchor, want string, validate func(string) error, refused ...string) {
 	t.Helper()
-	requireEvasions(t, artifact, anchor, want, gatedEvasions, validate)
+	accepted := maps.Clone(gatedEvasions)
+	for _, name := range refused {
+		if !accepted[name] {
+			t.Fatalf("refused row %q is not a gated row", name)
+		}
+		delete(accepted, name)
+	}
+	requireEvasions(t, artifact, anchor, want, accepted, validate)
 }
 
 // requireEvasions applies every row of the corpus to artifact. validate must accept a row in accepted and reject any other row, naming want in its error.

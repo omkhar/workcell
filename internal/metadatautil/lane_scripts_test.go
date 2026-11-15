@@ -312,7 +312,7 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"debug trap defines a function", "trap 'bash() { :; }' DEBUG\n" + gate, nil, shadows},
 		{"builtin trap -- defines a function", "builtin trap -- 'bash() { :; }' ERR\n" + gate, nil, shadows},
 		{"library trap defines a function", source + gate, map[string]string{library: "trap 'bash() { :; }' DEBUG\n"}, shadows},
-		{"trap action of an expansion", "trap \"$1\" DEBUG\n" + gate, nil, "trap whose action"},
+		{"trap action of an expansion", "trap \"$1\" DEBUG\n" + gate, nil, "a trap on a signal other than EXIT"},
 		{"exit trap action of an expansion", "trap 'rm -f \"${tmp}\"' EXIT\n" + gate, nil, "wired"},
 		{"library program variable holds hash", source + gate, map[string]string{library: "c=hash\n\"$c\" -p /bin/true bash\n"}, program},
 		{"library program variable holds source", source + gate, map[string]string{library: "f() {\n  local x=source\n  \"$x\" /tmp/e.sh\n}\n"}, program},
@@ -734,7 +734,7 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 	const ends, builtin = "may stop or end the lane's shell", "a builtin this reader does not model"
 	for _, row := range [][2]string{ // a command that may end the lane, also in an unquoted heredoc's substitution, and what may not
 		{"kill -9 $$", ends}, {"command kill -9 $$", ends}, {"builtin kill -STOP $$", ends}, {"env kill -9 $$", ends}, {"/bin/kill -9 $$", ends},
-		{"trap 'exit 0' TERM; kill $$", ends}, {"eval 'kill -9 $$'", ends}, {"f() { kill -9 $$; }; f", ends}, {"trap 'kill -9 0' DEBUG", ends},
+		{"trap 'exit 0' TERM; kill $$", "a trap on a signal other than EXIT"}, {"eval 'kill -9 $$'", ends}, {"f() { kill -9 $$; }; f", ends}, {"trap 'kill -9 0' DEBUG", "a trap on a signal other than EXIT"},
 		{"logout", ends}, {"suspend -f", ends}, {"killall -STOP bash", ends}, {"pkill -P $$", ends}, {"k=/usr/bin/pkill; \"${k}\" bash", program}, {"cat <<EOF\n$(kill -9 $$)\nEOF", ends},
 		{"cat <<EOF\n`kill -9 0`\nEOF", ends}, {"cat <<-EOF\n\t${x:-$(kill -9 $$)}\n\tEOF", ends}, {"cat <<EOF\n$(alias a=b)\nEOF", builtin},
 		{"x='kill -9 $$'\ncat <<EOF\n$(eval \"$x\")\nEOF", spelling}, {"cat <<'EOF'\n$(kill -9 $$)\nEOF", "wired"},
@@ -742,7 +742,47 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 	} {
 		lanes = append(lanes, struct{ name, lane, library, want string }{fmt.Sprintf("a lane that runs %q", row[0]), row[0], "", row[1]})
 	}
-	cases = append(cases, struct{ name, library, want string }{"a library that runs kill", "kill -9 $$\n", ends})
+	const y, shadowed, ended, exported = "${fd:=0>&0; bash() ( : ) #}", `"${p}" 'bash() ( : )'`, "ends the lane's shell before a later command", "exports a function"
+	for _, form := range []string{": <<EOF\nY\nEOF", "read -r _ <<EOF\nY\nEOF", "{ :; } <<EOF\nY\nEOF", "while false; do :; done <<EOF\nY\nEOF", "h <<EOF\nY\nEOF",
+		": <<-EOF\n\tY\n\tEOF", ": <<<\"Y\"", "exec 3<<<\"Y\"", "(( 1 )) <<<\"Y\"", ": >\"Y\"", ": 2>\"${fd=0>&0; bash() ( : ) #}\""} {
+		lane := "h() { :; }\nf() {\nlocal fd=\n" + strings.ReplaceAll(form, "Y", y) + "\neval \"exec $fd<&-\"\n}\nf"
+		lanes = append(lanes, struct{ name, lane, library, want string }{fmt.Sprintf("a default assigned in %q", form), lane, "", spelling})
+	}
+	for _, row := range [][2]string{ // a default assigned where bash expands, an export of a function, an exit before the gate, and what stays wired
+		{"fd=\n: <<<\"" + y + "\"\neval \"exec $fd<&-\"", spelling}, {"p=\n: <<<\"${p:=eval}\"\n" + shadowed, program}, {"p=\n: 2>\"${p:=eval}\"\n" + shadowed, program},
+		{"p=\nh() { :; } 2>\"${p:=eval}\"; h\n" + shadowed, program}, {"p=\n: <<EOF\n${p:=eval}\nEOF\n" + shadowed, program},
+		{"f() {\nlocal p=\n: <<<\"${p:=eval}\"\n" + shadowed + "\n}\nf", program}, {"p=\n: <<<\"${p:=source}\"\n\"${p}\" /dev/null", program},
+		{"g() { local fd=7; eval \"exec $fd<&-\"; }; g; g", "wired"}, {"g() { local fd=7; eval \"exec $fd<&-\"; }\ng\ng", "wired"},
+		{"g() { local fd=7; eval \"exec $fd<&-\"; }; h() { g; }; k() { g; }; h; k", "wired"},
+		{"g() { local fd=\"$1\"; [[ \"${fd}\" =~ ^[0-9]+$ ]] || return; eval \"exec ${fd}<&-\"; }; g 7; g 8", "wired"},
+		{"touch() { :; }; export -f touch", exported}, {"touch() { :; }; declare -fx touch", exported}, {"touch() { :; }; typeset -f -x touch", exported},
+		{"touch() { :; }; export touch", exported}, {"set -a", "as set -a does"}, {"set -o allexport", "as set -a does"}, {"set +o pipefail", "wired"},
+		{"exit 0", ended}, {"exec true", ended}, {"{ exit 0; }", ended}, {"f() { exit 0; }; f", ended},
+		{"f() { g; }; g() { command exit 0; }; f", ended}, {"eval 'exit 0'", ended}, {"f() { local s=0; eval \"exit $s\"; }; f", ended}, {"source \"${ROOT_DIR}/scripts/lib/l.sh\"\nexit 0", ended},
+		{"trap 'exit 0' EXIT; false", "EXIT trap"}, {"f() { exit 256; }; trap f EXIT; false", "EXIT trap"}, {"trap 'exit 1' EXIT", "wired"},
+		{"trap 'exit' EXIT", "wired"}, {"f() { local s=$?; return \"${s}\"; }; trap f EXIT", "wired"}, {"true || { echo x; exit 1; }", "wired"}, {"die() { echo x; exit 1; }; true || die", "wired"},
+		{"f() { if true; then return; fi; exit 1; }; f", "wired"}, {"( exit 0 )", "wired"}, {"x=$(exit 0)", "wired"}, {"exec 3>&-", "wired"},
+		{"trap '' INT", "wired"}, {"trap - INT", "wired"}, {"trap -- 'exit 0' EXIT; false", "EXIT trap"}, {"f() { exit 0; }; false && f() { :; }; trap f EXIT; false", "EXIT trap"},
+		{"export -f bash", exported}, {"touch() { :; }; declare -f touch >/dev/null", "wired"}, {"declare -x V=1", "wired"}, {"f() { local -x V=1; }; f", "wired"},
+		{"x=PATH\n: <<<\"${!x:=/tmp}\"", "whose name this reader cannot spell"}, {"true | exit 0", "wired"}, {"f() { true || return 0; exit 0; echo x; }; f", ended},
+		{"f() { echo \"$(return 0)\"; exit 0; }; f", ended}, {"f() { x=$(return 0); exit 0; }; f", ended}, {"f() { (return 0); exit 0; }; f", ended},
+		{"f() { return 0 | true; exit 0; }; f", ended}, {"f() { return 0 & exit 0; }; f", ended}, {"f() { { return 0; } | true; exit 0; }; f", ended},
+		{"f() { { return 0; } & exit 0; }; f", ended}, {"f() { if true; then return 0; else :; fi | cat; exit 0; }; f", ended},
+		{"f() { true | while true; do return 0; done; exit 0; }; f", ended}, {"f() { while true; do return 0; done | cat; exit 0; }; f", ended},
+		{"f() { coproc { return 0; }; exit 0; }; f", ended}, {"coproc { :; }; exit 0", ended}, {"f() { coproc { :; }; true || exit 1; }; f", "wired"},
+		{"f() { [ -n \"${x:-}\" ] || return 0; exit 1; }; f", "wired"}, {"f() { true && { return 0; }; exit 1; }; f", "wired"},
+		{"f() { for i in 1; do return 0; done; exit 0; }; f", "wired"}, {"f() { if true; then return 0; else echo x | cat; fi; exit 1; }; f", "wired"},
+		{"f() {\n  {\n    return 0\n  } | true\n  exit 0\n}\nf", ended}, {"f() {\n  (\n    return 0\n  )\n  exit 0\n}\nf", ended},
+		{"f() { coproc return 0; exit 0; }; f", ended}, {"f() { echo \"coproc\"; true || return 0; exit 1; }; f", "wired"},
+		{"coproc { :; }\ng() { true || return 0; exit 0; }\ng", ended}, {"coproc { :; }\n{ exit 0; }", ended},
+		{"f() {\n" + nineGuards + "  v0=\"$1\"\n  eval \"exec ${v0}<&-\"\n}\nf 1", spelling + "$"},
+		{"f() {\n" + nineGuards + "  g\n}\ng() {\n  eval \"exec ${v0}<&-\"\n}\nf 1", spelling + "$"},
+		{"f() {\n" + nineGuards + "}\nf 1\ng() {\n  eval \"exec ${v0}<&-\"\n}\ng", spelling + "$"},
+	} {
+		lanes = append(lanes, struct{ name, lane, library, want string }{fmt.Sprintf("a lane that runs %q", row[0]), row[0], "", row[1]})
+	}
+	cases = append(cases, struct{ name, library, want string }{"a library that runs kill", "kill -9 $$\n", ends},
+		struct{ name, library, want string }{"a library that exits", "exit 0\n", ended})
 	for _, tc := range cases {
 		lanes = append(lanes, struct{ name, lane, library, want string }{tc.name, `source "${ROOT_DIR}/scripts/lib/l.sh"`, tc.library, tc.want})
 	}
@@ -759,7 +799,7 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), unread) || !strings.Contains(err.Error(), tc.want) {
+			if err == nil || !strings.Contains(err.Error(), unread) || !strings.Contains(err.Error()+"$", tc.want) { // a want that ends in $ ends the error
 				t.Fatalf("LaneScripts() = %q, %v, want an error with %q", got, err, tc.want)
 			}
 		})
@@ -899,5 +939,6 @@ func TestLaneScriptsRejectsEvasions(t *testing.T) {
 	if err := validate(head + anchor + "\n"); err != nil {
 		t.Fatalf("LaneScripts() on the wired step: %v", err)
 	}
-	RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "wiring", validate)
+	// An exit or an exec before the gate ends the lane, so the reader refuses it.
+	RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "wiring", validate, "exit before the command", "exec before the command")
 }

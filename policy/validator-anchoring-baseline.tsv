@@ -235,10 +235,10 @@ internal/metadatautil	laneReadable	24a9644f,3db12709,532c91a7,8a60283b	fails clo
 internal/metadatautil	laneReading.callReason	0ef736ec	fails closed: a command word with a glob or a brace group makes the lane unreadable
 internal/metadatautil	laneReading.expandedReason	25256dad,2b860056,65907a4e,7eae08b2,b9d78721,fed703bb	fails closed: a command word it cannot read as a pinned root, a path or one program variable makes the lane unreadable
 internal/metadatautil	laneReading.outputs	ad697d63,c5f63017	the checks read the words a closed reader returns for a local copy of a positional parameter and a computed name; a write it cannot match makes the lane unreadable
-internal/metadatautil	laneScanWrites	85220f63,e285c2fb	the checks read laneScan command words for an assignment and a local of a positional parameter; they parse words, not free text
+internal/metadatautil	laneScanWrites	3fe0e8ae,85220f63,e285c2fb	the checks read laneScan command words for an assignment, a local of a positional parameter and a default a redirection, a here-string or a heredoc body assigns; they parse words, not free text
 internal/metadatautil	laneUnquotedRisk	531ecaa8,d5d66042	fails closed: a word with an unquoted expansion or glob is read as one bash may split
 internal/metadatautil	laneUnredirected	4b6e734b	the check reads one command word for a redirection operator; it parses words, not free text
-internal/metadatautil	TestLaneScriptsReadsLocalNumbersGuardsAndEvals	057a83f7	a test assertion on the error text the reader itself produces
+internal/metadatautil	TestLaneScriptsReadsLocalNumbersGuardsAndEvals	057a83f7,7d839ab9	a test assertion on the error text the reader itself produces
 internal/metadatautil	laneEvalOperands	873291b3	the check reads one word a closed reader returns for a redirection operator, to leave an eval's redirections unread; it parses words, not free text
 internal/metadatautil	laneEvalSpelling	4fd14f80,81eb7bf6	the check reads the expansions of words a closed reader returns, each as $v or ${v} with no operator, and fails closed on any other; it parses words, not free text
 internal/metadatautil	laneGuardExit	e03e350c	the check reads one word a closed reader returns for a literal status or loop count; it parses a word, not free text
