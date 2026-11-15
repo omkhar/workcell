@@ -528,15 +528,8 @@ func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []st
 // checkWorkspaceSymlink fails closed unless the symlink at path, which is rel
 // under the workspace root that resolves to resolvedRoot, stays inside it.
 func checkWorkspaceSymlink(resolvedRoot, path, rel, target string) error {
-	// The remote-vm contract promises host-auditable materialization:
-	// a symlink that resolves outside the materialized workspace would
-	// smuggle non-workspace content past that audit, so fail closed.
-	if filepath.IsAbs(target) {
-		return fmt.Errorf("workspace symlink %q targets an absolute path: %q", rel, target)
-	}
-	resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
-	if resolved == ".." || strings.HasPrefix(resolved, "../") {
-		return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
+	if err := checkWorkspaceSymlinkTarget(rel, target); err != nil {
+		return err
 	}
 	// The lexical check above is evadable through symlink chains
 	// (an in-workspace link to a parent directory re-routes a later
@@ -548,6 +541,21 @@ func checkWorkspaceSymlink(resolvedRoot, path, rel, target string) error {
 		return fmt.Errorf("workspace symlink %q does not resolve inside the workspace: %q", rel, err.Error())
 	}
 	if physical != resolvedRoot && !strings.HasPrefix(physical, resolvedRoot+string(filepath.Separator)) {
+		return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
+	}
+	return nil
+}
+
+// checkWorkspaceSymlinkTarget is the lexical half of the symlink rule. The
+// remote-vm contract promises host-auditable materialization: a symlink that
+// resolves outside the materialized workspace would smuggle non-workspace
+// content past that audit, so fail closed.
+func checkWorkspaceSymlinkTarget(rel, target string) error {
+	if filepath.IsAbs(target) {
+		return fmt.Errorf("workspace symlink %q targets an absolute path: %q", rel, target)
+	}
+	resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
 		return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
 	}
 	return nil
