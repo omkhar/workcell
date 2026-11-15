@@ -98,9 +98,14 @@ var laneModeled = map[string]func(args []string, read map[string]bool) string{
 // laneInert are the builtins and reserved words no use of which changes what
 // a later command runs, past the variables they assign, which laneWrites
 // reads. exec runs a program only, never a builtin or a function.
-var laneInert = strings.Fields(`: [ true false echo test pwd exit return break continue shift umask ulimit kill
-	jobs times wait type unset cd pushd popd dirs exec caller help logout disown bg fg getopts let builtin
+var laneInert = strings.Fields(`: [ true false echo test pwd exit return break continue shift umask ulimit
+	jobs times wait type unset cd pushd popd dirs exec caller help disown bg fg getopts let builtin
 	command time if then else elif fi case esac for select while until do done in function { } ! [[ ]] coproc`)
+
+// laneEnders are the builtins and programs that may signal the lane's own
+// shell, as kill -9 $$ does, or stop or end it, so that bash never runs a later
+// command: this reader cannot prove which process they reach.
+var laneEnders = strings.Fields(`kill pkill killall logout suspend`)
 
 // laneStopsReason returns why a set may stop bash running a later command,
 // as set -n, set -t, set -o noexec and set -o onecmd do, or "".
@@ -252,7 +257,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 	stable, forwarders := map[string]bool{}, map[string]bool{}
 	for at, text := range bodies {
 		where := laneWhere(at)
-		if _, ended := rewriteHeredocsEnding(text, true); !ended {
+		if _, ended := rewriteHeredocsEnding(text); !ended {
 			return false, fmt.Errorf("lane wiring is unreadable: a %s opens a heredoc whose end this reader cannot find, so it cannot read what runs after it", where)
 		}
 		scanned, children, complete := laneScan(text)
@@ -713,6 +718,9 @@ func (reading laneReading) callReason(command []string) string {
 	if name == "eval" && reading.lapsed[strings.Join(args, "\x00")] {
 		return fmt.Sprintf("evals text this reader cannot spell: a digits guard it needs lapsed past the limit of %d guards in force at once", laneGuardLimit)
 	}
+	if slices.Contains(laneEnders, commandName(name)) {
+		return "may stop or end the lane's shell before a later command runs"
+	}
 	if rule, modeled := laneModeled[name]; modeled {
 		return rule(args, reading.read)
 	}
@@ -836,7 +844,7 @@ func laneScan(text string) (commands []command, children []string, complete bool
 	budget := 16*len(text) + 1<<16
 	var scan func(text string, depth int) bool
 	scan = func(text string, depth int) bool {
-		rewritten, ended := rewriteHeredocsEnding(text, true)
+		rewritten, ended := rewriteHeredocsEnding(text)
 		return depth <= 8 && ended && shellLines(flattenGrouped(rewritten, true), &budget, func(each command) bool {
 			each.nested = depth > 0
 			commands = append(commands, each)
@@ -1300,9 +1308,11 @@ var laneBuiltins = strings.Fields(`. : [ alias bg bind break builtin caller cd c
 
 // laneProgramWord reports whether a value a lane spells for a program variable
 // names a program: empty, which runs nothing, or a program name that is not a
-// builtin, a reserved word or a function the lane or a library defines.
+// builtin, a reserved word, a laneEnders program or a function the lane or a
+// library defines.
 func laneProgramWord(value string, functions map[string]bool) bool {
-	return value == "" || laneProgramName.MatchString(value) && !slices.Contains(laneBuiltins, value) && !functions[value]
+	return value == "" || laneProgramName.MatchString(value) && !slices.Contains(laneBuiltins, value) && !functions[value] &&
+		!slices.Contains(laneEnders, commandName(value))
 }
 
 // firstOf returns the first word, or "".

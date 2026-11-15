@@ -245,7 +245,7 @@ descriptors.
 `scripts/*.sh` path as a command. Thus a doc cannot cite a gate that nothing
 runs. The check reads every command that a lane can run, so a command after
 `false &&` or after an `exit` counts. A comment, a heredoc or an array member
-does not count. A workflow path starts from the working directory of its step,
+does not count, but a substitution in an unquoted heredoc runs, so it counts. A workflow path starts from the working directory of its step,
 and a `cd` before it moves that directory.
 
 `internal/metadatautil/lane_scripts.go` reads the lanes, and
@@ -267,7 +267,8 @@ declarations, `read`, `printf`, `mapfile`, `compgen`, `eval`, `trap` and
 `source`. Each of these must spell its options and names with no expansion
 (`internal/metadatautil/lane_reading.go`). So `set -o $o` and `export P{A,X}TH=`
 stop the check. An inert builtin such as `cd` or `test` counts too. Every other
-builtin stops the check, as `alias`, `enable` and `fc` do.
+builtin stops the check, as `alias`, `enable` and `fc` do. So do `kill`,
+`pkill`, `killall`, `logout` and `suspend`, which may end the lane's shell.
 
 The reader reads the literal text of an `eval`, a `trap` action and a child
 shell's program, at most eight deep, after any leading redirection. A source

@@ -731,6 +731,18 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 	for _, name := range strings.Fields("return continue break local unset set declare typeset read printf export readonly shift exit builtin command") {
 		lanes = append(lanes, struct{ name, lane, library, want string }{"a bare function named " + name, name + `() { :; }`, "", "defines a function named"})
 	}
+	const ends, builtin = "may stop or end the lane's shell", "a builtin this reader does not model"
+	for _, row := range [][2]string{ // a command that may end the lane, also in an unquoted heredoc's substitution, and what may not
+		{"kill -9 $$", ends}, {"command kill -9 $$", ends}, {"builtin kill -STOP $$", ends}, {"env kill -9 $$", ends}, {"/bin/kill -9 $$", ends},
+		{"trap 'exit 0' TERM; kill $$", ends}, {"eval 'kill -9 $$'", ends}, {"f() { kill -9 $$; }; f", ends}, {"trap 'kill -9 0' DEBUG", ends},
+		{"logout", ends}, {"suspend -f", ends}, {"killall -STOP bash", ends}, {"pkill -P $$", ends}, {"k=/usr/bin/pkill; \"${k}\" bash", program}, {"cat <<EOF\n$(kill -9 $$)\nEOF", ends},
+		{"cat <<EOF\n`kill -9 0`\nEOF", ends}, {"cat <<-EOF\n\t${x:-$(kill -9 $$)}\n\tEOF", ends}, {"cat <<EOF\n$(alias a=b)\nEOF", builtin},
+		{"x='kill -9 $$'\ncat <<EOF\n$(eval \"$x\")\nEOF", spelling}, {"cat <<'EOF'\n$(kill -9 $$)\nEOF", "wired"},
+		{"cat <<\"EOF\"\n`kill -9 $$`\nEOF", "wired"}, {"cat <<EOF\n\\$(kill -9 $$)\nEOF", "wired"}, {"cat <<EOF\n$(date)\nEOF", "wired"},
+	} {
+		lanes = append(lanes, struct{ name, lane, library, want string }{fmt.Sprintf("a lane that runs %q", row[0]), row[0], "", row[1]})
+	}
+	cases = append(cases, struct{ name, library, want string }{"a library that runs kill", "kill -9 $$\n", ends})
 	for _, tc := range cases {
 		lanes = append(lanes, struct{ name, lane, library, want string }{tc.name, `source "${ROOT_DIR}/scripts/lib/l.sh"`, tc.library, tc.want})
 	}

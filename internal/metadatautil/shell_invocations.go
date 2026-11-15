@@ -662,23 +662,17 @@ func quoteCloseIndex(line string, quote byte) int {
 }
 
 // heredocsAsHereStrings moves every heredoc body into the line that opens it, as the here-string heredocWord spells, so the command that reads it keeps it.
+// A body bash expands keeps its text, as heredocExpanded spells it, so each $( ... ) or ` ... ` in it is read as a command, as on any other line.
 func heredocsAsHereStrings(script string) string {
-	return rewriteHeredocs(script, false)
-}
-
-// rewriteHeredocs is heredocsAsHereStrings, and when expanded is set, it keeps
-// the text of a body bash expands too, as the here-string heredocExpanded
-// spells, so a reader of expansions reads it.
-func rewriteHeredocs(script string, expanded bool) string {
-	text, _ := rewriteHeredocsEnding(script, expanded)
+	text, _ := rewriteHeredocsEnding(script)
 	return text
 }
 
-// rewriteHeredocsEnding is rewriteHeredocs, and whether every body ends at a
+// rewriteHeredocsEnding is heredocsAsHereStrings, and whether every body ends at a
 // line this reader matches. A body that does not, as one whose delimiter is
 // unresolved, runs to the end of script, so whatever bash runs after its
 // real end is missing from the text.
-func rewriteHeredocsEnding(script string, expanded bool) (string, bool) {
+func rewriteHeredocsEnding(script string) (string, bool) {
 	var out, body strings.Builder
 	var opened, pending []heredoc
 	var bodies []string
@@ -706,14 +700,11 @@ func rewriteHeredocsEnding(script string, expanded bool) (string, bool) {
 				body.WriteString(line)
 			default:
 				// bash expands an unquoted delimiter's body, so one with an
-				// expansion or an escape cannot be spelled.
+				// expansion or an escape is read as a double-quoted word.
 				text := body.String()
-				switch expands := !each.quoted && strings.ContainsAny(text, "$`\\"); {
-				case expands && expanded:
+				if !each.quoted && strings.ContainsAny(text, "$`\\") {
 					bodies = append(bodies, heredocExpanded(text))
-				case expands:
-					bodies = append(bodies, "<<<$_")
-				default:
+				} else {
 					bodies = append(bodies, heredocWord(text))
 				}
 				body.Reset()
