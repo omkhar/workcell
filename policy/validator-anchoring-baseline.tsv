@@ -227,6 +227,7 @@ internal/metadatautil	laneInnerText	7a693089	the checks read the command words l
 internal/metadatautil	laneAssigns	36f3eb76,b8e7a45b	the checks read laneScan command words for the shape of a bare assignment, a declaration or a for loop; any other command counts as no write, which fails closed
 internal/metadatautil	laneEnvOperands	1cb09415	the checks read laneScan command words for env and the program it runs by an absolute path; any other command keeps every shaped write, which fails closed
 internal/metadatautil	laneLeadingCase	66ebad48	the checks read words a closed reader returns: the shape of an assignment, to tell it from a case pattern, and a word that ends in ) to find where a case pattern ends; they parse words, not free text
+internal/metadatautil	laneSelects	7ac4b5e2,7bfaff0d,e6dc3ce7	the check reads the words a closed reader returns for one case subject, as one expansion of a named variable or the lane's own parameter, and for its patterns, each split at | and refused when it holds a glob, a quote or an expansion; any other branch reads as unconditional, which fails closed
 internal/metadatautil	laneLiteralOptions	337d65e9,a4f48ac8,b76466b5,ea7ffe16	fails closed: an option word with an expansion makes the lane unreadable
 internal/metadatautil	laneOption	63c8cdd6,e5e919d3	fails closed: an option word with a letter that changes what runs makes the lane unreadable
 internal/metadatautil	laneOutputName	0dd42f68,6537f911	fails closed: a name that is not a plain identifier, or names a variable bash reads or ROOT_DIR, makes the lane unreadable

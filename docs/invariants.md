@@ -255,8 +255,9 @@ always runs one (`internal/metadatautil/lane_reading.go`). An `exit` whose
 status may be 0 stops the check in a loop, a `case` branch or an `if`
 condition too, since those may run. One in an `if` branch, behind `||` or `&&`,
 or in a subshell still counts, as a lane's failed check does. So does one in a
-`case` branch that matches only `-h` or `--help` against the lane's own first
-parameter, as a lane's usage text does.
+`case` branch of literal patterns on one variable, as `-h | --help)` on the
+lane's own `$1` is. A literal subject or a glob such as `*)` matches whenever
+the case runs, and a function's `$1` is its caller's, so neither counts.
 
 A call stops the check when its body may exit with 0 before a `return` that
 always runs. A `return` in a branch or a loop does not count, since the body

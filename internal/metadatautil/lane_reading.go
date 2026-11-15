@@ -331,7 +331,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		var lapsed []laneGuard             // the guards past laneGuardLimit, which no longer count
 		var pending *laneGuard             // a test for digits the next command may make a guard
 		heading := map[int]bool{}          // the if scopes whose condition the reader is in, which runs whenever the if does
-		option := map[int]bool{}           // the case branches a literal option selects from the lane's first parameter
+		option := map[int]bool{}           // the case branches a literal pattern selects, as an if branch
 		subjects := map[int]string{}       // the word each case at a depth matches
 		var patterns []string              // the words of a case pattern the shell reader split at a |
 		pattern := false                   // whether the last command left a case pattern open
@@ -374,7 +374,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 					if len(words) > 2 && words[0] == "case" {
 						subjects[len(scopes)], branch = words[1], words[3:]
 					}
-					option[last], patterns = at == 0 && function == 0 && laneHelpBranch(subjects[len(scopes)], append(patterns, branch...)), nil // the lane's own first parameter
+					if patterns = append(patterns, branch...); slices.ContainsFunc(patterns, func(word string) bool { return strings.HasSuffix(word, ")") }) {
+						option[last], patterns = laneSelects(subjects[len(scopes)], patterns, at == 0 && function == 0), nil // the lane's own parameters only at its top level
+					} // else the shell reader split the pattern at a |, and its next piece holds the rest
 				case each.piped && nesting.kinds[last] == "case":
 					patterns = append(patterns, words...)
 				default:
@@ -1607,17 +1609,21 @@ func laneMasks(text string, bodied map[string][]string, read map[string]bool) bo
 	return !complete
 }
 
-// laneHelpBranch reports whether a case branch matches only -h or --help, as
-// -h | --help) does, against the lane's first parameter, as the lanes read
-// their command lines.
-func laneHelpBranch(subject string, words []string) bool {
+// laneSelects reports whether a case branch is a condition as an if branch
+// is: its subject is one expansion of a named variable, or of a positional
+// parameter only where it is the lane's own, and each of its patterns is a
+// literal word, as issues) or -h | --help) is. A literal subject, as in
+// case x in x), or a pattern with a glob, as *) is, matches whenever the case
+// runs.
+func laneSelects(subject string, words []string, own bool) bool {
 	end := slices.IndexFunc(words, func(word string) bool { return strings.HasSuffix(word, ")") })
-	if end < 0 || subject != "$1" && subject != "${1}" {
+	match := laneExpansionNames.FindStringSubmatch(subject)
+	if end < 0 || match == nil || subject != "$"+match[1] && subject != "${"+match[1]+"}" || !laneVariableName.MatchString(match[1]) && (!own || strings.Trim(match[1], "123456789") != "") {
 		return false
 	}
 	for _, word := range words[:end+1] {
 		for _, pattern := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(word, "("), ")"), "|") {
-			if pattern != "" && pattern != "-h" && pattern != "--help" {
+			if strings.ContainsAny(pattern, "*?[]$`!@+()\\'\"") {
 				return false
 			}
 		}

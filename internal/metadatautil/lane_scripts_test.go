@@ -799,8 +799,10 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		{"for i in 1; do exit 0; done", ended}, {"while :; do exit 0; done", ended}, {"until false; do exit 0; done", ended}, {"select x in a; do exit 0; done", ended},
 		{"f() { if false; then return; fi; exit 0; }; f", ended}, {"f() { for i in; do return; done; exit 0; }; f", ended}, {"f() { while false; do return; done; exit 0; }; f", ended},
 		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", "wired"}, {"case \"${1}\" in -h|--help) exit 0;; esac", "wired"},
-		{"case \"$1\" in\n  --profile | --help)\n    exit 0\n    ;;\nesac", ended}, {"case \"${1:-}\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", ended},
-		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\n  *) exit 0 ;;\nesac", ended}, {"case \"$2\" in --help) exit 0;; esac", ended},
+		{"case \"$1\" in\n  --profile | --help)\n    exit 0\n    ;;\nesac", "wired"}, {"case \"${1:-}\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", ended},
+		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\n  *) exit 0 ;;\nesac", ended}, {"case \"$2\" in --help) exit 0;; esac", "wired"}, {"case \"${EVENT}\" in\n  issues)\n    exit 0\n    ;;\n  x) ;;\nesac", "wired"},
+		{"case \"$E\" in\n  a) : ;;\n  *)\n    exit 0\n    ;;\nesac", ended}, {"case \"$E\" in a*) exit 0;; esac", ended}, {"case \"$E\" in\n  * | a)\n    exit 0\n    ;;\nesac", ended}, {"case \"$E\" in * | a) exit 0;; esac", ended}, {"case \"$1\" in * | -h) exit 0;; esac", ended}, {"case \"$E\" in\n  a)\n    ls * | cat\n    ;;\n  b)\n    exit 0\n    ;;\nesac", "wired"}, {"case \"${E}x\" in a) exit 0;; esac", ended},
+		{"case \"$0\" in a) exit 0;; esac", ended}, {"case \"$E\" in \"$F\") exit 0;; esac", ended}, {"f() {\n  case \"$E\" in\n    a)\n      exit 0\n      ;;\n  esac\n}\nf", "wired"},
 		{"f() { case \"$1\" in -h) exit 0;; esac; }; f x", ended}, {"case x in\n  x)\n    exit 1\n    ;;\nesac", "wired"},
 		{"case x in a | b | x) exit 0;; esac", ended}, {"case x in\n  a) : ;;\n  x | y)\n    exit 0\n    ;;\nesac", ended},
 		{"f() {\n  case \"$1\" in\n    -h | --help)\n      exit 0\n      ;;\n  esac\n}\nf -h", ended},
@@ -820,7 +822,8 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		struct{ name, library, want string }{"a library that sets lastpipe", "shopt -s lastpipe\n", lastpipe},
 		struct{ name, library, want string }{"a library that defines a function in eval text", "eval 'g() { exit 0; }'\n", inEval},
 		struct{ name, library, want string }{"a library whose case branch exits", "case x in *) exit 0;; esac\n", ended},
-		struct{ name, library, want string }{"a library whose help case exits", "case \"$1\" in -h|--help) exit 0;; esac\n", ended})
+		struct{ name, library, want string }{"a library whose help case exits", "case \"$1\" in -h|--help) exit 0;; esac\n", ended},
+		struct{ name, library, want string }{"a library whose case on a variable exits", "case \"$E\" in a) exit 0;; esac\n", "wired"})
 	for _, tc := range cases {
 		lanes = append(lanes, struct{ name, lane, library, want string }{tc.name, `source "${ROOT_DIR}/scripts/lib/l.sh"`, tc.library, tc.want})
 	}
