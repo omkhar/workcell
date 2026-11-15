@@ -14,7 +14,8 @@ Remove Workcell-owned local install links and managed host state:
   - ~/.local/bin/workcell
   - ~/.local/share/man/man1/workcell.1
   - ~/.local/state/workcell
-  - Workcell-owned build cache roots
+  - Workcell-owned build cache roots and their workcell.lock files (a root
+    stays while a running Workcell holds its cache lock)
   - ~/.colima/workcell-* and wcl-* profiles (the current derived name), matching _lima dirs, matching _lima/_disks dirs, matching _store metadata, and Workcell locks
   - workcell-host-inputs, workcell-shadow, and workcell-token-handoff under the
     Colima cache root: ~/Library/Caches/colima on macOS and ~/.cache/colima on
@@ -102,6 +103,9 @@ fi
 HOST_DETECT_HELPER="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/launcher/host-detect.sh"
 # shellcheck source=SCRIPTDIR/lib/launcher/host-detect.sh
 source "${HOST_DETECT_HELPER}"
+# The cache lock that every Go cache writer holds (issue 812).
+# shellcheck source=SCRIPTDIR/lib/go-run-env.sh
+source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/go-run-env.sh"
 COLIMA_CACHE_ROOT="$(colima_staging_cache_root)"
 INJECTION_ROOT="${COLIMA_CACHE_ROOT}/workcell-host-inputs"
 SHADOW_ROOT="${COLIMA_CACHE_ROOT}/workcell-shadow"
@@ -190,6 +194,54 @@ remove_path() {
     log_action "Removed" "${target}"
   fi
   REMOVED_COUNT=$((REMOVED_COUNT + 1))
+}
+
+# remove_workcell_cache_root ROOT removes a Workcell cache root and its lock
+# file, ROOT.lock, under the exclusive cache lock that every Go cache writer
+# honors (issue 812). It keeps a root that a run holds or whose lock cannot be
+# taken safely, as workcell --gc does, and a dry run says which it would keep.
+remove_workcell_cache_root() {
+  local root="$1"
+  local lock="${root}.lock"
+  local path=""
+  local rc=0
+  local -a present=()
+
+  for path in "${root}" "${lock}"; do
+    [[ -e "${path}" || -L "${path}" ]] && present+=("${path}")
+  done
+  [[ ${#present[@]} -gt 0 ]] || return 0
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    # A dry run tries the lock that the real run takes, the one beside the
+    # directory that a symlinked root points to, and never creates it.
+    workcell_cache_lock_available || rc=69
+    [[ "${rc}" -ne 0 ]] || workcell_cache_lock_perl check-exclusive "${lock}" || rc=$?
+  else
+    # shellcheck disable=SC2016 # the child shell expands its own "$1" and "$2"
+    workcell_cache_lock_run_exclusive "${lock}" /bin/bash -p -c \
+      "$(declare -f prepare_directory_tree_for_removal)"'
+prepare_directory_tree_for_removal "$1"
+if ! rm -rf -- "$1" 2>/dev/null; then
+  prepare_directory_tree_for_removal "$1"
+  rm -rf -- "$1" || exit 1
+fi
+rm -f -- "$2"' workcell-uninstall "${root}" "${lock}" || rc=$?
+  fi
+  case "${rc}" in
+    0)
+      for path in "${present[@]}"; do
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+          log_action "Would remove" "${path}"
+        else
+          log_action "Removed" "${path}"
+        fi
+      done
+      REMOVED_COUNT=$((REMOVED_COUNT + ${#present[@]}))
+      ;;
+    75) preserve_path "cache root in use" "${root}" ;;
+    64 | 69 | 71 | 73 | 77) preserve_path "cache root without a safe cache lock" "${root}" ;;
+    *) return "${rc}" ;;
+  esac
 }
 
 remove_path_best_effort() {
@@ -473,8 +525,8 @@ remove_path "${INJECTION_ROOT}"
 remove_path "${SHADOW_ROOT}"
 remove_path "${TOKEN_HANDOFF_ROOT}"
 remove_path "${COLIMA_CHILD_CACHE_HOME}"
-remove_path "${MACOS_CACHE_ROOT}"
-remove_path "${XDG_WORKCELL_CACHE_ROOT}"
+remove_workcell_cache_root "${MACOS_CACHE_ROOT}"
+remove_workcell_cache_root "${XDG_WORKCELL_CACHE_ROOT}"
 
 # WORKCELL_UNINSTALL_TEMP_ROOT replaces /tmp and $TMPDIR with one root, so a
 # test can clean only the scratch it created.

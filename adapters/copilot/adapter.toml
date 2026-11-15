@@ -50,7 +50,7 @@ allow = [
   "--enable-mcp-server", "--fleet", "-h", "--help", "--log-level",
   "--max-ai-credits", "--model", "--mouse", "--no-color",
   "--no-eager-powershell-resolution", "--no-experimental", "--no-mouse", "-p",
-  "--plain-diff", "--prompt", "--reasoning-effort", "-s", "--screen-reader",
+  "--prompt", "--reasoning-effort", "-s", "--screen-reader",
   "--silent", "--stream", "--usage-output-file", "-v", "--version",
   "--disable-client-telemetry",
 ]

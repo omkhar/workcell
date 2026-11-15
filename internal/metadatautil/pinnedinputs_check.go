@@ -57,7 +57,6 @@ type pinnedInputsCheck struct {
 	hostedControlsPolicy    map[string]any
 
 	rustPins rustPinValues
-	toolPins validatedToolPins
 	ciRepro  ciReproValues
 }
 
@@ -84,12 +83,6 @@ type rustPinValues struct {
 	runtimeImage, validatorVersion                 string
 }
 
-type validatedToolPins struct {
-	buildx, qemu, buildkit, cosign, syft string
-	actionlintVersion, actionlintSHA     string
-	zizmorVersion, zizmorSHA             string
-}
-
 type ciReproValues struct{ job, strategy string }
 
 type pinnedTextInput struct {
@@ -102,10 +95,6 @@ type releaseDownload struct{ label, url string }
 type pinnedStringInput struct {
 	target           *string
 	text, name, path string
-}
-type workflowEnvInput struct {
-	target                          *string
-	text, key, pattern, label, path string
 }
 
 type textRequirement struct {
@@ -240,33 +229,6 @@ func firstPinnedInputError(checks ...func() error) error {
 	return nil
 }
 
-func requireYAMLKey(text, name, path string) (string, error) {
-	match := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `:\s*(.+)$`).FindStringSubmatch(text)
-	if match == nil {
-		return "", fmt.Errorf("unable to extract %s from %s", name, path)
-	}
-	return strings.TrimSpace(match[1]), nil
-}
-
-func requireUniformWorkflowEnv(text, key, valuePattern, label, path string) (string, error) {
-	lineRE := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:\s*(\S+)\s*$`)
-	valueRE := regexp.MustCompile(`^` + valuePattern + `$`)
-	matches := lineRE.FindAllStringSubmatch(text, -1)
-	if len(matches) == 0 {
-		return "", fmt.Errorf("%s in %s must define %s", label, path, key)
-	}
-	value := matches[0][1]
-	for _, match := range matches {
-		if !valueRE.MatchString(match[1]) {
-			return "", fmt.Errorf("%s in %s must match %q", label, path, valuePattern)
-		}
-		if match[1] != value {
-			return "", fmt.Errorf("%s in %s must use one reviewed value for %s", label, path, key)
-		}
-	}
-	return value, nil
-}
-
 func requireCappedReleaseDownloads(text, path string, downloads []releaseDownload) error {
 	for _, download := range downloads {
 		if err := requireCappedReleaseDownload(text, path, download); err != nil {
@@ -333,17 +295,6 @@ func requireTOMLString(text, key, path string) (string, error) {
 func loadPinnedStrings(extract pinnedStringExtractor, inputs []pinnedStringInput) error {
 	for _, input := range inputs {
 		value, err := extract(input.text, input.name, input.path)
-		if err != nil {
-			return err
-		}
-		*input.target = value
-	}
-	return nil
-}
-
-func loadWorkflowEnvs(inputs []workflowEnvInput) error {
-	for _, input := range inputs {
-		value, err := requireUniformWorkflowEnv(input.text, input.key, input.pattern, input.label, input.path)
 		if err != nil {
 			return err
 		}
