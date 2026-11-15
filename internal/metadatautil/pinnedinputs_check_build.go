@@ -59,7 +59,7 @@ func (check *pinnedInputsCheck) loadAndValidateRustImagePins() error {
 			return requireEqual("Rust toolchain channel", values.toolchainVersion, check.paths.rustToolchain, values.runtimeVersion, check.cfg.RuntimeDockerfilePath)
 		},
 		func() error {
-			return requirePinnedBaseImage(values.runtimeImage, "RUST_TOOLCHAIN_IMAGE", check.cfg.RuntimeDockerfilePath)
+			return requirePinnedBaseImage(values.runtimeImage, "rust", "RUST_TOOLCHAIN_IMAGE", check.cfg.RuntimeDockerfilePath)
 		},
 		func() error {
 			return requireTextRequirements(textRequirement{
