@@ -69,9 +69,10 @@ func Codex(args []string, s Session) error {
 	default:
 		allowedProfile = "strict"
 	}
+	// profile takes the value as clap passes it on. Only the caller of an
+	// attached short form drops one "=" (shortValue): a separate value or the
+	// value of --profile=VALUE that starts with "=" is the literal name.
 	profile := func(value string) error {
-		// clap accepts the short form with "=" (-p=VALUE).
-		value = strings.TrimPrefix(value, "=")
 		if value != allowedProfile {
 			return refuse(unsafe + "--profile")
 		}
@@ -176,7 +177,7 @@ func Codex(args []string, s Session) error {
 		case strings.HasPrefix(arg, "-C") && len(arg) > 2:
 			return refuse(unsafe + "--cd")
 		case strings.HasPrefix(arg, "-p") && len(arg) > 2:
-			if err := profile(arg[2:]); err != nil {
+			if err := profile(shortValue(arg)); err != nil {
 				return err
 			}
 		case strings.HasPrefix(arg, "-s") && len(arg) > 2, strings.HasPrefix(arg, "--sandbox="):
@@ -208,13 +209,20 @@ func Codex(args []string, s Session) error {
 			}
 		case strings.HasPrefix(arg, "-c") && len(arg) > 2:
 			// -cKEY=VALUE and clap's -c=KEY=VALUE.
-			v := strings.TrimPrefix(arg[2:], "=")
+			v := shortValue(arg)
 			if err := config(v, v); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// shortValue returns the value of a short option glued to its value: the
+// text after the two-byte option, without one leading "=", because clap reads
+// -pVALUE and -p=VALUE alike. A second "=" stays in the value.
+func shortValue(arg string) string {
+	return strings.TrimPrefix(arg[2:], "=")
 }
 
 // codexNormalizeConfigKey canonicalizes the key of a Codex `-c key=value`
