@@ -760,7 +760,10 @@ target_buildkit_image="${buildkit_track}@$(docker_image_digest "${buildkit_track
 target_qemu_tag="$(latest_qemu_tag)"
 target_qemu_image="tonistiigi/binfmt:${target_qemu_tag}@$(docker_image_digest "tonistiigi/binfmt:${target_qemu_tag}")"
 
-provider_summary="$("${ROOT_DIR}/scripts/update-provider-pins.sh")"
+provider_summary="$("${ROOT_DIR}/scripts/update-provider-pins.sh")" || {
+  echo "Unable to compute provider bump summary." >&2
+  exit 1
+}
 provider_plan_status=0
 provider_plan_json="$("${ROOT_DIR}/scripts/update-provider-pins.sh" --json)" || provider_plan_status=$?
 if [[ "${provider_plan_status}" -ne 0 ]]; then

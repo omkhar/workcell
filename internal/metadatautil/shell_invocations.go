@@ -1310,11 +1310,9 @@ func shellWords(line string, stack []byte) (
 		// the caller must skip it by the ANSI-C rules, not the plain ones.
 		quote = ansiCQuote
 	}
-	if len(stack) > 0 {
-		// A substitution is still open, so the logical line has not ended and
-		// the quote around it is not the caller's to skip.
-		return words, heredocs, 0, stack, continues, ""
-	}
+	// A quote still open is one the line opened outside any substitution or
+	// inside the innermost open one; the quote around a substitution waits in
+	// stack. Either way the next line starts inside it.
 	return words, heredocs, quote, stack, continues, ""
 }
 
