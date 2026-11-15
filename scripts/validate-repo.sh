@@ -264,6 +264,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh"
   "${ROOT_DIR}/scripts/ci/upstream-refresh-candidate.sh"
   "${ROOT_DIR}/scripts/ci/upstream-refresh-publish.sh"
+  "${ROOT_DIR}/scripts/ci/upstream-refresh-rederive.sh"
   "${ROOT_DIR}/scripts/ci/upstream-refresh-scope-guard.sh"
   "${ROOT_DIR}/scripts/run-hosted-controls-audit.sh"
   "${ROOT_DIR}/scripts/run-mutation-tests.sh"
