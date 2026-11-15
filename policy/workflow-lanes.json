@@ -430,6 +430,24 @@
       "github_only_reason": "CodeQL requires GitHub-hosted scanning and upload permissions"
     },
     {
+      "id": "dependabot-follow-up.yml/regenerate",
+      "workflow_path": ".github/workflows/dependabot-follow-up.yml",
+      "workflow_name": "Dependabot follow-up",
+      "job_id": "regenerate",
+      "job_name": "Regenerate Dependabot fixtures",
+      "workflow_events": [
+        "pull_request"
+      ],
+      "workflow_path_globs": {
+        "pull_request": [
+          ".github/workflows/**"
+        ]
+      },
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the job runs only on a Dependabot pull request; locally, refresh-action-inputs runs on the bump branch"
+    },
+    {
       "id": "docs.yml/spelling-and-manpage",
       "workflow_path": ".github/workflows/docs.yml",
       "workflow_name": "Docs",

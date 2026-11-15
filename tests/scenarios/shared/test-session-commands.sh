@@ -7,6 +7,8 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-session-scenario.XXXXXX")"
 TMP_DIR="$(cd "${TMP_DIR}" && pwd -P)"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/ack-date.sh"
 REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-session-scenario-$$"
 SESSION_ONE="20260408T100000Z-11111111-$$"
@@ -22,7 +24,6 @@ CLI_SESSION_FIXTURE_IMAGE="workcell-session-cli-fixture:test-$$"
 CLI_SESSION_FIXTURE_BUILD_DIR="${TMP_DIR}/session-cli-fixture-build"
 WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
 HOST_DOCKER_BIN=""
-ACK_TODAY_UTC="$(date -u +%Y-%m-%d)"
 
 resolve_host_docker_bin() {
   local candidate=""
@@ -147,38 +148,50 @@ mkdir -p "${SESSIONS_DIR}" "${LEGACY_STATE_DIR}" "${WORKSPACE_A}" "${WORKSPACE_B
 WORKSPACE_A="$(cd "${WORKSPACE_A}" && pwd -P)"
 WORKSPACE_B="$(cd "${WORKSPACE_B}" && pwd -P)"
 
+# sh_single_quote prints one POSIX sh word that stands for $1, so a path with
+# a quote, a space or a parenthesis (as under a hostile TMPDIR) stays one word
+# in the textconv and filter commands git runs through sh -c.
+sh_single_quote() {
+  local squote="'"
+  local escaped="'\\''"
+  printf "'%s'" "${1//${squote}/${escaped}}"
+}
+
 git -C "${WORKSPACE_A}" init >/dev/null
 cat >"${WORKSPACE_A}/textconv.sh" <<EOF
 #!/bin/sh
-touch '${TEXTCONV_MARKER}'
+touch $(sh_single_quote "${TEXTCONV_MARKER}")
 cat "\$1"
 EOF
 chmod +x "${WORKSPACE_A}/textconv.sh"
 cat >"${WORKSPACE_A}/filter.sh" <<EOF
 #!/bin/sh
-touch '${FILTER_MARKER}'
+touch $(sh_single_quote "${FILTER_MARKER}")
 cat
 EOF
 chmod +x "${WORKSPACE_A}/filter.sh"
-git -C "${WORKSPACE_A}" config diff.workcell.textconv "'${WORKSPACE_A}/textconv.sh'"
+git -C "${WORKSPACE_A}" config diff.workcell.textconv "$(sh_single_quote "${WORKSPACE_A}/textconv.sh")"
 git -C "${WORKSPACE_A}" config extensions.worktreeConfig true
-cat >"${FILTER_CONFIG}" <<EOF
-[filter "workcell-test"]
-	clean = '${WORKSPACE_A}/filter.sh'
-	smudge = cat
-EOF
+git config --file "${FILTER_CONFIG}" filter.workcell-test.clean "$(sh_single_quote "${WORKSPACE_A}/filter.sh")"
+git config --file "${FILTER_CONFIG}" filter.workcell-test.smudge cat
 git -C "${WORKSPACE_A}" config --worktree include.path "${FILTER_CONFIG}"
 printf '*.txt diff=workcell\n*.filter filter=workcell-test\n' >"${WORKSPACE_A}/.gitattributes"
 printf 'base\n' >"${WORKSPACE_A}/tracked.txt"
 printf 'seed\n' >"${WORKSPACE_A}/tracked.filter"
 git -C "${WORKSPACE_A}" add .gitattributes tracked.txt tracked.filter
 git -C "${WORKSPACE_A}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -m 'initial' >/dev/null
+# Positive controls: plain git runs the filter and the textconv, so the later
+# checks that workcell runs neither cannot pass because the drivers are broken.
+test -e "${FILTER_MARKER}"
 rm -f "${FILTER_MARKER}"
 GIT_BASE="$(git -C "${WORKSPACE_A}" rev-parse HEAD)"
 GIT_BRANCH="$(git -C "${WORKSPACE_A}" branch --show-current)"
 printf 'updated\n' >"${WORKSPACE_A}/tracked.txt"
 printf 'new file\n' >"${WORKSPACE_A}/new.txt"
 printf 'changed\n' >"${WORKSPACE_A}/tracked.filter"
+git -C "${WORKSPACE_A}" diff -- tracked.txt >/dev/null
+test -e "${TEXTCONV_MARKER}"
+rm -f "${TEXTCONV_MARKER}"
 
 cat >"${SESSIONS_DIR}/20260408T100000Z-11111111.json" <<EOF
 {
@@ -657,14 +670,14 @@ run_detached_start_dry_run() {
   shift 2
 
   WORKCELL_SESSION_WORKSPACE_MODE="${workspace_mode}" \
-    "${ROOT_DIR}/scripts/workcell" \
+    workcell_with_ack_today_utc "${ROOT_DIR}/scripts/workcell" \
     session start \
     --agent codex \
     --mode development \
     --workspace "${workspace_path}" \
     --no-default-injection-policy \
     --allow-arbitrary-command \
-    "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+    "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
     "$@" \
     --dry-run \
     -- /bin/true
@@ -888,7 +901,7 @@ grep -q '^cross_clone_visible=0$' <<<"${noninterference_output}"
 if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   detached_start_custom_state_output="$(
     XDG_STATE_HOME="${custom_state_home}" \
-      /bin/bash "${ROOT_DIR}/scripts/workcell" \
+      workcell_with_ack_today_utc /bin/bash "${ROOT_DIR}/scripts/workcell" \
       session start \
       --session-workspace direct \
       --agent codex \
@@ -896,7 +909,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
       --workspace "${DETACHED_START_WORKSPACE}" \
       --no-default-injection-policy \
       --allow-arbitrary-command \
-      "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+      "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
       --dry-run \
       -- /bin/true 2>&1
   )"
@@ -4801,10 +4814,10 @@ if fork_explicit_run 2001-01-01 >/dev/null 2>&1; then
   exit 1
 fi
 test ! -e "${fork_explicit_log}"
-fork_explicit_run "${ACK_TODAY_UTC}" >/dev/null 2>&1 || true
+workcell_with_ack_today_utc fork_explicit_run @ACK_TODAY_UTC@ >/dev/null 2>&1 || true
 grep -q child "${fork_explicit_log}"
 # Negative control: today's date reaches the snapshot step.
-fork_stale_run "${ACK_TODAY_UTC}" >/dev/null 2>"${TMP_DIR}/fork-fresh-ack.err" || true
+workcell_with_ack_today_utc fork_stale_run @ACK_TODAY_UTC@ >/dev/null 2>"${TMP_DIR}/fork-fresh-ack.err" || true
 grep -q called "${fork_stale_snapshots}" || {
   cat "${TMP_DIR}/fork-fresh-ack.err" >&2
   exit 1

@@ -58,6 +58,7 @@ For an approved large adapter PR, use both required options:
 | `claude-mention.yml` | Answers an `@claude` mention by the repository owner. See [Claude mention](#claude-mention). |
 | `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and required hostile-environment reruns. |
 | `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
+| `dependabot-follow-up.yml` | Makes the action inputs patch that a Dependabot bump needs. See [Dependabot follow-up](#dependabot-follow-up). |
 | `docs.yml` | Checks spelling, links, contracts, and the man page. |
 | `fuzz.yml` | Runs extended Go and Rust fuzz tests. |
 | `hosted-controls.yml` | Checks GitHub controls that are outside Git. |
@@ -385,19 +386,28 @@ The environment rule keeps the secret on `main`, so set it as step 5 says.
 Text from other people in the thread is still model input.
 It can change the answer, but it cannot run a command or change a file.
 
+### Mention failure output
+
+The action hides Claude's output, because that output can hold what Claude read.
+When Claude stops with an error, the step `Show why Claude failed` prints four fields of the final result.
+They are the HTTP status, the subtype, the terminal reason, and the stop reason.
+The step prints only numbers and short lowercase codes, never the text of the result.
+A status of 401 means the API rejected `CLAUDE_CODE_OAUTH_TOKEN`. Replace the token as steps 5 and 6 below say.
+
 ### Claude mention administrator steps
 
-`.github/workflows/claude-mention.yml` fails until the owner does these steps:
+The owner set up the workflow with these steps. Repeat them to reinstall it or to bump the action pin.
 
 1. Run `gh api repos/anthropics/claude-code-action/commits/v1 --jq .sha`.
-2. Replace the placeholder SHA in `.github/workflows/claude-mention.yml` with that SHA.
+2. Put that SHA in the `uses:` line of `.github/workflows/claude-mention.yml`.
 3. Add the row for that SHA to `tests/fixtures/actions/inputs.tsv`.
 4. Install the Claude GitHub App on this repository only.
 5. Create the `claude-mention` environment with no required reviewers. Set its deployment branches to `main` only.
 6. Add the `CLAUDE_CODE_OAUTH_TOKEN` secret to that environment only.
 
 `claude setup-token` creates the OAuth token.
-`check-workflow-refs` fails until step 3 is complete.
+`gh secret set CLAUDE_CODE_OAUTH_TOKEN --env claude-mention -R omkhar/workcell` sets it from a hidden prompt.
+`check-workflow-refs` fails without the row of step 3.
 `internal/metadatautil/workflow_refs.go` reads `tests/fixtures/actions/inputs.tsv` for that check.
 The hosted-controls audit does not check the `claude-mention` environment.
 
@@ -431,6 +441,121 @@ A `run:` script reads a pin from its environment, never from an expression.
 
 `scripts/update-upstream-pins.sh` writes a tool pin bump to `policy/tool-pins.toml` only.
 A tool pin bump does not change a file under `.github/workflows/`.
+
+## Dependabot follow-up
+
+A Dependabot bump of a GitHub Action changes a `uses:` pin.
+The new pin has no row in `tests/fixtures/actions/inputs.tsv`, so `check-workflow-refs` fails with `uses-not-cached` (`internal/metadatautil/workflow_refs.go`).
+
+`dependabot-follow-up.yml` runs on each Dependabot PR to `main` that changes a workflow file.
+It checks out the PR base commit and the bump commit in different directories.
+It runs `workcell-citools` from the base checkout, which is reviewed `main`.
+The bump checkout is only input: the job runs no script from it.
+The job has `contents: read`, no secrets, and checkouts that keep no credential.
+It pushes nothing.
+
+The job runs three commands on the bump checkout:
+
+- `refresh-action-inputs`, which fetches `action.yml` only for a pin with no row
+- `refresh-action-inputs --verify`, which checks the new table against the base
+- `fixture-patch`, which writes a patch of `tests/fixtures/actions/inputs.tsv` and no other file
+
+`fixture-patch` fails if the table changed but the patch is empty (`internal/metadatautil/fixture_patch_test.go`).
+If the patch is not empty, the job uploads it as the `dependabot-follow-up` artifact, which holds one file, `inputs.patch`.
+The job then passes, and its summary says that a patch waits on the branch.
+The job is not a required check, but `Validate repository` fails on the stale table until the patch is on the branch.
+The job fails only on an error, such as a fetch failure or a table that `--verify` rejects (`.github/workflows/dependabot-follow-up.yml`).
+
+`--verify BASE ROOT` passes only when each pin in the `ROOT` workflows has one row, in order.
+A pin with a `BASE` row keeps it byte for byte; any other pin must be new.
+Its row must match the `action.yml` at that commit, which `--verify` fetches again (`internal/metadatautil/action_inputs_refresh_test.go`).
+
+### Daily Dependabot check
+
+The daily Dependabot check applies the patch with no new credential.
+
+Run these steps for each open Dependabot PR whose `Validate repository` check is red.
+Every command runs from a clean checkout of `origin/main` at `MAIN`.
+No command runs a script, a hook, or a build from the bump tree.
+
+A relative `core.hooksPath`, such as `.githooks`, would run the hooks of the worktree.
+So each `git` command that can run a hook sets `core.hooksPath=/dev/null`.
+If a check prints an unexpected line or exits with an error, stop and report the PR to the maintainer.
+
+Step 1: Read the PR.
+The author must be `dependabot[bot]`.
+The branch must start with `dependabot/github_actions/`.
+Every commit author must be `dependabot[bot]`.
+
+```bash
+gh api "repos/omkhar/workcell/pulls/${PR}" --jq '.user.login, .head.ref, .head.sha, .head.repo.full_name'
+gh api "repos/omkhar/workcell/pulls/${PR}/commits" --jq '[.[].author.login] | unique | join(",")'
+```
+
+Set `BRANCH` and `HEAD_SHA` from the output; the repository must be `omkhar/workcell`.
+
+Step 2: Check that the bump changes only `uses:` pins in workflow files.
+Each of the last three commands must print nothing.
+
+```bash
+git -C "${MAIN}" fetch origin main "refs/heads/${BRANCH}"
+BASE_SHA="$(git -C "${MAIN}" merge-base origin/main "${HEAD_SHA}")"
+git -C "${MAIN}" diff --no-renames --summary "${BASE_SHA}" "${HEAD_SHA}"
+git -C "${MAIN}" diff --no-renames --name-only "${BASE_SHA}" "${HEAD_SHA}" | grep -Ev '^\.github/workflows/[^/]+\.ya?ml$'
+git -C "${MAIN}" diff --no-renames -U0 "${BASE_SHA}" "${HEAD_SHA}" | grep -E '^[-+]' | grep -Ev '^(\+\+\+|---) ' | grep -Ev '^[-+] *(- )?uses: [^ ]+@[0-9a-f]{40}( # [^ ]+)?$'
+```
+
+Step 3: Find the follow-up run for that exact commit, and download its artifact into an empty directory.
+If `RUN_ID` is empty, the run for that commit has not passed yet, so try again at the next check.
+If the run has no `dependabot-follow-up` artifact, the bump needs no patch.
+The `find` command must print one line, `f inputs.patch`.
+
+```bash
+RUN_ID="$(gh run list --repo omkhar/workcell --workflow dependabot-follow-up.yml --event pull_request --commit "${HEAD_SHA}" --status success --json databaseId,headSha --jq "map(select(.headSha == \"${HEAD_SHA}\"))[0].databaseId")"
+DL="$(mktemp -d)"
+gh run download "${RUN_ID}" --repo omkhar/workcell --name dependabot-follow-up --dir "${DL}"
+find "${DL}" -mindepth 1 -printf '%y %P\n'
+```
+
+Step 4: Apply the patch in new worktrees of the bump and of its base.
+`--numstat` must print one line: two numbers and `tests/fixtures/actions/inputs.tsv`.
+`--summary` must print nothing.
+`status` must print one line, `M  tests/fixtures/actions/inputs.tsv`.
+
+```bash
+WT="$(mktemp -d)"
+git -C "${MAIN}" -c core.hooksPath=/dev/null worktree add --detach "${WT}/bump" "${HEAD_SHA}"
+git -C "${MAIN}" -c core.hooksPath=/dev/null worktree add --detach "${WT}/base" "${BASE_SHA}"
+git -C "${WT}/bump" apply --numstat "${DL}/inputs.patch"
+git -C "${WT}/bump" apply --summary "${DL}/inputs.patch"
+git -C "${WT}/bump" apply --index "${DL}/inputs.patch"
+git -C "${WT}/bump" status --porcelain
+```
+
+Step 5: Verify the rows with the tools from `MAIN`.
+It must exit with status 0.
+
+```bash
+(cd "${MAIN}" && go run ./cmd/workcell-citools refresh-action-inputs --verify "${WT}/base" "${WT}/bump")
+```
+
+Step 6: Sign the commit and push it to the bump branch.
+Do not force the push. If the branch moved since step 1, Git turns the push down.
+
+```bash
+git -C "${WT}/bump" -c core.hooksPath=/dev/null commit --no-verify -S \
+  -m ".f Add action input rows for the pins that Dependabot PR #${PR} bumps (the new pins had no rows, so check-workflow-refs failed with uses-not-cached; refresh-action-inputs --verify passes against ${BASE_SHA})" \
+  -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+git -C "${WT}/bump" -c core.hooksPath=/dev/null push --no-verify origin "HEAD:refs/heads/${BRANCH}"
+git -C "${MAIN}" worktree remove --force "${WT}/bump"
+git -C "${MAIN}" worktree remove --force "${WT}/base"
+```
+
+The push starts CI again, and the next follow-up run and `Validate repository` pass.
+After a commit that Dependabot did not write, Dependabot stops rebasing the branch.
+To rebase it, comment `@dependabot recreate`, and the check applies the next patch.
+
+The job does not push: a `GITHUB_TOKEN` push starts no CI, and an App token needs a ruleset bypass.
 
 ## Validator identity
 
