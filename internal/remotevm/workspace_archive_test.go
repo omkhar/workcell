@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 )
@@ -294,5 +296,235 @@ func TestSendWorkspaceArchiveRejectsAnIDOutsideTheFrame(t *testing.T) {
 		if sent.Len() != 0 {
 			t.Fatalf("id %q: sent %q before the refusal", id, sent.String())
 		}
+	}
+}
+
+// TestReceiveWorkspaceRefusesASymlinkedRoot keeps the receiver from writing
+// into, or deleting from, a directory that a symlink on the root path or at
+// the materializations directory points to.
+func TestReceiveWorkspaceRefusesASymlinkedRoot(t *testing.T) {
+	t.Parallel()
+
+	frame := frameArchive("m1", buildTestArchive(t, file("a.txt", "alpha")))
+	for name, setup := range map[string]func(t *testing.T, base, outside string) string{
+		"root is a symlink": func(t *testing.T, base, outside string) string {
+			root := filepath.Join(base, "root")
+			mustSymlink(t, outside, root)
+			return root
+		},
+		"root ancestor is a symlink": func(t *testing.T, base, outside string) string {
+			mustSymlink(t, filepath.Dir(outside), filepath.Join(base, "up"))
+			return filepath.Join(base, "up", filepath.Base(outside))
+		},
+		"materializations escapes the root": func(t *testing.T, base, outside string) string {
+			root := filepath.Join(base, "root")
+			mustMkdir(t, root)
+			mustSymlink(t, outside, filepath.Join(root, "materializations"))
+			return root
+		},
+		"materializations stays inside the root": func(t *testing.T, base, outside string) string {
+			root := filepath.Join(base, "root")
+			mustMkdir(t, root)
+			mustSymlink(t, outside, filepath.Join(root, "inside"))
+			mustSymlink(t, "inside", filepath.Join(root, "materializations"))
+			return root
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			base := t.TempDir()
+			outside := filepath.Join(t.TempDir(), "outside")
+			mustMkdir(t, filepath.Join(outside, "m1"))
+			if err := os.WriteFile(filepath.Join(outside, "m1", "keep"), []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			root := setup(t, base, outside)
+			ack, err := receiveFrame(t, root, frame, defaultWorkspaceLimits)
+			if err == nil || !strings.HasPrefix(ack, "error ") {
+				t.Fatalf("receive error = %v, ack = %q; want a refusal", err, ack)
+			}
+			names, err := os.ReadDir(outside)
+			if err != nil || len(names) != 1 || names[0].Name() != "m1" {
+				t.Fatalf("symlink target now holds %v (%v), want only m1", names, err)
+			}
+			if content, err := os.ReadFile(filepath.Join(outside, "m1", "keep")); err != nil || string(content) != "keep" {
+				t.Fatalf("symlink target lost its content: %q, %v", content, err)
+			}
+			if names, _ := os.ReadDir(filepath.Join(outside, "m1")); len(names) != 1 {
+				t.Fatalf("symlink target m1 now holds %v", names)
+			}
+		})
+	}
+}
+
+// TestReceiveWorkspaceReplacesASymlinkedMaterializationWithoutFollowingIt
+// keeps the clean-up of an earlier materialization from deleting the target of
+// a symlink that stands in its place.
+func TestReceiveWorkspaceReplacesASymlinkedMaterializationWithoutFollowingIt(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustMkdir(t, filepath.Join(root, "materializations"))
+	mustSymlink(t, outside, filepath.Join(root, "materializations", "m1"))
+	if _, err := receiveFrame(t, root, frameArchive("m1", buildTestArchive(t, file("a.txt", "alpha"))), defaultWorkspaceLimits); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(filepath.Join(outside, "keep")); err != nil || string(content) != "keep" {
+		t.Fatalf("symlink target lost its content: %q, %v", content, err)
+	}
+	if info, err := os.Lstat(filepath.Join(root, "materializations", "m1")); err != nil || !info.IsDir() {
+		t.Fatalf("materialization = %v, %v; want a real directory", info, err)
+	}
+}
+
+func mustMkdir(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReceiveWorkspaceRefusesARootSwappedDuringTheReceive swaps the receiver
+// root between a real directory and a symlink while receives run. The swap
+// timing varies from run to run, but no receive may ever write into the
+// symlink target.
+func TestReceiveWorkspaceRefusesARootSwappedDuringTheReceive(t *testing.T) {
+	frame := frameArchive("m1", buildTestArchive(t, dir("d"), file("d/a.txt", "alpha"), link("l", "d/a.txt")))
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	held := filepath.Join(base, "held")
+	swap := filepath.Join(base, "swap")
+	outside := filepath.Join(base, "outside")
+	mustMkdir(t, root)
+	mustMkdir(t, outside)
+	mustSymlink(t, outside, swap)
+	var stop atomic.Bool
+	done := make(chan error, 1)
+	go func() {
+		// Each rename moves a name to a free name: root is a directory,
+		// then missing, then the symlink. A rename fails only when the
+		// receiver created a name at root itself.
+		for !stop.Load() {
+			for _, step := range [][2]string{{root, held}, {swap, root}, {root, swap}, {held, root}} {
+				if err := os.Rename(step[0], step[1]); err != nil {
+					done <- err
+					return
+				}
+			}
+		}
+		done <- nil
+	}()
+	for attempt := range 2000 {
+		_, _ = receiveFrame(t, root, frame, defaultWorkspaceLimits)
+		if names, _ := os.ReadDir(outside); len(names) != 0 {
+			stop.Store(true)
+			t.Fatalf("attempt %d: the receiver wrote %v into the symlink target (swap loop: %v)", attempt, names, <-done)
+		}
+	}
+	stop.Store(true)
+	if err := <-done; err != nil {
+		t.Fatalf("the receiver created a name at its root: %v", err)
+	}
+}
+
+// TestReceiveWorkspaceRefusesAPathSwappedBetweenItsCheckAndItsOpen swaps the
+// receiver root, and then each receiver subdirectory, for a symlink in the gap
+// between the check and the open. The identity check must refuse each swap,
+// and nothing may land in the symlink target. Not parallel: it replaces
+// beforeReceiverOpen.
+func TestReceiveWorkspaceRefusesAPathSwappedBetweenItsCheckAndItsOpen(t *testing.T) {
+	frame := frameArchive("m1", buildTestArchive(t, dir("d"), file("d/a.txt", "alpha")))
+	for _, swapped := range []string{"", "materializations", filepath.Join("materializations", "m1"), filepath.Join("materializations", "m1", MaterializedWorktree)} {
+		t.Run("root/"+swapped, func(t *testing.T) {
+			// os.Root follows a relative symlink that stays in the parent,
+			// so the decoy of a subdirectory is a sibling of it.
+			base := t.TempDir()
+			root := filepath.Join(base, "root")
+			mustMkdir(t, root)
+			path := filepath.Join(root, swapped)
+			target, link := filepath.Join(base, "outside"), filepath.Join(base, "outside")
+			if swapped != "" {
+				target, link = filepath.Join(filepath.Dir(path), "decoy"), "decoy"
+			}
+			var fired bool
+			beforeReceiverOpen = func(opened string) {
+				if opened != path || fired {
+					return
+				}
+				fired = true
+				if err := os.Rename(path, path+".held"); err != nil {
+					t.Error(err)
+				}
+				if err := os.MkdirAll(target, 0o700); err != nil {
+					t.Error(err)
+				}
+				if err := os.Symlink(link, path); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { beforeReceiverOpen = func(string) {} })
+			_, err := receiveFrame(t, root, frame, defaultWorkspaceLimits)
+			if !fired {
+				t.Fatalf("the receiver never opened %s", path)
+			}
+			if err == nil || !strings.Contains(err.Error(), "changed while it was opened") {
+				t.Fatalf("receive = %v, want the identity check to refuse the swap", err)
+			}
+			if names, _ := os.ReadDir(target); len(names) != 0 {
+				t.Fatalf("the receiver wrote %v into the symlink target", names)
+			}
+		})
+	}
+}
+
+// TestReceiveWorkspaceRemovesAReadOnlyMaterialization receives an ID with a
+// 0555 directory that has an entry, then a copy that fails after the modes are
+// set, then the first again. Without DAC override, as on a non-root guest, the
+// 0555 directory blocks the removal of its entry, so the receiver must give the
+// directories of a tree owner rwx before it removes the tree. Under root the
+// test reruns itself under setpriv without DAC override.
+func TestReceiveWorkspaceRemovesAReadOnlyMaterialization(t *testing.T) {
+	if os.Geteuid() == 0 && os.Getenv("WORKCELL_TEST_NO_DAC") == "" {
+		setpriv, err := exec.LookPath("setpriv")
+		if err != nil {
+			t.Skip("needs a non-root user or setpriv to drop DAC override")
+		}
+		rerun := exec.Command(setpriv, "--bounding-set=-dac_override,-dac_read_search", os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+		rerun.Env = append(os.Environ(), "WORKCELL_TEST_NO_DAC=1")
+		if out, err := rerun.CombinedOutput(); err != nil || !bytes.Contains(out, []byte("--- PASS: "+t.Name())) {
+			t.Fatalf("rerun without DAC override: %v\n%s", err, out)
+		}
+		return
+	}
+	root := t.TempDir()
+	materialization := filepath.Join(root, "materializations", "m1")
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(materialization, MaterializedWorktree, "ro"), 0o755) })
+	readOnly, sealed := dir("ro"), dir("sealed")
+	readOnly.header.Mode, sealed.header.Mode = 0o555, 0o100
+	frame := frameArchive("m1", buildTestArchive(t, readOnly, file("ro/f", "x")))
+	// The sync opens each directory, which a 0100 directory refuses.
+	late := frameArchive("m1", buildTestArchive(t, readOnly, file("ro/f", "x"), sealed))
+	if _, err := receiveFrame(t, root, frame, defaultWorkspaceLimits); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiveFrame(t, root, late, defaultWorkspaceLimits); err == nil {
+		t.Fatal("the receiver synced a 0100 directory")
+	}
+	if _, err := os.Lstat(materialization); !os.IsNotExist(err) {
+		t.Fatalf("the failed receive left its materialization: %v", err)
+	}
+	if ack, err := receiveFrame(t, root, frame, defaultWorkspaceLimits); err != nil || !strings.HasPrefix(ack, "ok ") {
+		t.Fatalf("receive after the failure = %q, %v", ack, err)
 	}
 }
