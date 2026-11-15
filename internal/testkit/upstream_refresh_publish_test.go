@@ -46,13 +46,19 @@ func publishGit(t *testing.T, dir string, env []string, args ...string) string {
 // write calls only when FAKE_ALLOW_WRITES=1.
 type publishFixture struct {
 	checkout, candidate, audit, path string
-	base, tree                       string
+	base, tree, kind                 string
 }
 
 // candidateDir is the directory of the one candidate the fixture wrote.
-func (f publishFixture) candidateDir() string { return filepath.Join(f.candidate, "provider") }
+func (f publishFixture) candidateDir() string { return filepath.Join(f.candidate, f.kind) }
 
 func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata func(m map[string]any)) publishFixture {
+	t.Helper()
+	return newPublishFixtureOfKind(t, "provider", mutate, editMetadata)
+}
+
+// newPublishFixtureOfKind writes one candidate of the given kind.
+func newPublishFixtureOfKind(t *testing.T, kind string, mutate func(checkout string), editMetadata func(m map[string]any)) publishFixture {
 	t.Helper()
 	for _, tool := range []string{"jq", "shasum", "base64"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -72,22 +78,33 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 	publishGit(t, checkout, ident, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base")
 	base := publishGit(t, checkout, nil, "rev-parse", "HEAD")
 
+	candidate := filepath.Join(root, "candidate")
+	tree := writePublishCandidate(t, root, checkout, base, kind, mutate, editMetadata)
+	bin := writePublishFakeGH(t, root)
+	return publishFixture{checkout: checkout, candidate: candidate, audit: filepath.Join(root, "audit.md"), path: bin, base: base, tree: tree, kind: kind}
+}
+
+// writePublishCandidate writes a candidate of kind under root/candidate from
+// mutate's change to checkout, puts checkout back at base, and returns the
+// candidate tree.
+func writePublishCandidate(t *testing.T, root, checkout, base, kind string, mutate func(checkout string), editMetadata func(m map[string]any)) string {
+	t.Helper()
 	mutate(checkout)
 	candidate := filepath.Join(root, "candidate")
-	mustMkdir(t, filepath.Join(candidate, "provider"))
+	mustMkdir(t, filepath.Join(candidate, kind))
 	publishGit(t, checkout, nil, "add", "-A")
 	patch := publishGitRaw(t, checkout, "diff", "--cached", "--binary", "--full-index", "--patch", "--no-ext-diff", "--no-color")
-	index := filepath.Join(root, "index")
+	index := filepath.Join(root, "index-"+kind)
 	treeEnv := []string{"GIT_INDEX_FILE=" + index}
 	publishGit(t, checkout, treeEnv, "read-tree", "HEAD")
 	publishGit(t, checkout, treeEnv, "add", "-A")
 	tree := publishGit(t, checkout, treeEnv, "write-tree")
-	mustWrite(t, filepath.Join(candidate, "provider", "patch"), patch, 0o644)
-	mustWrite(t, filepath.Join(candidate, "provider", "diffstat"), []byte(" stat\n"), 0o644)
+	mustWrite(t, filepath.Join(candidate, kind, "patch"), patch, 0o644)
+	mustWrite(t, filepath.Join(candidate, kind, "diffstat"), []byte(" stat\n"), 0o644)
 	digest := sha256.Sum256(patch)
 	metadata := map[string]any{
 		"version": 1, "repository": "o/r", "workflow": "upstream-refresh", "run_id": 42,
-		"run_url": "https://example.invalid/run", "artifact_name": "upstream-refresh-candidate", "candidate": "provider",
+		"run_url": "https://example.invalid/run", "artifact_name": "upstream-refresh-candidate", "candidate": kind,
 		"base_ref": "refs/heads/main", "base_sha": base, "patch_sha256": hex.EncodeToString(digest[:]),
 		"tree_oid": tree, "changed_files": []string{},
 	}
@@ -98,13 +115,11 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(candidate, "provider", "metadata.json"), raw, 0o644)
+	mustWrite(t, filepath.Join(candidate, kind, "metadata.json"), raw, 0o644)
 	// Return the checkout to the base state, as a fresh CI checkout is.
 	publishGit(t, checkout, nil, "reset", "-q", "--hard")
 	publishGit(t, checkout, nil, "clean", "-fdq")
-
-	bin := writePublishFakeGH(t, root)
-	return publishFixture{checkout: checkout, candidate: candidate, audit: filepath.Join(root, "audit.md"), path: bin, base: base, tree: tree}
+	return tree
 }
 
 // writePublishFakeGH writes a fake gh under root/bin and returns that
@@ -149,17 +164,23 @@ func publishGitRaw(t *testing.T, dir string, args ...string) []byte {
 
 func (f publishFixture) run(t *testing.T, mainSHA string, env ...string) (string, error) {
 	t.Helper()
-	scope := "passed"
+	scope, toolchain, rederive := "passed", "failed", "failed"
 	for _, e := range env {
 		if v, ok := strings.CutPrefix(e, "SCOPE="); ok {
 			scope = v
 		}
+		if v, ok := strings.CutPrefix(e, "TOOLCHAIN="); ok {
+			toolchain = v
+		}
+		if v, ok := strings.CutPrefix(e, "REDERIVE="); ok {
+			rederive = v
+		}
 	}
-	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-publish.sh"), f.candidate, scope, f.audit)
+	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-publish.sh"), f.candidate, scope, toolchain, rederive, f.audit)
 	cmd.Dir = f.checkout
 	cmd.Env = append(append(os.Environ(),
 		"PATH="+f.path+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"GH_TOKEN=unused", "GITHUB_REPOSITORY=o/r", "GITHUB_RUN_ID=42", "FAKE_MAIN_SHA="+mainSHA, "FAKE_PARENT="+f.base,
+		"GH_TOKEN=unused", "GITHUB_SERVER_URL=https://github.com", "GITHUB_REPOSITORY=o/r", "GITHUB_RUN_ID=42", "FAKE_MAIN_SHA="+mainSHA, "FAKE_PARENT="+f.base,
 		"FAKE_GH_LOG="+filepath.Join(filepath.Dir(f.path), "gh.log")), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -260,6 +281,49 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 				if strings.Contains(string(log), w) {
 					t.Fatalf("gh calls = %q, must not contain %q", log, w)
 				}
+			}
+		})
+	}
+}
+
+// TestUpstreamRefreshPublishToolchainCandidate proves the App publishes a
+// toolchain candidate only under a rederive verdict for that candidate's base
+// and tree, and holds or dies before any GitHub call otherwise.
+func TestUpstreamRefreshPublishToolchainCandidate(t *testing.T) {
+	t.Parallel()
+
+	other := strings.Repeat("e", 40)
+	cases := []struct {
+		name     string
+		rederive func(f publishFixture) string
+		wantErr  string
+		audit    string
+	}{
+		{name: "guard verdict in the rederive slot holds", rederive: func(f publishFixture) string { return "passed:" + f.base + ":" + f.tree },
+			audit: "the rederive job did not get the same tree from the base"},
+		{name: "rederive verdict for another base dies", rederive: func(f publishFixture) string { return "rederived:" + other + ":" + f.tree },
+			wantErr: "the rederive job used base " + other},
+		{name: "rederive verdict for another tree dies", rederive: func(f publishFixture) string { return "rederived:" + f.base + ":" + other },
+			wantErr: "the rederive job got tree " + other},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPublishFixtureOfKind(t, "toolchain", func(c string) {
+				if err := os.WriteFile(filepath.Join(c, "plain.txt"), []byte("two\n"), 0o644); err != nil {
+					panic(err)
+				}
+			}, nil)
+			out, err := f.run(t, f.base, "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT="+strings.Repeat("c", 40), "TOOLCHAIN=passed:"+f.base+":"+f.tree, "REDERIVE="+tc.rederive(f))
+			if (err != nil) != (tc.wantErr != "") || !strings.Contains(out, tc.wantErr) {
+				t.Fatalf("publish error = %v, want %q\n%s", err, tc.wantErr, out)
+			}
+			if log, _ := os.ReadFile(filepath.Join(filepath.Dir(f.path), "gh.log")); len(log) != 0 {
+				t.Fatalf("publish called gh before the verdict check:\n%s", log)
+			}
+			audit, _ := os.ReadFile(f.audit)
+			if !strings.Contains(string(audit), tc.audit) {
+				t.Fatalf("audit = %q, want %q", audit, tc.audit)
 			}
 		})
 	}

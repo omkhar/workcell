@@ -325,6 +325,7 @@ internal/metadatautil	unreadEnvWrite	383da956,58b54700,650e41bd,bb25cde9	unrevie
 internal/metadatautil	unspelled	17b26b32,2a00f0ec,338b0d27,a42d7189	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	unwrapBuiltins	0a1d8783	the prefix test drops the option words in front of the command word of one parsed argv
 internal/metadatautil	updateCodexSubcommandFixture	49f8c82f,575a0f43,665b67ac,9017f67f,a5ff1cfb,b1f61de5,f97dbf16	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	upstreamRefreshRederiveJobFixture	ea037f2b,3daf6398	slices the rederive job out of the test fixture by its job headers, so a mutation can remove the whole job
 internal/metadatautil	upstreamRefreshReviewedUses	5dceb713	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validGitHubReleaseAssetRedirectURL	0b2eac02,b17e198d	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateAliasProbes	bbcf3583,fc135221	unreviewed debt: review the subject, then port or justify
@@ -486,9 +487,10 @@ internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	ed
 internal/testkit	TestUpstreamRefreshIncludesRuntimeGoPins	7c2d45f6	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshOverlapStep	30ee2c4a,ef7903e0	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshPublishLocalChecks	4fbe5eab,bdc0220f,bdc0220f,fd7decae	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshPublishToolchainCandidate	95bce94b,9e46d87a	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestUpstreamRefreshRederive	28e8b686,84192fd0,cfac3310	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestUpstreamRefreshScopeGuard	5d2dcbca	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,356845cb,4561edc6,809ad8df,84d882d1,b12cdf05,b8f34d1a,b8f34d1a,f1d02810,fbdcbbb8	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,10eec93a,4561edc6,5f4bee45,70d8c1a9,809ad8df,84d882d1,84d882d1,b12cdf05,b8f34d1a,b8f34d1a,f1d02810,fbdcbbb8	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshToolchainScopeGuardScript	d48af49d,d6ea62d5,edd8763b	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestValidateRepoExecutesPublicContractHistoryGate	4e0b3a69	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoRejectsStaleMarkdownlintInstall	bef5cf72,e6974c0f	unreviewed debt in a test: review the subject, then port or justify
