@@ -5,6 +5,7 @@ package testkit
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,18 @@ printf '%%s\n' "${SHADOW_DEST_PATHS[@]}"
 func runControlPlaneShadowProbe(t *testing.T, setup string, acv bool) (int, string, string) {
 	t.Helper()
 	root := t.TempDir()
+	// The shadow copy of .git/hooks is read-only on purpose, and the launcher's
+	// EXIT trap, which the probe does not set, restores u+w before it removes
+	// the copy. Restore it here: this cleanup runs before TempDir's, which a
+	// user other than root cannot finish through a 0555 directory.
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err == nil && entry.IsDir() {
+				_ = os.Chmod(path, 0o700)
+			}
+			return nil
+		})
+	})
 	// A space, a dollar sign and a backtick in the workspace path must not
 	// change what the walks find.
 	workspace := filepath.Join(root, "work space $x `y`")
