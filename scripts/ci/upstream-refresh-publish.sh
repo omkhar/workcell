@@ -11,7 +11,9 @@
 # provider candidate with a "passed" result gets auto-merge. Every other PR
 # gets the needs-human-review label. The refresh job creates that label. A
 # candidate that changes .github/workflows/ is not published, because the App
-# has no Workflows permission. AUDIT_FILE receives the tracking-issue audit text.
+# has no Workflows permission. A toolchain candidate is not published either:
+# it waits for a toolchain scope guard, and a person publishes it from a host.
+# AUDIT_FILE receives the tracking-issue audit text.
 set -euo pipefail
 
 if [[ $# -eq 3 ]]; then
@@ -56,6 +58,18 @@ case "${kind}" in
   provider | toolchain) ;;
   *) die "unknown candidate kind" ;;
 esac
+
+# Hold: the App does not publish a toolchain candidate. Once the tool pins
+# leave the workflows, a tool pin bump changes only policy/tool-pins.toml, and
+# the .github/workflows/ rule below no longer holds one back. No scope guard
+# reviews the toolchain candidate yet, so a person publishes it from a host
+# until that guard exists. This hold comes before any GitHub call. The
+# toolchain branches below stay for that guard.
+if [[ "${kind}" == toolchain ]]; then
+  echo "- toolchain: not published by the App, it waits for the toolchain scope guard. Publish it from a host: \`./scripts/publish-upstream-refresh-pr.sh --run-id ${GITHUB_RUN_ID} --candidate toolchain\`" >>"${audit_file}"
+  echo "::notice::The toolchain candidate waits for the toolchain scope guard and is not published by the App. Publish it from a host."
+  exit 0
+fi
 
 meta() { jq -r "$1 // \"\"" "${metadata}"; }
 

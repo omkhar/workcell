@@ -17,6 +17,7 @@ import (
 var splitFixtureFiles = []string{
 	".github/workflows/release.yml",
 	"policy/provider-bumps.toml",
+	"policy/tool-pins.toml",
 	"runtime/container/Dockerfile",
 	"runtime/container/debian-bootstrap.env",
 	"runtime/container/providers/package-lock.json",
@@ -56,13 +57,17 @@ func splitApplyProviderBump(t *testing.T, repo string) {
 }
 
 // splitApplyToolchainBump edits files the toolchain updater owns, one of them
-// in the same Dockerfile as the provider pins.
+// in the same Dockerfile as the provider pins. A tool pin bump changes only
+// policy/tool-pins.toml. With workflow set it also changes a workflow file,
+// which the updater never does, so the test proves the publish guard still
+// refuses a candidate that touches .github/workflows/.
 func splitApplyToolchainBump(t *testing.T, repo string, workflow bool) {
 	t.Helper()
 	splitEdit(t, repo, "runtime/container/Dockerfile", `(?m)^ARG GO_VERSION=.*$`, "ARG GO_VERSION=9.9.9")
 	splitEdit(t, repo, "runtime/container/debian-bootstrap.env", `(?m)^DEBIAN_SNAPSHOT=.*$`, "DEBIAN_SNAPSHOT=20991231T000000Z")
+	splitEdit(t, repo, "policy/tool-pins.toml", `(?m)^cosign = .*$`, `cosign = "v9.9.9"`)
 	if workflow {
-		splitEdit(t, repo, ".github/workflows/release.yml", `(?m)^  WORKCELL_COSIGN_VERSION: .*$`, "  WORKCELL_COSIGN_VERSION: v9.9.9")
+		splitEdit(t, repo, ".github/workflows/release.yml", `(?m)^  IMAGE_NAME: .*$`, "  IMAGE_NAME: ghcr.io/example/workcell")
 	}
 }
 
@@ -232,27 +237,21 @@ func TestUpstreamRefreshSplitDryRun(t *testing.T) {
 			if strings.Count(gh, "pr merge") != 1 {
 				t.Fatalf("gh calls = %q, want auto-merge for the provider PR only", gh)
 			}
-			if tc.workflow {
-				if strings.Contains(gh, "upstream-refresh-toolchain-42") {
-					t.Fatalf("the App published a toolchain candidate that changes a workflow:\n%s", gh)
-				}
-				if want := "./scripts/publish-upstream-refresh-pr.sh --run-id 42 --candidate toolchain"; !strings.Contains(auditText, want) {
-					t.Fatalf("audit = %q, want the host command %q", auditText, want)
-				}
-				return
+			// The App never publishes the toolchain candidate: it waits for a
+			// toolchain scope guard, whether or not it changes a workflow.
+			if strings.Contains(gh, "upstream-refresh-toolchain-42") || strings.Contains(gh, "(toolchain)") {
+				t.Fatalf("the App published a toolchain candidate:\n%s", gh)
 			}
-			for _, want := range []string{
-				"--head codex/upstream-refresh-toolchain-42 --title Refresh pinned upstreams (toolchain)",
-				"--add-label needs-human-review",
-			} {
-				if !strings.Contains(gh, want) {
-					t.Fatalf("gh calls = %q, want %q", gh, want)
-				}
+			if want := "./scripts/publish-upstream-refresh-pr.sh --run-id 42 --candidate toolchain"; !strings.Contains(auditText, want) {
+				t.Fatalf("audit = %q, want the host command %q", auditText, want)
+			}
+			if want := "it waits for the toolchain scope guard"; !strings.Contains(auditText, want) {
+				t.Fatalf("audit = %q, want the toolchain hold %q", auditText, want)
 			}
 			// The guard and the verify scripts cover the provider candidate only.
 			bodies, _ := os.ReadFile(ghLog + ".bodies")
-			if strings.Count(string(bodies), "scope guard: passed") != 1 || strings.Count(string(bodies), "scope guard: not-run") != 1 {
-				t.Fatalf("PR bodies = %q, want scope guard passed for provider and not-run for toolchain", bodies)
+			if strings.Count(string(bodies), "scope guard: passed") != 1 || strings.Contains(string(bodies), "scope guard: not-run") {
+				t.Fatalf("PR bodies = %q, want only the provider PR, with scope guard passed", bodies)
 			}
 			if strings.Count(auditText, "cool-off:") != 1 {
 				t.Fatalf("audit = %q, want the cool-off claim for the provider candidate only", auditText)
