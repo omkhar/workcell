@@ -261,10 +261,12 @@ jobs:
     needs: [refresh]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       # The guard step outcome is the guard's real exit status.
       result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}
+      # passed:<base sha>:<tree oid> only when the toolchain guard passed.
+      toolchain: ${{ steps.toolchain_guard.outcome == 'success' && steps.toolchain_guard.outputs.verdict || 'failed' }}
     permissions:
       contents: read # Read the reviewed scope-guard script.
     steps:
@@ -277,18 +279,75 @@ jobs:
           path: ${{ runner.temp }}/candidate
 
       # A failed guard is a result: publish then opens a PR for human review.
-      # Only the provider candidate can pass. A missing one fails the guard.
+      # This guard passes only a provider candidate. A missing one fails it.
       - id: guard
         name: Run scope guard
         shell: bash --noprofile --norc -euo pipefail {0}
         continue-on-error: true
         run: ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/provider/patch"
 
-  publish:
-    name: Publish upstream refresh PR
-    needs: [refresh, scope-guard]
+      # The toolchain guard checks the tree that the toolchain patch gives on
+      # this checkout. It writes its verdict, which names that base and tree,
+      # only when it passes. publish then publishes that tree and no other. A
+      # failed or missing candidate leaves the toolchain candidate unpublished.
+      - id: toolchain_guard
+        name: Run toolchain scope guard
+        shell: bash --noprofile --norc -euo pipefail {0}
+        continue-on-error: true
+        run: ./scripts/ci/upstream-refresh-scope-guard.sh --toolchain "${RUNNER_TEMP}/candidate/toolchain/patch" "${GITHUB_OUTPUT}"
+
+  # The scope guard checks the shape of each toolchain pin, not its value. This
+  # job runs the toolchain updater again from the base, on its own runner with
+  # a read-only token, and passes only when it gets the candidate tree. So a
+  # second run of the updater, in a job that cannot write, got each version,
+  # digest, and checksum. When upstream moved since the refresh, the trees
+  # differ and the toolchain candidate waits for a person.
+  rederive:
+    name: Re-derive toolchain candidate
+    needs: [refresh]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
+    timeout-minutes: 20
+    outputs:
+      # rederived:<base sha>:<tree oid> only when the re-derivation got the candidate tree.
+      toolchain: ${{ steps.rederive.outcome == 'success' && steps.rederive.outputs.verdict || 'failed' }}
+    permissions:
+      contents: read # Read the reviewed tree and the public upstream releases.
+    steps:
+      # The toolchain updater runs no cosign, so this job installs no tools.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: upstream-refresh-candidate
+          path: ${{ runner.temp }}/candidate
+
+      - id: rederive
+        name: Re-derive toolchain candidate
+        shell: bash --noprofile --norc -euo pipefail {0}
+        continue-on-error: true
+        # Ends before the job's 20 minutes, so a slow re-derivation fails this
+        # step and holds the toolchain candidate instead of cancelling the job.
+        timeout-minutes: 15
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKCELL_DEBIAN_PLAN_RECORD: ${{ runner.temp }}/upstream-refresh-rederive-debian-plan.json
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/upstream-refresh-rederive.sh "${RUNNER_TEMP}/candidate/toolchain" "${GITHUB_OUTPUT}"
+
+  publish:
+    name: Publish upstream refresh PR
+    needs: [refresh, scope-guard, rederive]
+    runs-on: ubuntu-latest
+    # A failed rederive job holds only the toolchain candidate: publish still
+    # runs, and its TOOLCHAIN_REDERIVE_RESULT is then 'failed'. A failed refresh
+    # or scope-guard job, or a cancelled run, publishes nothing.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.refresh.result == 'success' && needs.scope-guard.result == 'success' && needs.refresh.outputs.candidate == 'true' }}
     timeout-minutes: 15
     environment:
       name: upstream-refresh
@@ -334,7 +393,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
-        run: ./scripts/ci/upstream-refresh-publish.sh "${RUNNER_TEMP}/candidate" "${SCOPE_GUARD_RESULT}" "${RUNNER_TEMP}/audit.md"
+          TOOLCHAIN_SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.toolchain }}
+          TOOLCHAIN_REDERIVE_RESULT: ${{ needs.rederive.result == 'success' && needs.rederive.outputs.toolchain || 'failed' }}
+        run: ./scripts/ci/upstream-refresh-publish.sh "${RUNNER_TEMP}/candidate" "${SCOPE_GUARD_RESULT}" "${TOOLCHAIN_SCOPE_GUARD_RESULT}" "${TOOLCHAIN_REDERIVE_RESULT}" "${RUNNER_TEMP}/audit.md"
       - name: Post audit comment
         if: always() && steps.secrets.outputs.present == 'true'
         env:
