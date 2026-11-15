@@ -197,6 +197,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/ci/job-pr-shape.sh"
   "${ROOT_DIR}/scripts/ci/job-release-asset-acl.sh"
   "${ROOT_DIR}/scripts/ci/job-validate.sh"
+  "${ROOT_DIR}/scripts/ci/load-tool-pins.sh"
   "${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh"
   "${ROOT_DIR}/scripts/ci/run-codespell.sh"
   "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh"
@@ -211,6 +212,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/install-dev-tools.sh"
   "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
+  "${ROOT_DIR}/scripts/lib/ack-date.sh"
   "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
   "${ROOT_DIR}/scripts/lib/owned-root.sh"
   "${ROOT_DIR}/scripts/lib/npm-registry-verify.sh"
@@ -317,6 +319,7 @@ shell_files=(
 non_executable_shell_files=(
   "${ROOT_DIR}/runtime/container/generated-adapters.sh"
   "${ROOT_DIR}/scripts/lib/launcher/generated-adapters.sh"
+  "${ROOT_DIR}/scripts/lib/ack-date.sh"
   "${ROOT_DIR}/scripts/lib/owned-root.sh"
   "${ROOT_DIR}/scripts/lib/npm-registry-verify.sh"
   "${ROOT_DIR}/scripts/lib/github-release-quota.sh"

@@ -71,7 +71,8 @@ does not prove the intended change.
 
 ## Required Gates
 
-- Sign each commit with the verified maintainer identity.
+- Sign each commit with the verified maintainer identity. A Claude Code cloud
+  session signs with its session key instead (see `AGENTS.md`).
 - Use a feature branch. Do not push directly to `main`.
 - Do not rewrite history without explicit user authority.
 - If the commit changes a supported workflow or backend, complete live
