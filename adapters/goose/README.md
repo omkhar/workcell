@@ -26,7 +26,7 @@ baseline in the control-plane manifest.
   the GitHub release and checks its sha256 against the Dockerfile pin.
   `scripts/verify-upstream-goose-release.sh` checks the pin against the
   release digests.
-- `reject_manifest_args` in `runtime/container/provider-policy.sh` passes an
+- The manifest policy in `internal/providerpolicy/providerpolicy.go` passes an
   option only when the manifest `[flags]` `allow` list has it.
   `[flags]` `other_commands` names every top-level command and alias except
   `configure`, `help`, `info`, `run`, and `session` (alias `s`), and the
