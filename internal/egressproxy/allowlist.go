@@ -85,6 +85,21 @@ func ParseAllowlist(text, label string) (*Allowlist, error) {
 	return a, nil
 }
 
+// Endpoints lists each endpoint once as canonical host:port, sorted. The
+// launcher makes the agent's host aliases from it, so an alias names the host
+// in the spelling the proxy routes by.
+func (a *Allowlist) Endpoints() []string {
+	endpoints := make([]string, 0, len(a.sni)+len(a.forward))
+	for host := range a.sni {
+		endpoints = append(endpoints, net.JoinHostPort(host, strconv.Itoa(tlsPort)))
+	}
+	for port, host := range a.forward {
+		endpoints = append(endpoints, net.JoinHostPort(host, strconv.Itoa(int(port))))
+	}
+	slices.Sort(endpoints)
+	return endpoints
+}
+
 // Ports lists the ports the proxy must listen on, in ascending order.
 func (a *Allowlist) Ports() []uint16 {
 	var ports []uint16
