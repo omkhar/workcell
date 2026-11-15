@@ -278,8 +278,7 @@ while IFS= read -r line; do
 done
 EOF
     )"
-    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! run_workcell_verify \
+    if ! workcell_with_ack_today_utc run_workcell_verify \
       session start \
       --agent codex \
       --mode development \
@@ -290,7 +289,7 @@ EOF
       --debug-log "${DETACHED_SESSION_DEBUG_LOG}" \
       --file-trace-log "${DETACHED_SESSION_FILE_TRACE_LOG}" \
       --allow-arbitrary-command \
-      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
+      "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
       -- /bin/bash -lc "${DETACHED_SESSION_WORKER_COMMAND}" -- "${DETACHED_SESSION_SOURCE_SENTINEL_REL}" >"${DETACHED_SESSION_START_OUT}" 2>&1; then
       echo "Expected detached session start to succeed against the live runtime" >&2
       cat "${DETACHED_SESSION_START_OUT}" >&2
@@ -611,8 +610,7 @@ for attempt in 1 2 3; do
 done
 EOF
     )"
-    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! run_workcell_verify \
+    if ! workcell_with_ack_today_utc run_workcell_verify \
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
@@ -621,7 +619,7 @@ EOF
       --injection-policy "${LIVE_AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
-      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
+      "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
       -- /bin/bash -lc "${PACKAGE_MUTATION_AUDIT_COMMAND}"; then
       echo "Expected package-mutation audit verification run to succeed" >&2
       exit 1
@@ -651,8 +649,7 @@ codex --version >/tmp/workcell-package-mutation-post-failure.out 2>&1
 grep -q "session previously ran package-manager mutations as root" /tmp/workcell-package-mutation-post-failure.out
 EOF
     )"
-    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! run_workcell_verify \
+    if ! workcell_with_ack_today_utc run_workcell_verify \
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
@@ -661,7 +658,7 @@ EOF
       --injection-policy "${LIVE_AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
-      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
+      "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
       -- /bin/bash -lc "${PACKAGE_MUTATION_FAILURE_COMMAND}"; then
       echo "Expected package-mutation failure propagation verification run to succeed" >&2
       exit 1
@@ -674,8 +671,7 @@ EOF
     # fixed-string presence probes).  `|| exit 1` matches the former loop's
     # `exit 1` on a violated invariant.
     go_verify_citools workcell-smoke-apt-broker-probe "${ROOT_DIR}" || exit 1
-    ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-    if ! run_workcell_verify \
+    if ! workcell_with_ack_today_utc run_workcell_verify \
       --agent codex \
       --mode build \
       --workspace "${ROOT_DIR}" \
@@ -684,7 +680,7 @@ EOF
       --injection-policy "${LIVE_AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
-      "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
+      "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
       -- /bin/bash -lc 'test -f /opt/workcell/host-injections/manifest.json && grep -q "Repository Working Agreement" /workspace/AGENTS.md && test ! -d /workspace/AGENTS.md'; then
       echo "Expected live launcher run to stage an injection manifest and mount the tracked workspace AGENTS.md snapshot as a file" >&2
       exit 1

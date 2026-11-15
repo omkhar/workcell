@@ -7,6 +7,8 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-session-scenario.XXXXXX")"
 TMP_DIR="$(cd "${TMP_DIR}" && pwd -P)"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/ack-date.sh"
 REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-session-scenario-$$"
 SESSION_ONE="20260408T100000Z-11111111-$$"
@@ -22,7 +24,6 @@ CLI_SESSION_FIXTURE_IMAGE="workcell-session-cli-fixture:test-$$"
 CLI_SESSION_FIXTURE_BUILD_DIR="${TMP_DIR}/session-cli-fixture-build"
 WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
 HOST_DOCKER_BIN=""
-ACK_TODAY_UTC="$(date -u +%Y-%m-%d)"
 
 resolve_host_docker_bin() {
   local candidate=""
@@ -669,14 +670,14 @@ run_detached_start_dry_run() {
   shift 2
 
   WORKCELL_SESSION_WORKSPACE_MODE="${workspace_mode}" \
-    "${ROOT_DIR}/scripts/workcell" \
+    workcell_with_ack_today_utc "${ROOT_DIR}/scripts/workcell" \
     session start \
     --agent codex \
     --mode development \
     --workspace "${workspace_path}" \
     --no-default-injection-policy \
     --allow-arbitrary-command \
-    "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+    "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
     "$@" \
     --dry-run \
     -- /bin/true
@@ -900,7 +901,7 @@ grep -q '^cross_clone_visible=0$' <<<"${noninterference_output}"
 if [[ "${detached_launch_blocked}" -eq 0 ]]; then
   detached_start_custom_state_output="$(
     XDG_STATE_HOME="${custom_state_home}" \
-      /bin/bash "${ROOT_DIR}/scripts/workcell" \
+      workcell_with_ack_today_utc /bin/bash "${ROOT_DIR}/scripts/workcell" \
       session start \
       --session-workspace direct \
       --agent codex \
@@ -908,7 +909,7 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
       --workspace "${DETACHED_START_WORKSPACE}" \
       --no-default-injection-policy \
       --allow-arbitrary-command \
-      "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+      "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
       --dry-run \
       -- /bin/true 2>&1
   )"
@@ -4813,10 +4814,10 @@ if fork_explicit_run 2001-01-01 >/dev/null 2>&1; then
   exit 1
 fi
 test ! -e "${fork_explicit_log}"
-fork_explicit_run "${ACK_TODAY_UTC}" >/dev/null 2>&1 || true
+workcell_with_ack_today_utc fork_explicit_run @ACK_TODAY_UTC@ >/dev/null 2>&1 || true
 grep -q child "${fork_explicit_log}"
 # Negative control: today's date reaches the snapshot step.
-fork_stale_run "${ACK_TODAY_UTC}" >/dev/null 2>"${TMP_DIR}/fork-fresh-ack.err" || true
+workcell_with_ack_today_utc fork_stale_run @ACK_TODAY_UTC@ >/dev/null 2>"${TMP_DIR}/fork-fresh-ack.err" || true
 grep -q called "${fork_stale_snapshots}" || {
   cat "${TMP_DIR}/fork-fresh-ack.err" >&2
   exit 1
