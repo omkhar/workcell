@@ -876,9 +876,24 @@ func cmdHelperSubtractEndpoints(args []string) error {
 
 // cmdHelperValidateEgressProxyAllowlist applies the proxy's own allowlist
 // parser, so --egress-proxy fails before launch on a set the proxy rejects.
+// cmdHelperValidateEgressProxyAllowlist refuses an endpoint list the proxy
+// cannot route and prints the rest as canonical host:port lines, the form the
+// launcher makes the agent's host aliases from.
 func cmdHelperValidateEgressProxyAllowlist(args []string) error {
-	_, err := egressproxy.ParseAllowlist(args[0], "--egress-proxy allowlist")
-	return err
+	return writeEgressProxyEndpoints(os.Stdout, args[0])
+}
+
+func writeEgressProxyEndpoints(w io.Writer, list string) error {
+	allowlist, err := egressproxy.ParseAllowlist(list, "--egress-proxy allowlist")
+	if err != nil {
+		return err
+	}
+	for _, endpoint := range allowlist.Endpoints() {
+		if _, err := fmt.Fprintln(w, endpoint); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // cmdHelperEgressDenyAuditRecords prints the audit records for a saved deny

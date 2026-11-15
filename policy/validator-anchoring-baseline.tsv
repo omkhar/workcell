@@ -58,6 +58,9 @@ internal/metadatautil	pinnedInputsCheck.toolPinBridgeInline	4c97e72f,de7641ae,fa
 internal/metadatautil	rejectInlineToolPins	ce23d36a	the substring finds a tool-pin image repository inside a decoded workflow YAML scalar; it only denies
 internal/metadatautil	rejectToolPinLoaderEnv	6d4747d3,7b56a4cb,d91244a9,dc54a3fe	the prefixes check a decoded workflow or job env key name; they only deny
 internal/metadatautil	replaceInReleaseJob	4ac3aaf4,9d4ac0c7	a test locates the job it mutates in the release workflow fixture
+internal/metadatautil	actionInputNames	a39bcf76	the pattern checks one decoded YAML mapping key of action metadata
+internal/metadatautil	parseActionRef	0a2ee96f	the pattern splits one decoded workflow step uses: value
+internal/metadatautil	pinnedWorkflowActionRefs	6ec42091,9dce78c5	the prefixes check a decoded workflow step uses: value
 internal/metadatautil	shellGrepIsQuiet	1541affc,a2afbe0b,d97760a1	the checks read the option words of one grep stage that shellQuietGrepStages cut at a pipe; they parse the grep options, not free text
 internal/metadatautil	shellQuietGrepStages	ff1b798d	the search cuts each later pipeline stage at the next shell operator in the comment-free command text
 internal/metadatautil	ShellPortabilityFindings	31169007,682af991,a2421991,f173b452	unreviewed debt: review the subject, then port or justify
@@ -460,7 +463,7 @@ internal/testkit	TestRuntimeUserKeepsNoShellBrokerState	b320fcfa	unreviewed debt
 internal/testkit	TestSafePathDocDocumentsRepoPublishWrapperBeforeLowerLevelHelper	135686ee,5eba53e0,d9108578	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestSessionDeleteStopsAnOrphanBrokerWithoutANetwork	3c6624f5,6745b0ff,872c6fb3,89bf8925,ae9c242e,fb501117	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStartAptBrokerDelegatesToTheServerBinary	514a97c9	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestStartCredentialBrokerKeepsTheTokenOutOfArgv	0632cc2e,4f007e97,b1471bd1,e2d4f54b	the pattern checks the output of a stubbed launcher function run, not script text
+internal/testkit	TestStartCredentialBrokerKeepsTheTokenOutOfArgv	0632cc2e,38d3dcd6,b1471bd1,e2d4f54b	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStartCredentialBrokerRollsBackEveryFailure	10de7dda,29448914,85ca1424	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStopCredentialBrokerSignalsOnlyThisSessionBroker	748626f1,9b1b8084	the pattern checks the output of a stubbed launcher function run, not script text
 internal/testkit	TestStopEgressProxyDenyLogPublish	9941dc0e	unreviewed debt in a test: review the subject, then port or justify
