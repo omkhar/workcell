@@ -181,13 +181,16 @@ jobs:
             echo "- base ref: \`${GITHUB_REF}\`"
             echo "- base sha: \`$(git rev-parse HEAD)\`"
             for kind in provider toolchain; do
-              existing_pr_var="REFRESH_${kind^^}_PR"
+              case "${kind}" in
+                provider) existing_pr="${REFRESH_PROVIDER_PR-}" ;;
+                toolchain) existing_pr="${REFRESH_TOOLCHAIN_PR-}" ;;
+              esac
               metadata_path="${CANDIDATE_DIR}/${kind}/metadata.json"
               echo
               echo "## ${kind^} candidate"
               echo
-              if [[ -n "${!existing_pr_var}" ]]; then
-                echo "Skipped, because a ${kind} refresh PR is already open: ${!existing_pr_var}"
+              if [[ -n "${existing_pr}" ]]; then
+                echo "Skipped, because a ${kind} refresh PR is already open: ${existing_pr}"
                 continue
               fi
               if [[ " ${REFRESH_FAILED} " == *" ${kind} "* ]]; then

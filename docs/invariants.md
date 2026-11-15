@@ -281,10 +281,15 @@ options that run its file, such as `-e`, `-x` or `-o pipefail`
 
 Bash reads the value of a variable in arithmetic as an expression, which can
 assign `PATH`. The reader reads `((`, `$((`, `let`, a `[[` number test, a
-subscript and a substring offset. Each operand must be a number, or a variable
-whose every write is a number (`internal/metadatautil/lane_arithmetic.go`). A subscript of
-an associative array that the lane declares first counts too. A `declare -i`
-and a `${x@P}` stop the check.
+subscript, a substring offset and the body of an expanded heredoc. Each operand
+must be a number, or a variable whose every write is a number
+(`internal/metadatautil/lane_arithmetic.go`). A write counts only for a later
+read in the same branch, loop or function body. A `declare -i` and a `${x@P}`
+stop the check.
+
+The name that `unset` or `-v` reads, and the name in `${!x}`, must be literal.
+It may also be a variable that holds only names from a literal list or a
+`${!PREFIX@}` listing.
 
 A `${ROOT_DIR}/` path counts only in a lane script that sets `ROOT_DIR` to the
 repository root first and makes it `readonly` on the next line. Bash then keeps

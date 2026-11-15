@@ -15,8 +15,8 @@ import (
 // value an expansion spells, as (( $x )) does. The lane reader therefore reads
 // every arithmetic context, (( )), $(( )), $[ ], let, an integer operator of
 // [[ ]], an array subscript and a substring offset, and accepts one only when
-// each operand is a number or a variable that holds one: one the lane assigns,
-// and every value it assigns is a number literal, a single arithmetic
+// each operand is a number or a variable that holds one: one the lane assigns
+// before any command may read it, and every value it assigns is a number literal, a single arithmetic
 // expansion, $?, $#, $$, $!, a length, a number let computes, or an expansion
 // of another such variable. Any other operand, a positional parameter, $_ or a
 // substitution included, is unreadable.
@@ -51,9 +51,14 @@ func (reader *laneArithmetic) closing(text string, start int, open, closing byte
 	return end
 }
 
-// laneExpression is one arithmetic expression, with the array it subscripts,
-// if any: bash reads the subscript of an associative array as a string.
-type laneExpression struct{ text, array string }
+// laneExpression is one arithmetic expression, or, when named is set, a word
+// bash reads as a variable's name. Bash evaluates the subscript of any array
+// as arithmetic unless the array is associative, which this reader does not
+// track.
+type laneExpression struct {
+	text  string
+	named bool
+}
 
 // laneCommandArithmetic is an unquoted (( that no $ opens, which starts an
 // arithmetic command, wherever in a word bash ends the word before it.
@@ -93,7 +98,7 @@ func (reader *laneArithmetic) read(args []word) {
 				}
 			}
 		case reader.test && !each.quoted && each.text == "-v" && at+1 < len(words):
-			reader.expressions = append(reader.expressions, laneSubscripts(words[at+1])...)
+			reader.expressions = append(reader.expressions, laneNameOperand(words[at+1])...)
 		}
 	}
 	command := laneCommand(laneLeading(laneUnredirected(words)))
@@ -104,9 +109,26 @@ func (reader *laneArithmetic) read(args []word) {
 		}
 	case "unset":
 		for _, operand := range command[1:] {
-			reader.expressions = append(reader.expressions, laneSubscripts(operand)...)
+			reader.expressions = append(reader.expressions, laneNameOperand(operand)...)
+		}
+	case "test", "[":
+		for at, operand := range command[:len(command)-1] {
+			if operand == "-v" {
+				reader.expressions = append(reader.expressions, laneNameOperand(command[at+1])...)
+			}
 		}
 	}
+}
+
+// laneNameOperand returns what bash evaluates in a word it reads as the name
+// of a variable, as unset and test -v do: the subscript of an element it
+// names, or, when an expansion spells the word, the word itself, since the
+// value may name any element. laneNamedReason reads such a word.
+func laneNameOperand(text string) []laneExpression {
+	if laneExpands(text) {
+		return []laneExpression{{text: text, named: true}}
+	}
+	return laneSubscripts(text)
 }
 
 // start opens an expression with its first text, from the byte that opens it.
@@ -147,7 +169,7 @@ func (reader *laneArithmetic) remaining() []laneExpression {
 // as a[i] does, or none.
 func laneSubscripts(text string) []laneExpression {
 	if match := laneElement.FindStringSubmatch(text); match != nil {
-		return []laneExpression{{match[2], match[1]}}
+		return []laneExpression{{text: match[2]}}
 	}
 	return nil
 }
@@ -156,7 +178,7 @@ func laneSubscripts(text string) []laneExpression {
 // one that may assign one, as a[i]=1, a[i]+=1 or the [i]=1 of a=([i]=1) do.
 var (
 	laneElement         = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\[(.*)\]$`)
-	laneAssignedElement = regexp.MustCompile(`^(?:([A-Za-z_][A-Za-z0-9_]*)=?)?\(?[A-Za-z_0-9]*\[`)
+	laneAssignedElement = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*=?)?\(?[A-Za-z_0-9]*\[`)
 )
 
 // word returns the arithmetic expressions in one word's text:
@@ -166,14 +188,10 @@ var (
 // stop bash evaluating one, so the text is read whole.
 func (reader *laneArithmetic) word(text string) (expressions []laneExpression, tail string) {
 	reader.budget -= len(text)
-	if match := laneAssignedElement.FindStringSubmatch(text); match != nil {
+	if laneAssignedElement.MatchString(text) {
 		start := strings.IndexByte(text, '[')
 		if end := reader.closing(text, start, '[', ']'); end < len(text) && strings.HasPrefix(strings.TrimPrefix(text[end+1:], "+"), "=") {
-			array := match[1]
-			if strings.Contains(text[:start], "=") {
-				array = "" // an element of a compound assignment, whose array this reader does not track
-			}
-			expressions = append(expressions, laneExpression{text[start+1 : end], array})
+			expressions = append(expressions, laneExpression{text: text[start+1 : end]})
 		}
 	}
 	for at := 0; at < len(text) && reader.budget >= 0; at++ {
@@ -209,7 +227,7 @@ func (reader *laneArithmetic) parameter(text string) []laneExpression {
 	if at < len(text) && text[at] == '[' {
 		end := reader.closing(text, at, '[', ']')
 		if subscript := text[at+1 : max(at+1, end)]; subscript != "@" && subscript != "*" {
-			expressions = append(expressions, laneExpression{subscript, name})
+			expressions = append(expressions, laneExpression{text: subscript})
 		}
 		at = max(at+1, end+1)
 	}
@@ -276,13 +294,13 @@ func arithmeticReason(expression string, numbers map[string]bool) string {
 }
 
 // laneNumbers returns the variables a lane assigns only numbers, as
-// arithmeticReason accepts them.
-func laneNumbers(writes map[string][]laneWrite) map[string]bool {
+// arithmeticReason accepts them, and never reads before it assigns them.
+func laneNumbers(writes map[string][]laneWrite, inherited map[string]bool) map[string]bool {
 	numbers := map[string]bool{}
 	for changed := true; changed; {
 		changed = false
 		for name, each := range writes {
-			if numbers[name] || !slices.ContainsFunc(each, func(write laneWrite) bool { return !write.shaped }) ||
+			if numbers[name] || inherited[name] || !slices.ContainsFunc(each, func(write laneWrite) bool { return !write.shaped }) ||
 				slices.ContainsFunc(each, func(write laneWrite) bool { return !laneNumberWrite(write, numbers) }) {
 				continue
 			}
@@ -322,11 +340,12 @@ var (
 	laneNumberExpansion = regexp.MustCompile(`^(?:\$\{?[?#$!]\}?|\$\{#[A-Za-z_][A-Za-z0-9_]*(?:\[[@*]\])?\}|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?)$`)
 )
 
-// laneExpansionOperator is a ${ } with an @ operator, and laneInertOperators
-// the operators that only transform the value: any other, as @P, which
-// expands the value as a prompt and so runs its substitutions and assigns its
-// defaults, is unreadable.
-var laneExpansionOperator = regexp.MustCompile(`\$\{[^{}]*@([A-Za-z])\}`)
+// laneExpansionOperator is the @ operator that ends a ${ }, found wherever
+// the text holds one, so a nested ${ } before it, as ${v[${i}]@P} has, does
+// not hide it. laneInertOperators are the operators that only transform the
+// value: any other, as @P, which expands the value as a prompt and so runs its
+// substitutions and assigns its defaults, is unreadable.
+var laneExpansionOperator = regexp.MustCompile(`@([A-Za-z])\}`)
 
 const laneInertOperators = "QEUuLaKkA"
 
@@ -335,90 +354,199 @@ const laneInertOperators = "QEUuLaKkA"
 func laneOperatorReason(text string) string {
 	for _, match := range laneExpansionOperator.FindAllStringSubmatch(text, -1) {
 		if !strings.Contains(laneInertOperators, match[1]) {
-			return fmt.Sprintf("expands %s, whose @%s operator may run or assign text this reader cannot spell", match[0], match[1])
+			return fmt.Sprintf("expands a parameter with the @%s operator, which may run or assign text this reader cannot spell", match[1])
 		}
 	}
 	return ""
 }
 
-// laneAssociative returns the arrays the lane declares associative before it
-// names them any other way, whose subscripts bash reads as strings: a declare
-// or typeset -A at the lane's top level, outside any function, group, subshell
-// or compound command, that is the first command of the lane to name the
-// array, when no other command of the lane or a library declares, unsets or
-// names it as a local, and no library names it at all. scanned holds each
-// body's commands, the lane's first.
-func laneAssociative(scanned [][][]word) map[string]bool {
-	associative, seen, rejected := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	var nesting laneNesting
-	for at, body := range scanned {
-		for _, args := range body {
-			top := nesting.read(args) && at == 0
-			command := laneCommand(laneLeading(laneUnredirected(texts(args))))
-			declares := slices.Contains([]string{"declare", "typeset"}, firstOf(command)) && laneOption(command[1:], "A")
-			for _, name := range laneMentions(args) {
-				if at == 0 && top && declares && !seen[name] && slices.ContainsFunc(command[1:], func(operand string) bool {
-					return strings.SplitN(operand, "=", 2)[0] == name
-				}) {
-					associative[name] = true
-				} else if at > 0 || associative[name] && slices.Contains(laneBindings, firstOf(command)) && slices.ContainsFunc(command[1:], func(operand string) bool {
-					return strings.SplitN(operand, "=", 2)[0] == name
-				}) {
-					rejected[name] = true
-				}
-				seen[name] = true
-			}
+// laneNamedReason returns why a word bash reads as a variable's name is
+// unreadable, or "": only one expansion of a variable that holds a number or
+// a plain name, as laneListed reads it, is readable, since any other value may
+// name an array element, whose subscript bash evaluates.
+func laneNamedReason(text string, numbers, listed map[string]bool) string {
+	if match := laneProgramVariable.FindStringSubmatch(text); match != nil && match[3] == "" {
+		if name := match[1] + match[2]; numbers[name] || listed[name] {
+			return ""
 		}
 	}
-	for name := range rejected {
-		delete(associative, name)
-	}
-	return associative
+	return fmt.Sprintf("names a variable by %q, whose value may name an array element whose subscript bash evaluates", text)
 }
 
-// laneBindings are the builtins that may make a name an indexed array or
-// another variable again.
-var laneBindings = []string{"declare", "typeset", "local", "unset", "export", "readonly"}
+// laneIndirections returns the variable each indirect expansion of a text,
+// as ${!x} or ${!x-}, reads its name from, and whether one reads it from
+// anything else: ${!} and ${!#} are not indirect, and ${!P@}, ${!P*},
+// ${!a[@]} and ${!a[*]} list names or subscripts.
+func laneIndirections(text string) (names []string, opaque bool) {
+	for rest := text; ; {
+		at := strings.Index(rest, "${!")
+		if at < 0 {
+			return names, opaque
+		}
+		rest = rest[at+3:]
+		name := laneParameterName.FindString(rest)
+		after := rest[len(name):]
+		switch {
+		case (name == "" || name == "#") && strings.HasPrefix(after, "}"):
+		case !laneVariableName.MatchString(name):
+			opaque = true
+		case strings.HasPrefix(after, "@}") || strings.HasPrefix(after, "*}") || strings.HasPrefix(after, "[@]}") || strings.HasPrefix(after, "[*]}"):
+		default:
+			names = append(names, name)
+		}
+	}
+}
 
-// laneMentions returns each name a command's words spell.
-func laneMentions(args []word) []string {
+// laneListed returns the variables that hold only plain names: the lane
+// assigns each before it reads it, and each value it assigns is empty, a name
+// or an expansion of the names that start with a prefix, as a loop over
+// "${!GO@}" assigns. No such value may name a variable in laneGuardedNames.
+func laneListed(writes map[string][]laneWrite, inherited map[string]bool) map[string]bool {
+	listed := map[string]bool{}
+	for name, each := range writes {
+		if !inherited[name] && slices.ContainsFunc(each, func(write laneWrite) bool { return !write.shaped }) &&
+			!slices.ContainsFunc(each, func(write laneWrite) bool { return !laneListedWrite(write) }) {
+			listed[name] = true
+		}
+	}
+	return listed
+}
+
+// laneListedWrite reports whether a write assigns only plain names that
+// laneGuardedNames does not hold.
+func laneListedWrite(write laneWrite) bool {
+	if write.literal {
+		return write.value == "" || laneVariableName.MatchString(write.value) && !slices.Contains(laneGuardedNames, write.value)
+	}
+	match := laneNamesExpansion.FindStringSubmatch(write.value)
+	return match != nil && !slices.ContainsFunc(laneGuardedNames, func(guarded string) bool { return strings.HasPrefix(guarded, match[1]) })
+}
+
+// laneNamesExpansion is an expansion of the names that start with a prefix.
+var laneNamesExpansion = regexp.MustCompile(`^\$\{!([A-Za-z_][A-Za-z0-9_]*)[@*]\}$`)
+
+// laneGuardedNames are the variables a lane may not unset by a computed name:
+// PATH, without which bash looks a command up in the working directory, and
+// the pinned root.
+var laneGuardedNames = []string{"PATH", "ROOT_DIR"}
+
+// laneEvent is what one command of a lane or a library reads and writes, in
+// the order the reader reads them. A write counts for a later read only when
+// certain, not after && or ||, and only inside the compound command, function
+// body or case branch that makes it. sources is the body a source command
+// reads, or 0.
+type laneEvent struct {
+	reads, writes []string
+	scopes        []int // the compound commands open, outermost first
+	certain       bool
+	sources       int
+}
+
+// laneReads returns each variable a command's words expand, and each name
+// its arithmetic expressions read.
+func laneReads(args []word, expressions []laneExpression) []string {
 	var names []string
 	for _, each := range args {
-		names = append(names, laneIdentifier.FindAllString(each.text, -1)...)
+		for _, match := range laneReadName.FindAllStringSubmatch(each.text, -1) {
+			names = append(names, match[1])
+		}
+	}
+	for _, expression := range expressions {
+		names = append(names, laneIdentifier.FindAllString(expression.text, -1)...)
 	}
 	return names
 }
 
-// laneIdentifier is a name bash may read as a variable.
-var laneIdentifier = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+// laneReadName is an expansion of a named variable, and laneIdentifier a name
+// bash may read as one in arithmetic.
+var (
+	laneReadName   = regexp.MustCompile(`\$\{?[!#]?([A-Za-z_][A-Za-z0-9_]*)`)
+	laneIdentifier = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+)
 
-// laneNesting follows the groups, subshells, compound commands and function
-// bodies a lane's commands open and close, in order, to tell a command at the
-// top level from one inside them. A closer it cannot match makes it lose
-// track, and then no command is at the top level.
+// laneInherited returns each variable some command may read before the lane
+// assigns it, which then holds whatever value the lane inherits. It reads the
+// lane's commands in order, and a library's where the lane sources it; a
+// library no command sources is read last, and assigns nothing for a later
+// read.
+func laneInherited(events [][]laneEvent) map[string]bool {
+	inherited, written, walked := map[string]bool{}, map[string]map[int]bool{}, map[int]bool{}
+	var walk func(at int, certain bool, outer []int)
+	walk = func(at int, certain bool, outer []int) {
+		walked[at] = true
+		for _, event := range events[at] {
+			scopes := append(slices.Clip(outer), event.scopes...)
+			for _, name := range event.reads {
+				if !written[name][0] && !slices.ContainsFunc(scopes, func(scope int) bool { return written[name][scope] }) {
+					inherited[name] = true
+				}
+			}
+			if certain && event.certain {
+				scope := 0
+				if len(scopes) > 0 {
+					scope = scopes[len(scopes)-1]
+				}
+				for _, name := range event.writes {
+					if written[name] == nil {
+						written[name] = map[int]bool{}
+					}
+					written[name][scope] = true
+				}
+			}
+			if event.sources > 0 && !walked[event.sources] {
+				walk(event.sources, certain && event.certain, scopes)
+			}
+		}
+	}
+	for at := range events {
+		if !walked[at] {
+			walk(at, at == 0, nil)
+		}
+	}
+	return inherited
+}
+
+// laneNesting follows the groups, subshells, compound commands, function
+// bodies and case branches a body's commands open and close, in order, each
+// with a number of its own, so a write counts only inside the one that makes
+// it. A closer it cannot match makes it lose track, and then no write counts.
 type laneNesting struct {
-	open []string // the openers still open, innermost last
-	lost bool
+	open   []string // the openers still open, innermost last
+	scopes []int    // the number of each
+	next   *int     // the last number, shared by every body
+	lost   bool
 }
 
 // laneNestingClosers maps each closer to the opener it closes.
 var laneNestingClosers = map[string]string{"}": "{", ")": "(", "fi": "if", "done": "do", "esac": "case"}
 
-// read follows one command and reports whether it runs at the top level.
-func (nesting *laneNesting) read(args []word) bool {
-	push := func(opener string) { nesting.open = append(nesting.open, opener) }
+// read follows one command, and returns the scopes it runs in and whether the
+// reader has lost track.
+func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
+	number := func() int {
+		*nesting.next++
+		return *nesting.next
+	}
+	push := func(opener string) {
+		nesting.open, nesting.scopes = append(nesting.open, opener), append(nesting.scopes, number())
+	}
 	innermost := func() string {
 		if len(nesting.open) == 0 {
 			return ""
 		}
 		return nesting.open[len(nesting.open)-1]
 	}
+	branch := func() { // a new branch of the innermost compound command
+		if len(nesting.scopes) > 0 {
+			nesting.scopes[len(nesting.scopes)-1] = number()
+		}
+	}
 	pop := func(closer string) {
 		if innermost() != laneNestingClosers[closer] {
 			nesting.lost = true
 			return
 		}
-		nesting.open = nesting.open[:len(nesting.open)-1]
+		nesting.open, nesting.scopes = nesting.open[:len(nesting.open)-1], nesting.scopes[:len(nesting.scopes)-1]
 	}
 	words := args
 	for leading := true; leading && len(words) > 0 && !words[0].quoted; {
@@ -433,7 +561,9 @@ func (nesting *laneNesting) read(args []word) bool {
 		case laneNestingClosers[text] != "":
 			pop(text)
 		case innermost() == "case" && strings.HasSuffix(text, ")"):
-			// a case pattern
+			branch() // a case pattern
+		case text == "else" || text == "elif":
+			branch()
 		case strings.HasPrefix(text, "((") || text == "[[":
 			leading = false
 		case strings.HasPrefix(text, "("):
@@ -443,14 +573,14 @@ func (nesting *laneNesting) read(args []word) bool {
 			push("{")
 		case text == "function" && len(words) > 1:
 			words = words[1:]
-		case strings.HasSuffix(text, "()") || slices.Contains([]string{"then", "else", "elif", "do", "!", "time"}, text):
+		case strings.HasSuffix(text, "()") || slices.Contains([]string{"then", "do", "!", "time"}, text):
 		default:
 			leading = false
 			continue
 		}
 		words = words[1:]
 	}
-	top := len(nesting.open) == 0 && !nesting.lost
+	scopes = slices.Clone(nesting.scopes)
 	for _, each := range words {
 		if !each.quoted && strings.HasSuffix(each.text, "=(") {
 			push("(") // an array assignment whose elements run on to a later line
@@ -459,5 +589,5 @@ func (nesting *laneNesting) read(args []word) bool {
 	if len(words) > 0 && !words[len(words)-1].quoted && strings.HasSuffix(words[len(words)-1].text, ")") && innermost() == "(" {
 		pop(")")
 	}
-	return top
+	return scopes, nesting.lost
 }

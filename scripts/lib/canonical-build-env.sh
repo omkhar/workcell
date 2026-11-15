@@ -7,37 +7,39 @@
 # ungated workflow roots, arbitrary direct compiler invocations, tool identity,
 # or the contents of caller-selected storage paths.
 
-_workcell_canonical_env_reject_nonempty() {
-  local name="$1"
-
-  case "${name}" in
+# A name that a prefix listing returns is checked before any expansion reads
+# it: Bash 3 may list an environment entry whose name is not an identifier.
+_workcell_canonical_env_reject_unsafe_name() {
+  case "$1" in
     "" | [0123456789]* | *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*)
       echo "Canonical build environment rejects an ambient variable with an unsafe identifier." >&2
       return 2
       ;;
   esac
-  if [[ -n "${!name-}" ]]; then
-    printf 'Canonical build environment rejects ambient %s; rerun with the variable unset.\n' "${name}" >&2
+}
+
+# Each caller passes the value it read, so these helpers never expand a name
+# that a caller computes.
+_workcell_canonical_env_reject_nonempty() {
+  if [[ -n "$2" ]]; then
+    printf 'Canonical build environment rejects ambient %s; rerun with the variable unset.\n' "$1" >&2
     return 2
   fi
-  unset "${name}"
 }
 
 _workcell_canonical_env_require_value() {
-  local name="$1"
-  local expected="$2"
-  local actual="${!name-}"
+  local variable="$1"
+  local actual="$2"
+  local expected="$3"
 
   if [[ -n "${actual}" && "${actual}" != "${expected}" ]]; then
-    printf 'Canonical build environment rejects ambient %s; rerun with the variable unset.\n' "${name}" >&2
+    printf 'Canonical build environment rejects ambient %s; rerun with the variable unset.\n' "${variable}" >&2
     return 2
   fi
 }
 
 _workcell_canonical_env_is_passive_go_toolcache_alias() {
-  local name="$1"
-
-  [[ "${name}" =~ ^GOROOT_[0123456789]+_[0123456789]+_(X64|ARM64)$ ]]
+  [[ "$1" =~ ^GOROOT_[0123456789]+_[0123456789]+_(X64|ARM64)$ ]]
 }
 
 workcell_require_modern_privileged_bash() {
@@ -68,8 +70,10 @@ workcell_require_canonical_build_environment() {
   # them later. Bash versions disagree about whether retained BASH_FUNC_*%%
   # entries appear in shell variable expansion, so inspect the raw environment
   # through fixed absolute tools and a scrubbed grep environment.
-  _workcell_canonical_env_reject_nonempty BASH_ENV || return 2
-  _workcell_canonical_env_reject_nonempty ENV || return 2
+  for name in BASH_ENV ENV; do
+    _workcell_canonical_env_reject_nonempty "${name}" "${!name-}" || return 2
+    unset "${name}" || return 2
+  done
   if /usr/bin/env | /usr/bin/env -i LC_ALL=C /usr/bin/grep '^BASH_FUNC_' >/dev/null; then
     echo "Canonical build environment rejects ambient exported Bash functions." >&2
     return 2
@@ -84,9 +88,10 @@ workcell_require_canonical_build_environment() {
   # GOFLAGS is rejected wholesale so tags, overlays, and other flag spellings
   # cannot select a different package graph. GOENV=off and GOWORK=off prevent
   # persisted Go configuration and an ambient workspace from restoring inputs.
-  _workcell_canonical_env_reject_nonempty GOFLAGS || return 2
-  _workcell_canonical_env_require_value GOENV off || return 2
-  _workcell_canonical_env_require_value GOWORK off || return 2
+  _workcell_canonical_env_reject_nonempty GOFLAGS "${GOFLAGS-}" || return 2
+  unset GOFLAGS || return 2
+  _workcell_canonical_env_require_value GOENV "${GOENV-}" off || return 2
+  _workcell_canonical_env_require_value GOWORK "${GOWORK-}" off || return 2
 
   # Fail closed on current, internal, and future Go environment inputs. Only
   # the three storage locations below remain caller-selectable; their contents
@@ -109,14 +114,19 @@ workcell_require_canonical_build_environment() {
       fi
       continue
     fi
-    _workcell_canonical_env_reject_nonempty "${name}" || return 2
+    _workcell_canonical_env_reject_unsafe_name "${name}" || return 2
+    _workcell_canonical_env_reject_nonempty "${name}" "${!name-}" || return 2
+    unset "${name}" || return 2
   done
   for name in "${!CGO@}"; do
     [[ -n "${name}" ]] || continue
-    _workcell_canonical_env_reject_nonempty "${name}" || return 2
+    _workcell_canonical_env_reject_unsafe_name "${name}" || return 2
+    _workcell_canonical_env_reject_nonempty "${name}" "${!name-}" || return 2
+    unset "${name}" || return 2
   done
   for name in CC CXX FC AR GCCGO GCCGOTOOLDIR PKG_CONFIG NETRC GCM_INTERACTIVE; do
-    _workcell_canonical_env_reject_nonempty "${name}" || return 2
+    _workcell_canonical_env_reject_nonempty "${name}" "${!name-}" || return 2
+    unset "${name}" || return 2
   done
 
   # Fail closed on every ambient Git override except the exact canonical
@@ -141,23 +151,25 @@ workcell_require_canonical_build_environment() {
         continue
         ;;
     esac
-    _workcell_canonical_env_reject_nonempty "${name}" || return 2
+    _workcell_canonical_env_reject_unsafe_name "${name}" || return 2
+    _workcell_canonical_env_reject_nonempty "${name}" "${!name-}" || return 2
+    unset "${name}" || return 2
   done
 
   # These exact values are safe and idempotent when one canonical entrypoint
   # invokes another. They suppress ambient system/global config, global
   # attributes, and replacement objects without preventing later trusted,
   # child-scoped fixture assignments.
-  _workcell_canonical_env_require_value GIT_NO_REPLACE_OBJECTS 1 || return 2
-  _workcell_canonical_env_require_value GIT_CONFIG_NOSYSTEM 1 || return 2
-  _workcell_canonical_env_require_value GIT_CONFIG_SYSTEM /dev/null || return 2
-  _workcell_canonical_env_require_value GIT_CONFIG_GLOBAL /dev/null || return 2
-  _workcell_canonical_env_require_value GIT_CONFIG_COUNT 1 || return 2
-  _workcell_canonical_env_require_value GIT_CONFIG_KEY_0 core.attributesFile || return 2
-  _workcell_canonical_env_require_value GIT_CONFIG_VALUE_0 /dev/null || return 2
-  _workcell_canonical_env_require_value GIT_ATTR_NOSYSTEM 1 || return 2
-  _workcell_canonical_env_require_value GIT_ATTR_SYSTEM /dev/null || return 2
-  _workcell_canonical_env_require_value GIT_ATTR_GLOBAL /dev/null || return 2
+  _workcell_canonical_env_require_value GIT_NO_REPLACE_OBJECTS "${GIT_NO_REPLACE_OBJECTS-}" 1 || return 2
+  _workcell_canonical_env_require_value GIT_CONFIG_NOSYSTEM "${GIT_CONFIG_NOSYSTEM-}" 1 || return 2
+  _workcell_canonical_env_require_value GIT_CONFIG_SYSTEM "${GIT_CONFIG_SYSTEM-}" /dev/null || return 2
+  _workcell_canonical_env_require_value GIT_CONFIG_GLOBAL "${GIT_CONFIG_GLOBAL-}" /dev/null || return 2
+  _workcell_canonical_env_require_value GIT_CONFIG_COUNT "${GIT_CONFIG_COUNT-}" 1 || return 2
+  _workcell_canonical_env_require_value GIT_CONFIG_KEY_0 "${GIT_CONFIG_KEY_0-}" core.attributesFile || return 2
+  _workcell_canonical_env_require_value GIT_CONFIG_VALUE_0 "${GIT_CONFIG_VALUE_0-}" /dev/null || return 2
+  _workcell_canonical_env_require_value GIT_ATTR_NOSYSTEM "${GIT_ATTR_NOSYSTEM-}" 1 || return 2
+  _workcell_canonical_env_require_value GIT_ATTR_SYSTEM "${GIT_ATTR_SYSTEM-}" /dev/null || return 2
+  _workcell_canonical_env_require_value GIT_ATTR_GLOBAL "${GIT_ATTR_GLOBAL-}" /dev/null || return 2
 
   GOFLAGS=""
   GOENV=off

@@ -324,7 +324,9 @@ func TestCanonicalBuildEnvironmentRejectsUnsafeIdentifierBeforeExpansion(t *test
 	directProbe := `
 set -euo pipefail
 source "$1"
-_workcell_canonical_env_reject_nonempty "$2"
+name="$2"
+_workcell_canonical_env_reject_unsafe_name "${name}" || exit 2
+: "${!name-}"
 `
 	env := map[string]string{variable: "workcell-unsafe-name"}
 	code, output := canonicalBuildEnvProbe(t, directProbe, env, variable)
@@ -354,8 +356,8 @@ workcell_require_canonical_build_environment
 		t,
 		realHelper,
 		mutant,
-		"_workcell_canonical_env_reject_nonempty() {\n  local name=\"$1\"\n\n  case \"${name}\" in\n",
-		"_workcell_canonical_env_reject_nonempty() {\n  local name=\"$1\"\n\n  case WORKCELL_SAFE_NAME in\n",
+		"_workcell_canonical_env_reject_unsafe_name() {\n  case \"$1\" in\n",
+		"_workcell_canonical_env_reject_unsafe_name() {\n  case WORKCELL_SAFE_NAME in\n",
 	)
 	_, _ = canonicalBuildEnvProbeWithHelper(t, mutant, directProbe, env, variable)
 	if _, err := os.Stat(marker); err != nil {

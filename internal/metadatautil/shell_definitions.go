@@ -47,6 +47,12 @@ func definedFunctionNames(text string) (names []string, complete bool) {
 // reads it. Every parse is charged to budget, and the read stops once it runs
 // out. It returns whether it read all of text.
 func shellLogicalCommands(text string, budget *int, each func(command) bool) bool {
+	return shellLines(flattenSubstitutions(heredocsAsHereStrings(text)), budget, each)
+}
+
+// shellLines is shellLogicalCommands on text whose substitutions and heredocs
+// are already flattened.
+func shellLines(text string, budget *int, each func(command) bool) bool {
 	parse := func(line string) ([]word, bool) {
 		if *budget -= len(line) + 1; *budget < 0 {
 			return nil, false
@@ -56,7 +62,7 @@ func shellLogicalCommands(text string, budget *int, each func(command) bool) boo
 	}
 	var joined strings.Builder
 	clean := true
-	for line := range strings.Lines(flattenSubstitutions(heredocsAsHereStrings(text))) {
+	for line := range strings.Lines(text) {
 		line = strings.TrimSuffix(line, "\n")
 		continues, stillClean, ok := shellContinues(joined.String(), line, clean, budget)
 		if !ok {
