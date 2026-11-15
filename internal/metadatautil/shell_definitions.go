@@ -84,6 +84,7 @@ func shellLines(text string, budget *int, each func(command) bool) bool {
 		commands := splitCommands(words)
 		if len(words) > 0 {
 			commands[0].conditional = commands[0].conditional || carried.conditional
+			commands[0].orElse = commands[0].orElse || carried.orElse
 			commands[0].piped = commands[0].piped || carried.piped
 			carried = command{}
 			if last := commands[len(commands)-1]; len(commands) > 1 && len(last.args) == 0 {

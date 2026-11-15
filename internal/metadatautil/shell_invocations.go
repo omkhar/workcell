@@ -63,6 +63,7 @@ type word struct {
 	quoted  bool
 	decoded bool
 	syntax  string
+	raw     string // the word as the line spells it, quotes and escapes included
 }
 
 // texts returns the words' text, for the tests that read a word as a name. A
@@ -420,6 +421,7 @@ func continuesLine(word string) bool {
 type command struct {
 	args        []word
 	conditional bool
+	orElse      bool // it runs only when the command before it fails, after ||
 	piped       bool // a pipeline stage or a background job, which runs in a subshell
 	nested      bool // text an eval, a trap or a child shell runs, as the lane reader reads it
 }
@@ -452,7 +454,7 @@ func splitCommands(words []word) []command {
 			piped := each.text == "|" || each.text == "|&"
 			last := &commands[len(commands)-1]
 			last.piped = last.piped || piped || each.text == "&"
-			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", piped: piped})
+			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", orElse: each.text == "||", piped: piped})
 			continue
 		}
 		last := &commands[len(commands)-1]
@@ -1241,7 +1243,7 @@ func shellWords(line string, stack []byte) (
 	// lose an invocation, never invent one. A stack that is already open says
 	// the line is the tail of such a substitution, so it donates none either.
 	substituted := len(stack) > 0
-	index, operatorAt := 0, 0
+	index, operatorAt, start := 0, 0, 0
 	flush := func() {
 		if !inWord {
 			return
@@ -1250,7 +1252,7 @@ func shellWords(line string, stack []byte) (
 			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved, quoted, operatorAt, index})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word{text.String(), quoted, decoded, syntax.String()})
+			words = append(words, word{text.String(), quoted, decoded, syntax.String(), line[start:min(index, len(line))]})
 		}
 		text.Reset()
 		syntax.Reset()
@@ -1258,6 +1260,9 @@ func shellWords(line string, stack []byte) (
 	}
 	for ; index < len(line); index++ {
 		character := line[index]
+		if !inWord {
+			start = index
+		}
 		switch {
 		case quote == '\'':
 			// A backslash is literal inside single quotes, and an escape bash

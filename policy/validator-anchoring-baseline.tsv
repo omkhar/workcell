@@ -231,13 +231,20 @@ internal/metadatautil	laneLiteralOptions	337d65e9,a4f48ac8,b76466b5,ea7ffe16	fai
 internal/metadatautil	laneOption	63c8cdd6,e5e919d3	fails closed: an option word with a letter that changes what runs makes the lane unreadable
 internal/metadatautil	laneOutputName	0dd42f68,6537f911	fails closed: a name that is not a plain identifier, or names a variable bash reads or ROOT_DIR, makes the lane unreadable
 internal/metadatautil	laneProgramWord	bdc2a2e6	fails closed: a value that is not a plain program name or path makes the lane unreadable
-internal/metadatautil	laneReadable	24a9644f,532c91a7,8a60283b	fails closed: an arithmetic assignment to a computed name or one bash reads, or a BASH_CMDS, BASH_ALIASES or localvar_inherit name, makes the lane unreadable
+internal/metadatautil	laneReadable	24a9644f,3db12709,532c91a7,8a60283b	fails closed: an arithmetic assignment to a computed name or one bash reads, or a BASH_CMDS, BASH_ALIASES or localvar_inherit name, makes the lane unreadable; it also reads each word a closed reader returns for one expansion of a variable, to note where a function declares it local
 internal/metadatautil	laneReading.callReason	0ef736ec	fails closed: a command word with a glob or a brace group makes the lane unreadable
 internal/metadatautil	laneReading.expandedReason	25256dad,2b860056,65907a4e,7eae08b2,b9d78721,fed703bb	fails closed: a command word it cannot read as a pinned root, a path or one program variable makes the lane unreadable
 internal/metadatautil	laneReading.outputs	ad697d63,c5f63017	the checks read the words a closed reader returns for a local copy of a positional parameter and a computed name; a write it cannot match makes the lane unreadable
 internal/metadatautil	laneScanWrites	85220f63,e285c2fb	the checks read laneScan command words for an assignment and a local of a positional parameter; they parse words, not free text
 internal/metadatautil	laneUnquotedRisk	531ecaa8,d5d66042	fails closed: a word with an unquoted expansion or glob is read as one bash may split
 internal/metadatautil	laneUnredirected	4b6e734b	the check reads one command word for a redirection operator; it parses words, not free text
+internal/metadatautil	TestLaneScriptsReadsLocalNumbersGuardsAndEvals	057a83f7	a test assertion on the error text the reader itself produces
+internal/metadatautil	laneEvalOperands	873291b3	the check reads one word a closed reader returns for a redirection operator, to leave an eval's redirections unread; it parses words, not free text
+internal/metadatautil	laneEvalSpelling	4fd14f80,81eb7bf6	the check reads the expansions of words a closed reader returns, each as $v or ${v} with no operator, and fails closed on any other; it parses words, not free text
+internal/metadatautil	laneGuardExit	e03e350c	the check reads one word a closed reader returns for a literal status or loop count; it parses a word, not free text
+internal/metadatautil	laneGuardTest	9798a5ec	the check reads one word a closed reader returns for an expansion of one named variable; it parses a word, not free text
+internal/metadatautil	laneLocalNames	8b067a1f,d26b668e	the check reads one word a closed reader returns for a variable name; it parses a word, not free text
+internal/metadatautil	laneUnredirectedFront	4587528c	the check reads one command word for a redirection operator; it parses words, not free text
 internal/metadatautil	laneWrites	115a8587,16e67208,278ff4ec,4a3c19dd,60783146,bf2e822d,d3dab433	the checks read the operands of one command for the names declare, read, printf -v and their kin assign; they parse words, not free text
 internal/metadatautil	arithmeticReason	d7825f0f	fails closed: an arithmetic operand it cannot match as a number or a variable whose every write is a number makes the lane unreadable
 internal/metadatautil	laneArithmetic.add	1d768bae,82ce0f99	the checks read the words a closed reader returns for an arithmetic expression; an expression it cannot close runs to the end of the lane and fails closed

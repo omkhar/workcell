@@ -291,6 +291,18 @@ Only a plain assignment, a declaration with a value and a `for` loop count as
 writes. None counts in a pipeline or a background job, which run in a
 subshell, or in the text an `eval` runs.
 
+A plain `local` at the top level of a function body gives the function its
+own copy of a name. A write in any function that does not declare that name
+local counts against every copy (`internal/metadatautil/lane_numbers.go`).
+A number or a program variable there reads the function's own writes and
+those outside writes.
+
+The test `[[ "$v" =~ ^[0-9]+$ ]] || continue` in a loop body proves that a
+local holds digits. So does that test with `|| return` in the function body.
+The proof lasts until a write to the name or the end of that body. An `eval`
+whose every expansion is such a number counts, and the reader reads each text
+it may run.
+
 The name that `unset` or `-v` reads, and the name in `${!x}`, must be literal.
 It may also be a variable that holds only names from a literal list or a
 `${!PREFIX@}` listing.

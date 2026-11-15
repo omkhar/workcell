@@ -101,6 +101,7 @@ func TestLaneScriptsReadsTheRootAndShadowingFunctions(t *testing.T) {
 		{"library rebinds a positional", laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nclaim x OUT\n" + gate, "claim() {\n  local v=\"$2\"\n  v=${n}DIR\n  printf -v \"${v}\" /tmp\n}\n", "name this reader cannot spell"},
 		{"library shifts before a positional", laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nclaim x OUT\n" + gate, "claim() {\n  shift\n  local v=\"$2\"\n  printf -v \"${v}\" /tmp\n}\n", "name this reader cannot spell"},
 		{"library assigns a caller's name", laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nclaim x OUT\n" + gate, "claim() {\n  local v=\"$2\"\n  printf -v \"${v}\" /tmp\n}\n", "wired"},
+		{"library assigns BASH_CMDS by a caller's name after a redirection", laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nclaim 2>/dev/null x 'BASH_CMDS[bash]'\n" + gate, "claim() {\n  local v=\"$2\"\n  printf -v \"${v}\" /bin/true\n}\n", "lane wiring is unreadable"},
 		{"library assigns BASH_CMDS by a caller's name", laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nclaim x 'BASH_CMDS[bash]'\n" + gate, "claim() {\n  local v=\"$2\"\n  printf -v \"${v}\" /bin/true\n}\n", "lane wiring is unreadable"},
 		{"canonical root", laneRoot + "\n" + gate, "", "wired"},
 		{"no root assignment", gate, "", "unwired"},
@@ -523,6 +524,7 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"library assigns BASHOPTS by a caller's name", source + "claim x BASHOPTS\n" + gate, map[string]string{library: "claim() {\n  local out=\"$2\"\n  printf -v \"${out}\" '%s' extdebug\n}\n"}, "names \"BASHOPTS\""},
 		{"library assigns BASH_COMPAT by a caller's name", source + "claim x BASH_COMPAT\n" + gate, map[string]string{library: "claim() {\n  local out=\"$2\"\n  printf -v \"${out}\" '%s' 31\n}\n"}, "names \"BASH_COMPAT\""},
 		{"library assigns BASH_ALIASES by a caller's name", source + "claim x 'BASH_ALIASES[bash]'\n" + gate, map[string]string{library: "claim() {\n  local out=\"$2\"\n  printf -v \"${out}\" '%s' true\n}\n"}, "lane wiring is unreadable"},
+		{"library output after a redirection in arithmetic", source + "OUT=0\nclaim 2>/dev/null x OUT\n(( OUT ))\n" + gate, map[string]string{library: "claim() {\n  local out=\"$2\"\n  printf -v \"${out}\" '%s' y\n}\n"}, inArithmetic},
 		{"library output program variable", source + "claim x OUT\n\"$OUT\" -p /bin/true bash\n" + gate, map[string]string{library: "claim() {\n  local out=\"$2\"\n  printf -v \"${out}\" '%s' hash\n}\n"}, program},
 		{"library parameter written by a callee", source + "claim x OUT\n" + gate, map[string]string{library: "claim() {\n  local out=\"$2\"\n  g\n  printf -v \"${out}\" '%s' /tmp\n}\ng() { out=y; }\n"}, named},
 		{"root length keeps the root", "echo \"${#ROOT_DIR}\"\n" + gate, nil, "wired"},
@@ -585,6 +587,118 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 	}
 }
 
+// A function's local holds a number by the function's own writes and every
+// write outside a function that declares it local; a test of digits that
+// skips the rest of a loop body or returns proves a local holds digits until
+// a write to it; and an eval whose expansions are such numbers is read as the
+// text it runs. Anything else fails closed.
+func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
+	t.Parallel()
+	const (
+		take     = "take() {\n  local fd=20\n  while [[ -e \"/dev/fd/${fd}\" ]]; do\n    fd=$((fd + 1))\n    [[ \"${fd}\" -lt 100 ]] || return 71\n  done\n  eval \"exec ${fd}<\\\"\\${target}\\\"\" || return 71\n}\n"
+		release  = "release() {\n  local fd=\"\"\n  for fd in ${FDS}; do\n    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n"
+		loop     = "release() {\n  local fd=\"\"\n  for fd in ${FDS}; do\n"
+		unread   = "lane wiring is unreadable"
+		spelling = "evals text this reader cannot spell"
+		number   = "cannot show is a number"
+		program  = "is not a program this reader can name"
+	)
+	var guards strings.Builder
+	for at := range 9 {
+		fmt.Fprintf(&guards, "  local v%d=\"$1\"\n  [[ \"${v%d}\" =~ ^[0-9]+$ ]] || return\n", at, at)
+	}
+	nineGuards := guards.String()
+	eightGuards := nineGuards[strings.Index(nineGuards, "  local v1="):]
+	cases := []struct{ name, library, want string }{
+		{"the cache lock's take and release", take + release, "wired"},
+		{"the cache lock's take", take, "wired"},
+		{"the cache lock's release", release, "wired"},
+		{"a guard that returns", "close() {\n  local n=\"$1\"\n  [[ $n =~ ^[0-9]+$ ]] || return 1\n  eval \"exec $n<&-\"\n}\n", "wired"},
+		{"a local number beside another function's string", take + "other() {\n  local fd=x\n}\n", "wired"},
+		{"a local program variable beside another function's", "f() {\n  local c=\"\"\n  for c in /opt/x/bash /usr/local/bin/bash; do\n    \"${c}\" -p -c :\n  done\n}\ng() {\n  local c=\"$1\"\n  [[ -n \"${c}\" ]]\n}\n", "wired"},
+		{"a local program variable a callee writes", "f() {\n  local c=/bin/true\n  h x\n  \"${c}\" x\n}\nh() {\n  c=\"$1\"\n}\n", program},
+		{"a program variable a caller holds as a local", "c=/bin/true\nf() {\n  local c=hash\n  g\n}\ng() {\n  local x=1\n  \"${c}\" -p /bin/true bash\n}\n", program},
+		{"a program variable run before its local", "c=/bin/true\nf() {\n  \"${c}\" -p /bin/true bash\n  local c=/bin/true\n  \"${c}\" x\n}\ng() {\n  local c=hash\n  f\n}\n", program},
+		{"a program variable in a function another defines", "c=/bin/true\ng() {\n  local c=/bin/true\n  \"${c}\" -p /bin/true bash\n  h() {\n    \"${c}\" -p /bin/true bash\n  }\n}\nk() {\n  local c=hash\n  h\n}\n", program},
+		{"a local program variable in a body opened as f(){", "f(){\n  local c=\"\"\n  for c in /opt/x/bash /usr/local/bin/bash; do\n    \"${c}\" -p -c :\n  done\n}\ng() {\n  local c=\"$1\"\n  [[ -n \"${c}\" ]]\n}\n", "wired"},
+		{"a local program variable in a trap", "c=/bin/true\nf() {\n  local c=/bin/true\n  trap '\"${c}\" x' EXIT\n}\ng() {\n  local c=hash\n}\n", program},
+		{"a local program variable also run where it is no local", "c=/bin/true\nf() {\n  local c=/bin/true\n  \"${c}\" x\n}\ng() {\n  local c=hash\n  f\n  h\n}\nh() {\n  \"${c}\" -p /bin/true bash\n}\n", program},
+		{"a redirection exec runs", "f() {\n  exec 3<\"${target}\"\n}\n", "wired"},
+		{"a redirection exec runs, with its target apart", "f() {\n  exec 3< \"${target}\"\n}\n", "wired"},
+		{"a guard that continues on the next line", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] ||\n      continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", "wired"},
+		{"a guard that only goes on", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] || true\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guard read after its loop", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n  done\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+		{"an eval whose quoted text starts like a redirection", "f() {\n  local n=1\n  eval \"2>/dev/null hash -p /bin/true bash ${n}\"\n}\n", spelling},
+		{"a library output after a redirection with a quoted target", "claim() {\n  local out=\"$2\"\n  printf -v \"${out}\" '%s' y\n}\nOUT=0\n3<\"${f}\" claim x OUT\n(( OUT ))\n", number},
+		{"a spelled eval that evaluates arithmetic", "x='PATH=1'\nf() {\n  local n=1\n  eval \"(( x )); : ${n}\"\n}\n", "in arithmetic"},
+		{"a local named _", "f() {\n  local _=1\n  eval \"exec ${_}<&-\"\n}\n", spelling},
+		{"a local declared in a branch a callee writes", "f() {\n  if [[ -n x ]]; then\n    local fd\n  fi\n  fd=x\n}\ng() {\n  local fd=20\n  f\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+		{"a local declared after a condition a callee writes", "f() {\n  [[ -n x ]] && local fd\n  fd=x\n}\ng() {\n  local fd=20\n  f\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+		{"a callee writes a name before it declares it local", "f() {\n  fd=x\n  local fd=1\n}\ng() {\n  local fd=20\n  f\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+		{"nine guards, the first of which lapses", "f() {\n" + nineGuards + "  eval \"exec ${v0}<&-\"\n}\n", spelling},
+		{"eight guards", "f() {\n" + eightGuards + "  eval \"exec ${v1}<&-\"\n}\n", "wired"},
+		{"an eval with a redirection", "f() {\n  local n=1\n  eval \": ${n}\" 2>/dev/null\n}\n", spelling},
+		{"an eval of a backquoted substitution", "f() {\n  local n=1\n  eval \"exec ${n}<`echo f`\"\n}\n", spelling},
+		{"an eval of a backquoted substitution it runs", "f() {\n  local n=1\n  eval \"exec ${n}<\\`hash -p /bin/true bash\\`\"\n}\n", "binds a name to a path"},
+		{"a guard after a blank line and ||", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] ||\n\n      continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", "wired"},
+		{"a guard ended by a semicolon", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]];\n    true || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"an eval of a special parameter", "f() {\n  local n=1\n  eval \"exec ${n}<$_\"\n}\n", spelling},
+		{"an eval of the last argument", "_=1\neval \"exec ${_}<&-\"\n", spelling},
+		{"a guard that tests for a pattern", loop + "    [[ \"${fd}\" != ^[0-9]+$ ]] || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guard on an inherited name", "f() {\n  [[ \"${FD}\" =~ ^[0-9]+$ ]] || return\n  eval \"exec ${FD}<&-\"\n}\n", spelling},
+		{"a regex anchored only at the start", loop + "    [[ \"${fd}\" =~ ^[0-9]+ ]] || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a regex anchored only at the end", loop + "    [[ \"${fd}\" =~ [0-9]+$ ]] || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a quoted regex", loop + "    [[ \"${fd}\" =~ \"^[0-9]+$\" ]] || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guard then and", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] && continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guard after a condition", loop + "    true && [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guard in one branch only", loop + "    if [[ -n x ]]; then\n      [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    fi\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guard that continues outside a loop", "close() {\n  local n=\"$1\"\n  [[ $n =~ ^[0-9]+$ ]] || continue\n  eval \"exec $n<&-\"\n}\n", spelling},
+		{"a guard that returns inside a loop", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] || return\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a reassignment after the guard", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    fd=\"${OTHER}\"\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guard on a name that is not local", "release() {\n  for fd in ${FDS}; do\n    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    eval \"exec ${fd}<&-\"\n  done\n}\n", spelling},
+		{"a guarded local a called function writes", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    reset\n    eval \"exec ${fd}<&-\"\n  done\n}\nreset() {\n  fd=x\n}\n", spelling},
+		{"a local number a called function writes", "f() {\n  local fd=20\n  reset\n  eval \"exec ${fd}<&-\"\n}\nreset() {\n  fd=x\n}\n", spelling},
+		{"a guard read in a function the loop defines", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    g() {\n      eval \"exec ${fd}<&-\"\n    }\n  done\n}\n", spelling},
+		{"a guard read in a trap that runs later", loop + "    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    trap 'eval \"exec ${fd}<&-\"' EXIT\n  done\n}\n", spelling},
+		{"an eval mixing a number with a string", "f() {\n  local fd=20\n  eval \"exec ${fd}<${target}\"\n}\n", spelling},
+		{"an eval of an expansion with a default", "f() {\n  local fd=20\n  eval \"exec ${fd:-3}<&-\"\n}\n", spelling},
+		{"an eval of a substitution", "f() {\n  local fd=20\n  eval \"exec $(echo ${fd})<&-\"\n}\n", spelling},
+		{"one proven eval and the same text unproven", "f() {\n  local fd=20\n  eval \"exec ${fd}<&-\"\n}\ng() {\n  eval \"exec ${fd}<&-\"\n}\nfd=x\n", spelling},
+		{"one unproven eval and the same text proven", "a() {\n  local fd=x\n  eval \"exec ${fd}<&-\"\n}\nb() {\n  local fd=20\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+		{"an eval before its function declares the name local", "fd=1\ng() {\n  local fd=x\n  f\n}\nf() {\n  eval \"exec ${fd}<&-\"\n  local fd=2\n}\n", spelling},
+		{"an eval of a name a caller holds as a local", "fd=1\ng() {\n  local fd=x\n  f\n}\nf() {\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+		{"arithmetic of a name a caller holds as a local", "n=1\ng() {\n  local n='PATH=1'\n  f\n}\nf() {\n  (( n ))\n}\n", "in arithmetic"},
+		{"arithmetic of a local that holds a string", "f() {\n  local fd=x\n  echo $((fd))\n}\n", number},
+		{"a local read before its declaration", "fd=x\nf() {\n  echo $((fd))\n  local fd=1\n}\n", number},
+		{"a local declared in its own value", "fd=x\nf() {\n  local fd=$((fd))\n}\n", number},
+		{"a local declared in one branch", "f() {\n  if [[ -n x ]]; then\n    local fd=1\n  fi\n  echo $((fd))\n}\ng() {\n  local fd=x\n  f\n}\n", number},
+		{"a local declared with an option", "f() {\n  local -g fd\n  fd=x\n}\ng() {\n  local fd=20\n  f\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+		{"a local declared after a condition", "f() {\n  [[ -n x ]] && local fd=1\n  echo $((fd))\n}\ng() {\n  local fd=x\n  f\n}\n", number},
+		{"a spelled eval that rebinds a program", "f() {\n  local n=1\n  eval \"hash -p /bin/true bash ${n}\"\n}\n", "binds a name to a path"},
+		{"a spelled eval that defines a function", "f() {\n  local n=1\n  eval \"bash() { :; }; : ${n}\"\n}\n", "defines a function named"},
+		{"a spelled eval whose number may be empty", "f() {\n  local n=1\n  eval \"${n}hash -p /bin/true bash\"\n}\n", "binds a name to a path"},
+		{"an eval of a local number with no number written", "f() {\n  local fd=\"${X}\"\n  eval \"exec ${fd}<&-\"\n}\n", spelling},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeLaneTree(t, root, map[string]string{"scripts/validate-repo.sh": "#!/bin/bash\n" + laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n",
+				"scripts/lib/l.sh": tc.library, "scripts/ci/job-x.sh": "true\n", ".github/workflows/w.yml": "name: w\n"})
+			got, err := metadatautil.LaneScripts(root)
+			if tc.want == "wired" {
+				if err != nil || !slices.Contains(got, "scripts/gate.sh") {
+					t.Fatalf("LaneScripts() = %q, %v, want scripts/gate.sh wired", got, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), unread) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("LaneScripts() = %q, %v, want an error with %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestLaneScriptsWorkGrowsLinearly times LaneScripts on lanes of each shape
 // at two sizes, the second four times the first, and fails when the larger
 // takes more than eight times as long, so a reader that is quadratic or worse
@@ -617,6 +731,25 @@ func TestLaneScriptsWorkGrowsLinearly(t *testing.T) {
 			return "echo " + strings.Repeat("$((", n) + "1" + strings.Repeat("))", n) + "\n", ""
 		},
 		"arithmetic words": func(n int) (string, string) { return "(( " + strings.Repeat("1 + ", n) + "1 ))\n", "" },
+		"guarded evals": func(n int) (string, string) {
+			return "source \"${ROOT_DIR}/scripts/lib/l.sh\"\n", "f() {\n  local fd=\"\"\n  for fd in ${FDS}; do\n" + strings.Repeat("    [[ \"${fd}\" =~ ^[0-9]+$ ]] || continue\n    eval \"exec ${fd}<&-\"\n", n) + "  done\n}\n"
+		},
+		"many locals": func(n int) (string, string) {
+			var locals, reads strings.Builder
+			for at := range n {
+				fmt.Fprintf(&locals, "  local v%d=1\n", at)
+				fmt.Fprintf(&reads, "  echo $((v%d))\n", at)
+			}
+			return "source \"${ROOT_DIR}/scripts/lib/l.sh\"\n", "f() {\n" + locals.String() + reads.String() + "}\n"
+		},
+		"many guards": func(n int) (string, string) {
+			var locals, guards strings.Builder
+			for at := range n {
+				fmt.Fprintf(&locals, "  local v%d=\"$1\"\n", at)
+				fmt.Fprintf(&guards, "  [[ \"${v%d}\" =~ ^[0-9]+$ ]] || return\n", at)
+			}
+			return "source \"${ROOT_DIR}/scripts/lib/l.sh\"\n", "f() {\n" + locals.String() + guards.String() + strings.Repeat(fmt.Sprintf("  eval \"exec ${v%d}<&-\"\n", n-1), n) + "}\n"
+		},
 	}
 	for name, shape := range shapes {
 		t.Run(name, func(t *testing.T) {

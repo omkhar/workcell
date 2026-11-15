@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -195,13 +196,30 @@ func laneLiteralOptions(args []string, valued string) string {
 // laneReading is what the reader learns from every command a lane and its
 // libraries may run before it reads any call.
 type laneReading struct {
-	read      map[string]bool        // the libraries the lane sources
-	functions map[string]bool        // the functions the lane and its libraries define
-	writes    map[string][]laneWrite // each variable's writes
-	split     map[string]bool        // each word text seen, true when some use of it leaves an expansion, a glob or a brace group unquoted
-	computed  map[string]string      // each name word an expansion computes, with a command that assigns through it
-	inherited map[string]bool        // each variable a command may read before the lane assigns it
-	pinned    bool                   // ROOT_DIR is the repository root
+	read       map[string]bool        // the libraries the lane sources
+	functions  map[string]bool        // the functions the lane and its libraries define
+	writes     map[string][]laneWrite // each variable's writes
+	split      map[string]bool        // each word text seen, true when some use of it leaves an expansion, a glob or a brace group unquoted
+	computed   map[string]string      // each name word an expansion computes, with a command that assigns through it
+	inherited  map[string]bool        // each variable a command may read before the lane assigns it
+	pinned     bool                   // ROOT_DIR is the repository root
+	local      map[string][]laneWrite // the writes to each function's local, by laneLocalKey
+	global     map[string][]laneWrite // each variable's writes outside a function that declares it local
+	evals      []laneEval             // each eval whose operands expand
+	spelled    map[string]bool        // the operands of each eval every run of which expands only numbers
+	programs   map[string][]int       // for each word that is one expansion of a variable and each function's name, the bodies of that name that declare the variable local where the word stands
+	open       map[string]bool        // each such word and name where the word stands somewhere its variable is no local of the body
+	programmed map[string][]laneWrite // the writes programWrites returns for each such word and name, once read
+	caller     string                 // the function whose body holds the call being read
+}
+
+// laneEval is an eval whose operands expand: its operands, the names they
+// expand, if they expand only names, and where it runs.
+type laneEval struct {
+	operands string
+	names    []string
+	spelled  bool
+	context  *laneContext
 }
 
 // laneReadable reports, as an error, why this reader cannot show what a lane
@@ -213,7 +231,9 @@ type laneReading struct {
 // they run, and then each call as EveryShellCommand reads it.
 func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bool, err error) {
 	bodies := []string{body}
-	reading := laneReading{read: map[string]bool{}, functions: map[string]bool{}, writes: map[string][]laneWrite{}, split: map[string]bool{}, computed: map[string]string{}, pinned: pinned}
+	reading := laneReading{read: map[string]bool{}, functions: map[string]bool{}, writes: map[string][]laneWrite{}, split: map[string]bool{}, computed: map[string]string{}, pinned: pinned,
+		local: map[string][]laneWrite{}, global: map[string][]laneWrite{}, spelled: map[string]bool{}, programs: map[string][]int{}, open: map[string]bool{},
+		programmed: map[string][]laneWrite{}}
 	for _, library := range libraries {
 		bodies, reading.read[library.path] = append(bodies, library.text), true
 	}
@@ -271,18 +291,66 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		}
 		arithmetic = append(arithmetic, newLaneArithmetic(len(text)))
 		nesting := laneNesting{next: &numbered}
+		locals := map[int]map[string]int{} // the names each function body declares local, in order
+		var guards []laneGuard             // the guards in force
+		var pending *laneGuard             // a test for digits the next command may make a guard
 		for _, each := range scanned {
 			args := each.args
 			scopes, lost := nesting.read(args)
+			function := nesting.function(scopes)
+			guards = slices.DeleteFunc(guards, func(guard laneGuard) bool {
+				return !slices.Contains(scopes, guard.scope) || guard.function != function
+			})
+			var context *laneContext // text an eval, a trap or a child shell runs reads a number by its name alone
+			if !each.nested {
+				context = &laneContext{function: function, locals: locals[function], declared: len(locals[function])}
+				for _, guard := range guards {
+					context.guarded = append(context.guarded, guard.name)
+				}
+			}
 			read := len(arithmetic[at].expressions)
 			arithmetic[at].read(args)
+			for index := read; index < len(arithmetic[at].expressions); index++ {
+				arithmetic[at].expressions[index].context = context
+			}
 			words := texts(args)
 			event := laneEvent{reads: laneReads(args, arithmetic[at].expressions[read:]), scopes: scopes, certain: !each.conditional && !lost}
+			if operands, found := laneEvalOperands(args); found {
+				variants, names, spelled := laneEvalSpelling(operands)
+				reading.evals = append(reading.evals, laneEval{strings.Join(texts(operands), "\x00"), names, spelled, context})
+				for _, variant := range variants {
+					for _, words := range laneCommands(variant)[0] {
+						calls = append(calls, laneCall{words: words})
+					}
+				}
+			}
+			if names := laneLocalNames(laneCommand(laneLeading(laneUnredirected(words)))); context != nil && !each.piped && event.certain &&
+				function != 0 && scopes[len(scopes)-1] == function {
+				if locals[function] == nil {
+					locals[function] = map[string]int{}
+				}
+				for _, name := range names {
+					if _, declared := locals[function][name]; !declared {
+						locals[function][name] = len(locals[function])
+					}
+				}
+				context = &laneContext{function, locals[function], len(locals[function]), context.guarded} // its own writes assign its locals
+			}
 			if library, fixed := laneLibraryPath(words); fixed {
 				event.sources = sourced[library]
 			}
 			for _, each := range args {
 				reading.split[each.text] = reading.split[each.text] || laneUnquotedRisk(each)
+				if variable := laneProgramVariable.FindStringSubmatch(each.text); variable != nil {
+					key := each.text + "\x00" + nesting.names[function]
+					if bodies := reading.programs[key]; context != nil && context.local(variable[1]+variable[2]) {
+						if len(bodies) == 0 || bodies[len(bodies)-1] != function {
+							reading.programs[key] = append(bodies, function)
+						}
+					} else {
+						reading.open[key] = true
+					}
+				}
 			}
 			if laneChildNamesRoot(words) {
 				return false, fmt.Errorf("lane wiring is unreadable: a %s runs %q, a child shell whose own program names ROOT_DIR, which the child does not inherit pinned", where, strings.Join(words, " "))
@@ -304,11 +372,33 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 				}
 				startup = startup || slices.Contains(laneStartupNames, write.name)
 				reading.writes[write.name] = append(reading.writes[write.name], write)
+				if context != nil && context.local(write.name) {
+					key := laneLocalKey(write.name, function)
+					reading.local[key] = append(reading.local[key], write)
+				} else {
+					reading.global[write.name] = append(reading.global[write.name], write)
+				}
+				guards = slices.DeleteFunc(guards, func(guard laneGuard) bool { return guard.name == write.name })
 				if kept && !write.shaped { // a word shaped like an assignment may be text an eval, a trap or a child shell runs
 					event.writes = append(event.writes, write.name)
 				}
 			}
 			events[at] = append(events[at], event)
+			if exit := laneGuardExit(args); pending != nil && context != nil && each.orElse && !each.piped && exit != "" &&
+				len(scopes) > 0 && scopes[len(scopes)-1] == pending.scope && function == pending.function &&
+				(exit == "continue" && nesting.kinds[pending.scope] == "do" || exit == "return" && pending.scope == function) {
+				if len(guards) == laneGuardLimit {
+					guards = guards[1:] // the oldest guard lapses, which only fails closed
+				}
+				guards = append(guards, *pending)
+			}
+			if len(args) > 0 { // an empty command ends a line after ||, whose next line runs the exit
+				pending = nil
+			}
+			if name := laneGuardTest(args); name != "" && context != nil && !each.piped && event.certain && len(scopes) > 0 &&
+				context.local(name) {
+				pending = &laneGuard{name: name, scope: scopes[len(scopes)-1], function: function}
+			}
 		}
 		if at == 0 {
 			for _, words := range laneCommands(body)[0] { // the lane runs its own commands as EveryShellCommand reads them
@@ -333,7 +423,12 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		return false, err
 	}
 	reading.inherited = laneInherited(events)
-	numbers, listed := laneNumbers(reading.writes, reading.inherited), laneListed(reading.writes, reading.inherited)
+	numbers, listed := reading.numbers(), laneListed(reading.writes, reading.inherited)
+	for _, each := range reading.evals {
+		proven := each.spelled && !slices.ContainsFunc(each.names, func(name string) bool { return !numbers(each.context)(name) })
+		spelled, seen := reading.spelled[each.operands]
+		reading.spelled[each.operands] = proven && (spelled || !seen)
+	}
 	for _, name := range indirect {
 		if !listed[name] {
 			return false, fmt.Errorf("lane wiring is unreadable: a lane expands ${!%s}, whose name %s may spell an array element whose subscript bash evaluates", name, name)
@@ -344,9 +439,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 			return false, fmt.Errorf("lane wiring is unreadable: a %s nests more expansions in a word than this reader parses", laneWhere(at))
 		}
 		for _, expression := range each.remaining() {
-			reason := arithmeticReason(expression.text, numbers)
+			reason := arithmeticReason(expression.text, numbers(expression.context))
 			if expression.named {
-				reason = laneNamedReason(expression.text, numbers, listed)
+				reason = laneNamedReason(expression.text, numbers(expression.context), listed)
 			}
 			if reason != "" {
 				return false, fmt.Errorf("lane wiring is unreadable: a %s %s", laneWhere(at), reason)
@@ -354,10 +449,11 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		}
 	}
 	for _, call := range calls {
+		reading.caller = call.function
 		if slices.Equal(call.words, shellReadBound) {
 			return false, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which stands for text past what the shell reader reads", strings.Join(call.words, " "))
 		}
-		command := laneCommand(call.words)
+		command := laneCommand(laneUnredirectedFront(call.words))
 		if forwarders[call.function] && slices.Equal(command, []string{"$@"}) {
 			continue // each call of the forwarder is read as the command it forwards
 		}
@@ -375,6 +471,32 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		}
 	}
 	return startup, nil
+}
+
+// numbers returns, for where a command runs, whether a variable holds a
+// number there, as laneNumbers reads it: a function's local by its own
+// writes and every write outside a function that declares it local, and a
+// guarded local when no such write exists, so no call can change it.
+func (reading laneReading) numbers() func(*laneContext) func(string) bool {
+	writes, inherited := maps.Clone(reading.writes), maps.Clone(reading.inherited)
+	for key, each := range reading.local {
+		name, _, _ := strings.Cut(key, "@")
+		writes[key], inherited[key] = append(slices.Clone(each), reading.global[name]...), reading.inherited[name]
+	}
+	numbers := laneNumbers(writes, inherited)
+	return func(context *laneContext) func(string) bool {
+		return func(name string) bool {
+			switch {
+			case context == nil:
+				return numbers[name]
+			case slices.Contains(context.guarded, name) && len(reading.global[name]) == 0:
+				return true
+			case context.local(name):
+				return numbers[laneLocalKey(name, context.function)]
+			}
+			return numbers[name]
+		}
+	}
 }
 
 // laneWhere names the body a reader reads: the lane, at 0, or a library.
@@ -459,7 +581,7 @@ func (reading laneReading) outputs(calls []laneCall, stable map[string]bool) (ma
 		}
 	}
 	for _, call := range calls {
-		command := laneCommand(call.words)
+		command := laneCommand(laneUnredirectedFront(call.words))
 		for _, at := range outputs[firstOf(command)] {
 			if at < len(command) {
 				reading.writes[command[at]] = append(reading.writes[command[at]], laneWrite{name: command[at]}) // a value the function computes
@@ -525,6 +647,9 @@ func (reading laneReading) callReason(command []string) string {
 	if name != "[" && name != "[[" && (strings.ContainsAny(name, "*?[") || len(braceWords(name)) > 1) {
 		return "runs a command word that a glob or a brace group may spell"
 	}
+	if name == "eval" && reading.spelled[strings.Join(args, "\x00")] {
+		return "" // the reader reads each text it may run
+	}
 	if rule, modeled := laneModeled[name]; modeled {
 		return rule(args, reading.read)
 	}
@@ -561,7 +686,7 @@ func (reading laneReading) expandedReason(name string) string {
 	if variable == nil || variable[1]+variable[2] == "_" {
 		return "runs a command whose name this reader cannot spell"
 	}
-	writes := reading.writes[variable[1]+variable[2]]
+	writes := reading.programWrites(name, variable[1]+variable[2])
 	for _, write := range append([]laneWrite{{value: variable[3], literal: true}}, writes...) {
 		if !write.literal || !laneProgramWord(write.value, reading.functions) {
 			return fmt.Sprintf("may run %q, which is not a program this reader can name", write.value)
@@ -574,6 +699,28 @@ func (reading laneReading) expandedReason(name string) string {
 		return fmt.Sprintf("runs %s, a variable some command may read before the lane assigns it, which may hold any program it inherits", variable[1]+variable[2])
 	}
 	return ""
+}
+
+// programWrites returns the writes a command word that is one expansion of a
+// variable may read in the caller's body. Where every use of the word in a
+// body of that function's name stands where the body declares the variable
+// local, that is those bodies' own writes and every write outside a function
+// that declares it local. Otherwise it is every write to the variable.
+func (reading laneReading) programWrites(word, name string) []laneWrite {
+	key := word + "\x00" + reading.caller
+	bodies, local := reading.programs[key]
+	if !local || reading.open[key] {
+		return reading.writes[name]
+	}
+	if writes, read := reading.programmed[key]; read {
+		return writes
+	}
+	writes := slices.Clone(reading.global[name])
+	for _, body := range slices.Compact(slices.Sorted(slices.Values(bodies))) {
+		writes = append(writes, reading.local[laneLocalKey(name, body)]...)
+	}
+	reading.programmed[key] = writes
+	return writes
 }
 
 // laneRootStart is a word that starts with an expansion of ROOT_DIR.
@@ -630,6 +777,14 @@ func laneScan(text string) (commands []command, children []string, complete bool
 			inner, child, found := laneInnerText(texts(each.args))
 			if found && child {
 				children = append(children, inner)
+			}
+			if operands, expands := laneEvalOperands(each.args); expands && !found {
+				variants, _, _ := laneEvalSpelling(operands)
+				for _, variant := range variants { // an eval of numbers runs one of these texts
+					if children = append(children, variant); !scan(variant, depth+1) {
+						return false
+					}
+				}
 			}
 			if found && firstOf(laneCommand(laneLeading(laneUnredirected(texts(each.args))))) != "eval" {
 				inner = "(\n" + inner + "\n)"
@@ -816,6 +971,17 @@ func laneUnredirected(words []string) []string {
 		kept = append(kept, words[at])
 	}
 	return kept
+}
+
+// laneUnredirectedFront returns words past each redirection in front of the
+// command word. The shell reader keeps a redirection whose target is quoted,
+// as exec 3<"${f}" is, and its words no longer say what was quoted, so a later
+// word that looks like one stays: it may be an operand, as eval's quoted text is.
+func laneUnredirectedFront(words []string) []string {
+	for len(words) > 0 && redirectionOperator.MatchString(words[0]) {
+		words = words[1:] // the reader drops a target that stands apart, as in 3< "${f}"
+	}
+	return words
 }
 
 // laneScanWrites returns each variable a command assigns, as laneWrites reads
