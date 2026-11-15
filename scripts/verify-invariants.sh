@@ -2356,6 +2356,29 @@ WORKCELL_RUNTIME_IMAGE_REFRESH_CACHE_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-ru
 } >"${WORKCELL_RUNTIME_IMAGE_REFRESH_CACHE_HARNESS}"
 bash "${WORKCELL_RUNTIME_IMAGE_REFRESH_CACHE_HARNESS}"
 
+# run_start_profile_harness HARNESS runs a start_managed_profile harness.
+# Bash reports a function that the harness neither extracts nor stubs as
+# "command not found" and goes on, so the harness could pass without the
+# start command it means to test. The check fails on any such diagnostic and
+# requires the retry notice that the timeout path prints.
+run_start_profile_harness() {
+  local harness="$1"
+  local stderr_path="${harness%.sh}.stderr"
+
+  if ! env -u XDG_CACHE_HOME bash "${harness}" 2>"${stderr_path}"; then
+    echo "Expected ${harness##*/} to pass" >&2
+    cat "${stderr_path}" >&2
+    exit 1
+  fi
+  if grep -Fq -e 'command not found' -e "${harness}: line " "${stderr_path}"; then
+    echo "Expected ${harness##*/} to define or stub every command it runs" >&2
+    cat "${stderr_path}" >&2
+    exit 1
+  fi
+  assert_output_matches_regex '^Retrying managed Colima profile [a-z-]+ after a startup timeout \(attempt 2/2\)\.$' \
+    "${stderr_path}" "Expected ${harness##*/} to retry the timed-out Colima start"
+}
+
 WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harness.sh"
 {
   printf 'set -euo pipefail\n'
@@ -2367,6 +2390,10 @@ WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harnes
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_child_cache_home
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_vm_type
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_mount_type
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prepare_colima_staging_cache_roots
@@ -2375,7 +2402,7 @@ WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harnes
   printf '\n'
   cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-start-retry.sh"
 } >"${WORKCELL_START_RETRY_HARNESS}"
-env -u XDG_CACHE_HOME bash "${WORKCELL_START_RETRY_HARNESS}"
+run_start_profile_harness "${WORKCELL_START_RETRY_HARNESS}"
 
 WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-timeout-cleanup-harness.sh"
 {
@@ -2388,6 +2415,10 @@ WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-ti
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_child_cache_home
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_vm_type
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" colima_mount_type
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" prepare_colima_staging_cache_roots
@@ -2396,7 +2427,7 @@ WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-ti
   printf '\n'
   cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/workcell-start-timeout-cleanup.sh"
 } >"${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
-env -u XDG_CACHE_HOME bash "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
+run_start_profile_harness "${WORKCELL_START_TIMEOUT_CLEANUP_HARNESS}"
 
 WORKCELL_RUNTIME_BUILD_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-runtime-build-retry-harness.sh"
 {
@@ -4640,6 +4671,7 @@ grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only to 
 WORKCELL_GC_CACHE_ROOT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-gc-cache-root-harness.sh"
 {
   printf 'set -euo pipefail\n'
+  printf 'source %q\n' "${ROOT_DIR}/scripts/lib/go-run-env.sh"
   for gc_function in workcell_nonnegative_integer_or_default make_workcell_tree_user_writable cleanup_workcell_cache_root; do
     extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" "${gc_function}"
     printf '\n'
