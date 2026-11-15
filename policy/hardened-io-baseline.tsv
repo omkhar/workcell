@@ -22,7 +22,6 @@ internal/authresolve/resolve_path_security.go	os.Stat	cbc1e58c	trust-boundary pa
 internal/authresolve/resolve_policy_load.go	os.Stat	a57835f0	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
 internal/authresolve/resolve_provider_credentials.go	os.Stat	1bd63234	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
 internal/colimautil/colima.go	os.ReadFile	df1bb796	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there
-internal/credbroker/server.go	os.OpenFile	1b7a2224	O_NOFOLLOW|O_DIRECTORY probe of each socket ancestor for an extended ACL; move to rootio.OpenParentDirectoryNoFollow (issue 824)
 internal/gitconfigblocklist/gitconfigblocklist.go	os.ReadFile	6196f529,7dce33cf	CI tooling over the checked-out repository tree; no operator-controlled path
 internal/hardeningprofile/hardeningprofile.go	os.ReadFile	bef74cd3,a7e64865	CI tooling over the checked-out repository tree; no operator-controlled path
 internal/host/auditseal/sealio.go	os.OpenFile	b7e7575d	trust-boundary package; also ratcheted in policy/hardened-fs-baseline.tsv; migrate to internal/rootio there

@@ -123,7 +123,15 @@ heredoc or a here-string. It fails when it cannot spell that program, as in
 The check fails when a `uses:` pin has no row in
 `tests/fixtures/actions/inputs.tsv`. When a pin changes, replace its row. Write
 the input names from the `action.yml` at the new commit, sorted and
-comma-separated.
+comma-separated. `go run ./cmd/workcell-citools refresh-action-inputs .` writes
+these rows. It fetches metadata only for a pin that has no row, and it removes
+the row of a pin that no workflow uses. With `--check`, it changes nothing and
+exits with status 1 when the table is stale
+(`internal/metadatautil/action_inputs_refresh.go`).
+
+With `--verify BASE ROOT`, it changes nothing and exits with status 1 unless
+each new row matches the `action.yml` at its commit
+(`internal/metadatautil/action_inputs_refresh_test.go`).
 
 A testkit case runs each inline jq program against an empty array. A compile
 error fails the test.

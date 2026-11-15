@@ -119,7 +119,10 @@ func (v *onceValue) Set(value string) error {
 	return v.Value.Set(value)
 }
 
-// openLog appends to path without following a symlink anywhere in it.
+// openLog appends to path without following a symlink anywhere in it. A
+// missing log is created as a staged, synced, owner-only sibling and then
+// linked into place, so the umask cannot change its mode and a failed start
+// leaves no half-made log under the final name.
 func openLog(path string) (*os.File, error) {
 	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
 	if err != nil {
@@ -128,19 +131,31 @@ func openLog(path string) (*os.File, error) {
 	defer parent.Close()
 	// A parent another uid can write lets that uid unlink or replace the log
 	// name after startup, so it passes the same rule as the socket directory.
-	if err := requireAncestryWritableOnlyBy(filepath.Dir(cleaned), uint32(os.Getuid())); err != nil {
+	if err := requireAncestryWritableOnlyBy(parent, filepath.Dir(cleaned), uint32(os.Getuid())); err != nil {
 		return nil, err
+	}
+	name := filepath.Base(cleaned)
+	if _, err := rootio.LstatAtNoFollow(parent, name); errors.Is(err, unix.ENOENT) {
+		// Another start may create the name first; the open below then checks
+		// that log like any existing one.
+		if err := rootio.StageAndCreateAt(parent, name, nil, 0o600, ".workcell-credbroker-log-"); err != nil {
+			if _, statErr := rootio.LstatAtNoFollow(parent, name); statErr != nil {
+				return nil, fmt.Errorf("create request log: %w", err)
+			}
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("stat request log: %w", err)
 	}
 	// O_NONBLOCK keeps a FIFO at the path from blocking the open; a regular
 	// file ignores it.
-	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(cleaned), unix.O_WRONLY|unix.O_APPEND|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_WRONLY|unix.O_APPEND|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open request log: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), cleaned)
-	// The mode argument applies only on creation, and O_NOFOLLOW stops only a
-	// symlink, so an existing path is checked through the open descriptor: one
-	// regular file with one link, owned by the broker, readable by nobody else.
+	// O_NOFOLLOW stops only a symlink, so the log is checked through the open
+	// descriptor: one regular file with one link, owned by the broker,
+	// readable by nobody else.
 	var info unix.Stat_t
 	if err := unix.Fstat(fd, &info); err != nil {
 		_ = file.Close()
@@ -159,8 +174,8 @@ func openLog(path string) (*os.File, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("request log %q: %w", cleaned, err)
 	}
-	// O_CREAT may have made the file, and record syncs only the file, so the
-	// file and its directory entry are made durable before any request is served.
+	// record syncs only the file, so the file and its directory entry are made
+	// durable before any request is served, whichever start created the log.
 	if err := file.Sync(); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("sync request log: %w", err)
