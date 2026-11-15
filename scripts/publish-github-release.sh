@@ -34,6 +34,9 @@ unset GITHUB_TOKEN
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+# A library may change shell options, so pipefail is set again for the
+# pipelines below.
+set -o pipefail
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
