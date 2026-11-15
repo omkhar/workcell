@@ -214,14 +214,23 @@ internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a l
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	rebindsCommand	419dfc3d	the = test tells an alias definition from an alias listing among parsed command words
+internal/metadatautil	laneBodyRuns	5c5a7961,d861d4ec	the checks read the words a closed reader returns for a library function body: a forwarding "$@" word, and each command word against fixed builtin lists; they parse words, not free text
 internal/metadatautil	laneChildNamesRoot	623ba690	fails closed: a child shell whose program text names ROOT_DIR makes the lane unreadable
+internal/metadatautil	laneDeclaration	1eba7c5a	fails closed: a declared name it cannot match makes the lane unreadable
 internal/metadatautil	laneExpands	4d870f23	fails closed: a word with an expansion is read as one this reader cannot spell
 internal/metadatautil	laneInnerText	7a693089	the checks read the command words laneCommand returns for an eval operand with an expansion and a trap option; they parse words, not free text
+internal/metadatautil	laneLiteralOptions	337d65e9,a4f48ac8,b76466b5,ea7ffe16	fails closed: an option word with an expansion makes the lane unreadable
+internal/metadatautil	laneOption	63c8cdd6,e5e919d3	fails closed: an option word with a letter that changes what runs makes the lane unreadable
+internal/metadatautil	laneOutputName	0dd42f68,6537f911	fails closed: a name that is not a plain identifier, or names a variable bash reads or ROOT_DIR, makes the lane unreadable
+internal/metadatautil	laneProgramWord	bdc2a2e6	fails closed: a value that is not a plain program name or path makes the lane unreadable
 internal/metadatautil	laneReadable	532c91a7,8a60283b	fails closed: an arithmetic assignment to a computed name or one bash reads, or a BASH_CMDS or BASH_ALIASES name, makes the lane unreadable
-internal/metadatautil	laneScanWrites	e285c2fb	the checks read laneScan command words for an assignment; they parse words, not free text
+internal/metadatautil	laneReading.callReason	0ef736ec	fails closed: a command word with a glob or a brace group makes the lane unreadable
+internal/metadatautil	laneReading.expandedReason	25256dad,2b860056,65907a4e,7eae08b2,b9d78721,fed703bb	fails closed: a command word it cannot read as a pinned root, a path or one program variable makes the lane unreadable
+internal/metadatautil	laneReading.outputs	ad697d63,c5f63017	the checks read the words a closed reader returns for a local copy of a positional parameter and a computed name; a write it cannot match makes the lane unreadable
+internal/metadatautil	laneScanWrites	85220f63,e285c2fb	the checks read laneScan command words for an assignment and a local of a positional parameter; they parse words, not free text
+internal/metadatautil	laneUnquotedRisk	531ecaa8,d5d66042	fails closed: a word with an unquoted expansion or glob is read as one bash may split
 internal/metadatautil	laneUnredirected	4b6e734b	the check reads one command word for a redirection operator; it parses words, not free text
 internal/metadatautil	laneWrites	16e67208,4a3c19dd,60783146,bf2e822d,d3dab433	the checks read the operands of one command for the names declare, read, printf -v and their kin assign; they parse words, not free text
-internal/metadatautil	rebindsLane	3f223eda,ab6e4d23,f2af6bdf	the checks read the command words laneCommand returns for an alias, a hash -p option or a program word bash may rewrite; they parse words, not free text
 internal/metadatautil	refsRoot	8c451e37	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rejectInstallScriptAptPackages	30b19070,7ae83b67	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	renderDiscoverabilitySurface	e9d7ffc7	the prefix checks a surface name from the decoded contract
@@ -253,7 +262,6 @@ internal/metadatautil	reviewedLibrarySource	8a4712f0	unreviewed debt: review the
 internal/metadatautil	rewriteAptBrokerDockerfile	9e5c7dbc	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rewritesParameters	604a9e2e,72dcf36c	the prefix tests tell an option from an operand of one parsed set command
 internal/metadatautil	runsAPath	791f4239,a5daa4a4,bf909428,db8056d1,ece68d1c	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	runsUnreadText	42fd4a07,be933573,dbfd6b6d	the checks read the command words laneCommand returns for an eval operand with an expansion or a mapfile -C option; they parse words, not free text
 internal/metadatautil	rustupChecksumRequest	82097558	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sanitizedScriptEnvironment	1a8ceb50,2fada460	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scanDebianPackageStanzas	6c69f878,f89ede85	unreviewed debt: review the subject, then port or justify

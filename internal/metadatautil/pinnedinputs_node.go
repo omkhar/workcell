@@ -185,7 +185,7 @@ func validateNodeMarkdownlintPinnedInputs(
 		`"/usr/local/lib/workcell-markdownlint"`,
 		`cmp -s "${MARKDOWNLINT_LOCKFILE}" "${install_dir}/node_modules/.workcell-package-lock.json"`,
 		`if ! MARKDOWNLINT_BIN="$(resolve_markdownlint_bin)"; then`,
-		`"${MARKDOWNLINT_BIN}" "${markdown_files[@]}"`,
+		`"${MARKDOWNLINT_BIN%/*}/markdownlint" "${markdown_files[@]}"`,
 	} {
 		if !strings.Contains(validateRepoScript, needle) {
 			return fmt.Errorf("%s must execute the repository-local locked markdownlint binary using %q", validateRepoScriptPath, needle)

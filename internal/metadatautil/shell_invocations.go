@@ -1338,7 +1338,7 @@ type reviewedLibrary struct {
 }
 
 var reviewedShellLibraries = map[string]reviewedLibrary{
-	"trusted-docker-client.sh": {digest: "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674", forwarders: []string{"run_workcell_docker_client_command"}},
+	"trusted-docker-client.sh": {digest: "fe74966fb062c3e3ddf3b1cb5557c94ea76f48793bd97fe8ece6588562320a95", forwarders: []string{"run_workcell_docker_client_command"}},
 }
 
 // canonicalRootDir is the one ROOT_DIR assignment that pins a script's root.

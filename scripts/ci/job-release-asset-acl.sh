@@ -28,6 +28,8 @@ if [[ ! "${expected_toolchain}" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+# Each Go binary path ends in /go. A command word spelled with that literal /go
+# is a path the lane wiring check can read, never a builtin or a function.
 probe_go_toolchain() {
   local candidate="$1"
   local requested_toolchain="$2"
@@ -35,7 +37,7 @@ probe_go_toolchain() {
 
   if actual_toolchain="$({
     GOENV=off GOFLAGS='' GOWORK=off GOTOOLCHAIN="${requested_toolchain}" \
-      "${candidate}" env GOVERSION 2>/dev/null
+      "${candidate%/go}/go" env GOVERSION 2>/dev/null
   })"; then
     [[ "${actual_toolchain}" == "${expected_toolchain}" ]]
   else
@@ -142,15 +144,15 @@ if [[ -z "${go_bin}" ]]; then
   exit 1
 fi
 
-actual_toolchain="$("${go_bin}" env GOVERSION)"
+actual_toolchain="$("${go_bin%/go}/go" env GOVERSION)"
 if [[ "${actual_toolchain}" != "${expected_toolchain}" ]]; then
   echo "Go toolchain ${actual_toolchain} does not match ${expected_toolchain}" >&2
   exit 1
 fi
-if [[ "$("${go_bin}" env GOOS)" != "darwin" ]]; then
+if [[ "$("${go_bin%/go}/go" env GOOS)" != "darwin" ]]; then
   echo "Release asset ACL proof requires Darwin" >&2
   exit 1
 fi
 
 cd "${ROOT_DIR}"
-"${go_bin}" test ./internal/host/release -run '^TestReleaseAssetACLDarwin$'
+"${go_bin%/go}/go" test ./internal/host/release -run '^TestReleaseAssetACLDarwin$'
