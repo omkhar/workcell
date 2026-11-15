@@ -296,11 +296,14 @@ reject_unsafe_codex_args() {
         # managed path never uses it.
         agents | queue | migrate-rollouts | plugin | remote-control | exec-server | \
           mcp | mcp-server | tcp-tunnel | cloud | cloud-tasks | responses-api-proxy | \
-          stdio-to-uds | sandbox | update | debug)
+          stdio-to-uds | sandbox | update | debug | git-credential | migrate-nfs-db)
           # cloud-tasks is the 0.142.4 alias of `cloud`; responses-api-proxy and stdio-to-
           # uds are HIDDEN daemon/bridge subcommands the clap enum still dispatches.
           # Codex 0.153.0 adds `agents`, `queue`, and `migrate-rollouts`. They reach the
           # shared app-server, change an existing session, or rewrite session history.
+          # Codex 0.169.0 adds the HIDDEN `git-credential`, which prints the Codex login
+          # to Git's credential-helper protocol (a credential export), and
+          # `migrate-nfs-db`, which rewrites the configured SQLite databases in place.
           workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
           ;;
       esac
@@ -320,7 +323,9 @@ reject_unsafe_codex_args() {
       # execpolicy check`. --yolo is Codex's hidden alias for --dangerously-bypass-
       # approvals-and-sandbox (the glob does not reach a hidden alias, so block it and its
       # =value form explicitly). --approve-for-me/--not-so-yolo pick auto review.
-      --dangerously-bypass-* | --yolo | --yolo=* | --approve-for-me | --approve-for-me=* | --not-so-yolo | --not-so-yolo=* | --ignore-rules | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | -s | --sandbox | --enable | --disable)
+      # --trust (Codex 0.169.0 exec and review) persists project trust, MCP commands
+      # outside the sandbox included.
+      --dangerously-bypass-* | --yolo | --yolo=* | --approve-for-me | --approve-for-me=* | --not-so-yolo | --not-so-yolo=* | --trust | --trust=* | --ignore-rules | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | -s | --sandbox | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       # ATTACHED/GLUED short value-flags (Codex P1 review). Codex (clap) also accepts a
