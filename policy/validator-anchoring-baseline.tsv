@@ -41,6 +41,7 @@ internal/metadatautil	ParseHelpFlags	301c8746,43159387,befb369c,f34b6566	unrevie
 internal/metadatautil	PrepareCodexSubcommandFixture	734f098e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ScanCredentialPatterns	78f86513	credential scan: a pattern match over content is the goal
 internal/metadatautil	ShellFailOpenFindings	06134532,0ddcfb6a,1084ab9c,2495027f,3889c75c,5184bd64,53b10a3d,563070cb,5844e675,5ce51fcb,6b2e4bf1,71bcde34,72135448,7f791fee,884727e3,89ac62c2,89ac62c2,9b56d994,a1d67f74,a1d67f74,a1e8db4b,bf791a5b,cd03d316,de97339e,ea09cb18	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	TestCheckPinnedInputsRejectsBaseImageOnAnotherRepository	9b6d6e87	test fixture: the anchored pattern locates the one whole ARG line that each case rewrites
 internal/metadatautil	claudeMentionPin	4a5debeb	test helper: finds the one pinned action reference so each test rewrites the real pin
 internal/metadatautil	TestClaudeMentionWorkflowRejectsChanges	f0b79fb3	test fixture: locates the text each negative row rewrites
 internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,7c7b6223	test reads decoded YAML fields: the gate expression and the claude_args value
@@ -244,7 +245,7 @@ internal/metadatautil	requireEvasions	0ed6284d	unreviewed debt in a test: review
 internal/metadatautil	requireGoDirective	231f780e,a91335ef,d72b74d4	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireNoRegistryBootstrapMCP	52bf575b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireOrderedText	ba2afe75	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	requirePinnedBaseImage	171e479c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	requirePinnedBaseImage	f08eedae	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireRegex	26bdecfe,48e55ec8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireTOMLString	13dcfc02,30abd784,31804416	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireTextCount	e9ad5856	unreviewed debt: review the subject, then port or justify
@@ -469,6 +470,7 @@ internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePubl
 internal/testkit	TestUpdateUpstreamPinsCheckReusesRecordedDebianPlan	565a5a3f,e7267aca,e7267aca,f1211436	the search checks the output of an updater fixture run that reuses a recorded plan, not script text
 internal/testkit	TestUpdateUpstreamPinsDebianArchiveOutage	15d9b107,3d7d78ab,e59f2b53,edf34290	the search checks the output and the resolution log of an updater fixture run, not script text
 internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateUpstreamPinsRefusesImageOutsideItsRepository	510ec2d4	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestUpdateUpstreamPinsToolPinBumpChangesNoWorkflow	8ac3433b	a test assertion on the summary output that the updater under test produces
 internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	edeb6dc4	unreviewed debt in a test: review the subject, then port or justify
