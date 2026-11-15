@@ -4640,6 +4640,7 @@ grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only to 
 WORKCELL_GC_CACHE_ROOT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-gc-cache-root-harness.sh"
 {
   printf 'set -euo pipefail\n'
+  printf 'source %q\n' "${ROOT_DIR}/scripts/lib/go-run-env.sh"
   for gc_function in workcell_nonnegative_integer_or_default make_workcell_tree_user_writable cleanup_workcell_cache_root; do
     extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" "${gc_function}"
     printf '\n'

@@ -155,7 +155,7 @@ go_tool_bin() {
 }
 
 go_hostutil() {
-  ensure_go_run_env
+  ensure_go_run_env || return 1
   go_tool_bin workcell-hostutil || return 1
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
     GOPATH="${GOPATH}" \
@@ -193,7 +193,7 @@ run_go_hostutil_preserve_exit() {
 }
 
 go_hostutil_publish_pr() {
-  ensure_go_run_env
+  ensure_go_run_env || return 1
   local -a env_args=(
     "GOPATH=${GOPATH}"
     "GOMODCACHE=${GOMODCACHE}"
@@ -224,7 +224,7 @@ go_hostutil_publish_pr() {
 }
 
 go_colimautil() {
-  ensure_go_run_env
+  ensure_go_run_env || return 1
   go_tool_bin workcell-colimautil || return 1
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
     GOPATH="${GOPATH}" \
@@ -240,7 +240,7 @@ go_colimautil() {
 case " $* " in
   *" -h "* | *" --help "*) ;;
   *)
-    ensure_go_run_env
+    ensure_go_run_env || exit 1
     go_tool_bin workcell-hostutil 2>/dev/null || true
     ;;
 esac

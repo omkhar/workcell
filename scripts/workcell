@@ -703,6 +703,8 @@ run_host_colima() {
     safe_cwd="/"
   fi
   (
+    # Colima starts a VM that outlives this run, so it gets no cache lock.
+    workcell_cache_lock_release_all
     cd "${safe_cwd}" &&
       HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" XDG_CACHE_HOME="$(colima_child_cache_home)" "${HOST_COLIMA_BIN}" "$@"
   )
@@ -4173,10 +4175,14 @@ start_detached_session_monitor() {
   [[ -n "${XDG_STATE_HOME:-}" ]] && monitor_env+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
   [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && monitor_env+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
   [[ -n "${WORKCELL_TARGET_STATE_ROOT:-}" ]] && monitor_env+=("WORKCELL_TARGET_STATE_ROOT=${WORKCELL_TARGET_STATE_ROOT}")
-  env -i \
-    "${monitor_env[@]}" \
-    /bin/bash "${BASH_SOURCE[0]}" session monitor --state-file "${SESSION_MONITOR_ENV_PATH}" \
-    >/dev/null 2>>"${monitor_stderr}" &
+  # The monitor outlives this shell and takes its own cache lock when it
+  # builds, so it gets none of this run's.
+  (
+    workcell_cache_lock_release_all
+    exec env -i \
+      "${monitor_env[@]}" \
+      /bin/bash "${BASH_SOURCE[0]}" session monitor --state-file "${SESSION_MONITOR_ENV_PATH}"
+  ) >/dev/null 2>>"${monitor_stderr}" &
   SESSION_MONITOR_PID="$!"
   disown "${SESSION_MONITOR_PID}" 2>/dev/null || true
   if ! wait_for_session_monitor_ready "${SESSION_MONITOR_PID}" "${SESSION_MONITOR_READY_PATH}"; then
@@ -5943,6 +5949,7 @@ cleanup_workcell_cache_root() {
   local stale_minutes="${2:-}"
 
   local recent=""
+  local rc=0
 
   cache_root="$1"
   [[ -d "${cache_root}" ]] || return 0
@@ -5967,22 +5974,39 @@ cleanup_workcell_cache_root() {
       [[ -z "${recent}" ]] || return 0
     done
   fi
-  if [[ ! -e "${cache_root}/colima-xdg" && ! -L "${cache_root}/colima-xdg" ]]; then
-    make_workcell_tree_user_writable "${cache_root}"
-    rm -rf "${cache_root}"
-    return 0
-  fi
-  for entry in "${cache_root}"/* "${cache_root}"/.[!.]* "${cache_root}"/..?*; do
-    [[ -e "${entry}" || -L "${entry}" ]] || continue
-    [[ "${entry}" != "${cache_root}/colima-xdg" ]] || continue
-    make_workcell_tree_user_writable "${entry}"
-    rm -rf "${entry}"
-  done
+  # A writer that starts after the walk holds a shared lock on ROOT.lock
+  # (scripts/lib/go-run-env.sh), so gc takes the exclusive lock without
+  # waiting and keeps a root it cannot lock. The removal runs while it holds
+  # the lock, and a writer that starts then waits for it. It keeps colima-xdg
+  # and the root that holds it.
+  # shellcheck disable=SC2016 # the child shell expands its own variables
+  workcell_cache_lock_run_exclusive "${cache_root}.lock" /bin/bash -p -c \
+    "$(declare -f make_workcell_tree_user_writable)"'
+root="$1"
+if [[ ! -e "${root}/colima-xdg" && ! -L "${root}/colima-xdg" ]]; then
+  make_workcell_tree_user_writable "${root}"
+  exec rm -rf -- "${root}"
+fi
+for entry in "${root}"/* "${root}"/.[!.]* "${root}"/..?*; do
+  [[ -e "${entry}" || -L "${entry}" ]] || continue
+  [[ "${entry}" != "${root}/colima-xdg" ]] || continue
+  make_workcell_tree_user_writable "${entry}"
+  rm -rf -- "${entry}"
+done' workcell-gc "${cache_root}" || rc=$?
+  case "${rc}" in
+    0) ;;
+    75) echo "Kept Workcell cache root in use: ${cache_root}" >&2 ;;
+    64 | 69 | 71 | 73 | 77) echo "Kept Workcell cache root without a safe cache lock: ${cache_root}" >&2 ;;
+    *) return "${rc}" ;;
+  esac
 }
 
 cleanup_workcell_cache_roots() {
   local stale_minutes="${1:-}"
 
+  # This shell's own hostutil build holds a shared cache lock; drop it so gc
+  # can lock the roots that no other run is using.
+  workcell_cache_lock_release_all
   cleanup_workcell_cache_root "${REAL_HOME}/Library/Caches/workcell" "${stale_minutes}"
   cleanup_workcell_cache_root "${REAL_HOME}/.cache/workcell" "${stale_minutes}"
   if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
