@@ -743,6 +743,7 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		lanes = append(lanes, struct{ name, lane, library, want string }{fmt.Sprintf("a lane that runs %q", row[0]), row[0], "", row[1]})
 	}
 	const y, shadowed, ended, exported = "${fd:=0>&0; bash() ( : ) #}", `"${p}" 'bash() ( : )'`, "ends the lane's shell before a later command", "exports a function"
+	const lastpipe, inEval, setO = "as shopt -s lastpipe does", "defines a function in text an eval or a trap runs", "sets a set -o option"
 	for _, form := range []string{": <<EOF\nY\nEOF", "read -r _ <<EOF\nY\nEOF", "{ :; } <<EOF\nY\nEOF", "while false; do :; done <<EOF\nY\nEOF", "h <<EOF\nY\nEOF",
 		": <<-EOF\n\tY\n\tEOF", ": <<<\"Y\"", "exec 3<<<\"Y\"", "(( 1 )) <<<\"Y\"", ": >\"Y\"", ": 2>\"${fd=0>&0; bash() ( : ) #}\""} {
 		lane := "h() { :; }\nf() {\nlocal fd=\n" + strings.ReplaceAll(form, "Y", y) + "\neval \"exec $fd<&-\"\n}\nf"
@@ -762,7 +763,7 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		{"trap 'exit 0' EXIT; false", "EXIT trap"}, {"f() { exit 256; }; trap f EXIT; false", "EXIT trap"}, {"trap 'exit 1' EXIT", "wired"},
 		{"trap 'exit' EXIT", "wired"}, {"f() { local s=$?; return \"${s}\"; }; trap f EXIT", "wired"}, {"true || { echo x; exit 1; }", "wired"}, {"die() { echo x; exit 1; }; true || die", "wired"},
 		{"f() { if true; then return; fi; exit 1; }; f", "wired"}, {"( exit 0 )", "wired"}, {"x=$(exit 0)", "wired"}, {"exec 3>&-", "wired"},
-		{"trap '' INT", "wired"}, {"trap - INT", "wired"}, {"trap -- 'exit 0' EXIT; false", "EXIT trap"}, {"f() { exit 0; }; false && f() { :; }; trap f EXIT; false", "EXIT trap"},
+		{"trap '' INT", "wired"}, {"trap - INT", "wired"}, {"trap -- 'exit 0' EXIT; false", "EXIT trap"}, {"f() { if true; then exec true; fi; }; false && f() { :; }; trap f EXIT; false", "EXIT trap"},
 		{"export -f bash", exported}, {"touch() { :; }; declare -f touch >/dev/null", "wired"}, {"declare -x V=1", "wired"}, {"f() { local -x V=1; }; f", "wired"},
 		{"x=PATH\n: <<<\"${!x:=/tmp}\"", "whose name this reader cannot spell"}, {"true | exit 0", "wired"}, {"f() { true || return 0; exit 0; echo x; }; f", ended},
 		{"f() { echo \"$(return 0)\"; exit 0; }; f", ended}, {"f() { x=$(return 0); exit 0; }; f", ended}, {"f() { (return 0); exit 0; }; f", ended},
@@ -771,10 +772,41 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		{"f() { true | while true; do return 0; done; exit 0; }; f", ended}, {"f() { while true; do return 0; done | cat; exit 0; }; f", ended},
 		{"f() { coproc { return 0; }; exit 0; }; f", ended}, {"coproc { :; }; exit 0", ended}, {"f() { coproc { :; }; true || exit 1; }; f", "wired"},
 		{"f() { [ -n \"${x:-}\" ] || return 0; exit 1; }; f", "wired"}, {"f() { true && { return 0; }; exit 1; }; f", "wired"},
-		{"f() { for i in 1; do return 0; done; exit 0; }; f", "wired"}, {"f() { if true; then return 0; else echo x | cat; fi; exit 1; }; f", "wired"},
+		{"f() { for i in 1; do return 0; done; exit 0; }; f", ended}, {"f() { if true; then return 0; else echo x | cat; fi; exit 1; }; f", "wired"},
 		{"f() {\n  {\n    return 0\n  } | true\n  exit 0\n}\nf", ended}, {"f() {\n  (\n    return 0\n  )\n  exit 0\n}\nf", ended},
 		{"f() { coproc return 0; exit 0; }; f", ended}, {"f() { echo \"coproc\"; true || return 0; exit 1; }; f", "wired"},
 		{"coproc { :; }\ng() { true || return 0; exit 0; }\ng", ended}, {"coproc { :; }\n{ exit 0; }", ended},
+		{"trap 'exec true' EXIT", "EXIT trap"}, {"trap 'exec env true' EXIT", "EXIT trap"}, {"f() { exec true; }; trap f EXIT", "EXIT trap"},
+		{"trap \"eval 'exec true'\" EXIT", "EXIT trap"}, {"f() { trap 'exec true' EXIT; }; f", "EXIT trap"}, {"trap 'exec true' 0", "EXIT trap"},
+		{"trap 'exec true' exit", "EXIT trap"}, {"trap 'rm -f x; exit' EXIT; false", "EXIT trap"}, {"trap 'source \"${ROOT_DIR}/scripts/lib/l.sh\"' EXIT; false", "EXIT trap"},
+		{"trap 'rm -f x' EXIT", "wired"}, {"f() { local s=$?; rm -f x; return \"$s\"; }; trap f EXIT", "wired"},
+		{"eval 'exec true'", ended}, {"eval \"exec true\"", ended}, {"eval exec true", ended}, {"eval 'exec env true'", ended},
+		{"eval 'command exec true'", ended}, {"eval 'exec -a x true'", ended}, {"f() { eval 'exec true'; }; f", ended},
+		{"g() { exit 0; }; eval g", ended}, {"g() { exit 0; }; eval 'g; :'", ended}, {"eval 'exec 3>&-'", "wired"},
+		{"shopt -s lastpipe; : | exit 0", lastpipe}, {"shopt -s lastpipe; : | exec true", lastpipe}, {"shopt -s lastpipe; g() { exit 0; }; : | g", lastpipe},
+		{"shopt -s lastpipe; : | eval 'exit 0'", lastpipe}, {"eval 'shopt -s lastpipe'; : | exit 0", lastpipe}, {"shopt -s lastpipe extglob; : | exit 0", lastpipe},
+		{"shopt -s extglob", "wired"},
+		{"p=eval; eval 'g() { \"$p\" \"bash() ( : )\"; }'; g", inEval}, {"eval 'g() { local fd=\"$1\"; eval \"exec $fd<&-\"; }'; g '0>&0; bash() ( : ) #'", inEval},
+		{"fd='0>&0; bash() ( : ) #'; f() { local fd='0>&0; bash() ( : ) #'; eval 'g() { eval \"exec $fd<&-\"; }'; g; }; f", inEval},
+		{"eval 'g() { exit 0; }'; g", inEval}, {"eval 'g() { exec true; }'; g", inEval}, {"eval 'g() { shopt -so allexport; }'; g; touch() { :; }", inEval},
+		{"trap 'g() { :; }' EXIT", inEval},
+		{"shopt -so allexport; touch() { :; }", setO}, {"shopt -s -o allexport; touch() { :; }", setO}, {"shopt -os allexport; touch() { :; }", setO},
+		{"f() { shopt -so allexport; }; f; touch() { :; }", setO}, {"shopt -uo allexport", setO},
+		{"g() { exit 0; }; if g; then :; fi", ended}, {"g() { exit 0; }; while g; do :; done", ended}, {"g() { :; }; if g; then :; fi", "wired"},
+		{"case x in *) exit 0 ;; esac", ended}, {"case x in x) exit 0 ;; esac", ended}, {"case x in (x) exit 0;; esac", ended}, {"case x in x | y) exit 0;; esac", ended},
+		{"case x in x) : ;; *) exit 0;; esac", ended}, {"case x in\n  x | y)\n    exit 0\n    ;;\nesac", ended}, {"case x in\n  *)\n    exit 0\n    ;;\nesac", ended},
+		{"f() { case x in *) exit 0;; esac; }; f", ended}, {"f() { case x in x | y) exit 0;; esac; }; f", ended}, {"f() {\n  case x in\n    *)\n      exit 0\n      ;;\n  esac\n}\nf", ended},
+		{"for i in 1; do exit 0; done", ended}, {"while :; do exit 0; done", ended}, {"until false; do exit 0; done", ended}, {"select x in a; do exit 0; done", ended},
+		{"f() { if false; then return; fi; exit 0; }; f", ended}, {"f() { for i in; do return; done; exit 0; }; f", ended}, {"f() { while false; do return; done; exit 0; }; f", ended},
+		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", "wired"}, {"case \"${1}\" in -h|--help) exit 0;; esac", "wired"},
+		{"case \"$1\" in\n  --profile | --help)\n    exit 0\n    ;;\nesac", ended}, {"case \"${1:-}\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", ended},
+		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\n  *) exit 0 ;;\nesac", ended}, {"case \"$2\" in --help) exit 0;; esac", ended},
+		{"f() { case \"$1\" in -h) exit 0;; esac; }; f x", ended}, {"case x in\n  x)\n    exit 1\n    ;;\nesac", "wired"},
+		{"case x in a | b | x) exit 0;; esac", ended}, {"case x in\n  a) : ;;\n  x | y)\n    exit 0\n    ;;\nesac", ended},
+		{"f() {\n  case \"$1\" in\n    -h | --help)\n      exit 0\n      ;;\n  esac\n}\nf -h", ended},
+		{"[ -n \"${x:-}\" ] || { echo x; exit 0; }", "wired"}, {"eval ': ; exec true'", ended}, {"g() { for i in 1; do exit 0; done; }; eval g", ended},
+		{"g() { exit 1; }; eval g", ended}, {"exec 3<<<\"x\"", "wired"},
+		{"f() { false && return 0; exit 0; }; f", ended}, {"f() {\n  for i in; do\n    return\n  done\n  exit 0\n}\nf", ended},
 		{"f() {\n" + nineGuards + "  v0=\"$1\"\n  eval \"exec ${v0}<&-\"\n}\nf 1", spelling + "$"},
 		{"f() {\n" + nineGuards + "  g\n}\ng() {\n  eval \"exec ${v0}<&-\"\n}\nf 1", spelling + "$"},
 		{"f() {\n" + nineGuards + "}\nf 1\ng() {\n  eval \"exec ${v0}<&-\"\n}\ng", spelling + "$"},
@@ -782,7 +814,13 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		lanes = append(lanes, struct{ name, lane, library, want string }{fmt.Sprintf("a lane that runs %q", row[0]), row[0], "", row[1]})
 	}
 	cases = append(cases, struct{ name, library, want string }{"a library that runs kill", "kill -9 $$\n", ends},
-		struct{ name, library, want string }{"a library that exits", "exit 0\n", ended})
+		struct{ name, library, want string }{"a library that exits", "exit 0\n", ended},
+		struct{ name, library, want string }{"a library that sets an EXIT trap that execs", "trap 'exec true' EXIT\n", "EXIT trap"},
+		struct{ name, library, want string }{"a library that evals an exec", "eval 'exec true'\n", ended},
+		struct{ name, library, want string }{"a library that sets lastpipe", "shopt -s lastpipe\n", lastpipe},
+		struct{ name, library, want string }{"a library that defines a function in eval text", "eval 'g() { exit 0; }'\n", inEval},
+		struct{ name, library, want string }{"a library whose case branch exits", "case x in *) exit 0;; esac\n", ended},
+		struct{ name, library, want string }{"a library whose help case exits", "case \"$1\" in -h|--help) exit 0;; esac\n", ended})
 	for _, tc := range cases {
 		lanes = append(lanes, struct{ name, lane, library, want string }{tc.name, `source "${ROOT_DIR}/scripts/lib/l.sh"`, tc.library, tc.want})
 	}
@@ -938,6 +976,15 @@ func TestLaneScriptsRejectsEvasions(t *testing.T) {
 	}
 	if err := validate(head + anchor + "\n"); err != nil {
 		t.Fatalf("LaneScripts() on the wired step: %v", err)
+	}
+	// An unquoted heredoc joins a line that ends in \ to the next, and turns \\
+	// into one backslash that the child bash then joins the same way, so
+	// neither runs the gate.
+	for body, wired := range map[string]bool{"x=\\\\": false, "x=\\": false, "x=y": true} {
+		heredoc := "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          bash <<EOF\n          " + body + "\n          scripts/gate.sh\n          EOF\n"
+		if err := validate(heredoc); (err == nil) != wired {
+			t.Errorf("LaneScripts() on a heredoc step with %q: %v, want wired %v", body, err, wired)
+		}
 	}
 	// An exit or an exec before the gate ends the lane, so the reader refuses it.
 	RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "wiring", validate, "exit before the command", "exec before the command")

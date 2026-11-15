@@ -60,6 +60,12 @@ var laneModeled = map[string]func(args []string, read map[string]bool) string{
 		if laneOption(args, "o") && (slices.Contains(args, "noexec") || slices.Contains(args, "onecmd")) {
 			return "stops bash running a later command, as shopt -so noexec does"
 		}
+		if laneOption(args, "o") {
+			return "sets a set -o option, as set would, which this reader reads only from set"
+		}
+		if slices.Contains(args, "lastpipe") {
+			return "runs the last command of a pipeline in this shell, as shopt -s lastpipe does, where an exit in it ends the lane"
+		}
 		return ""
 	},
 	"declare": laneDeclaration, "typeset": laneDeclaration, "local": laneDeclaration,
@@ -266,9 +272,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		sourced[library.path] = at + 1
 	}
 	stable, forwarders := map[string]bool{}, map[string]bool{}
-	var counted []laneCall            // each command once per definition that holds it, which the eval count reads
-	bodied := map[string][][]string{} // each function's commands, as EveryShellCommand reads its body
-	ends := laneEnds{tops: map[string][][]string{}, where: map[string]string{}, sourced: sourced, functions: reading.functions, forked: map[string]bool{}}
+	var counted []laneCall          // each command once per definition that holds it, which the eval count reads
+	bodied := map[string][]string{} // each function's body texts
+	ends := laneEnds{tops: map[string][]laneTop{}, where: map[string]string{}, sourced: sourced, functions: reading.functions, forked: map[string]bool{}}
 	var exitActions []string // the action of each EXIT trap
 	opened := map[int]bool{} // whether the command that opens each scope runs whenever its body does
 	for at, text := range bodies {
@@ -324,6 +330,11 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		var guards []laneGuard             // the guards in force
 		var lapsed []laneGuard             // the guards past laneGuardLimit, which no longer count
 		var pending *laneGuard             // a test for digits the next command may make a guard
+		heading := map[int]bool{}          // the if scopes whose condition the reader is in, which runs whenever the if does
+		option := map[int]bool{}           // the case branches a literal option selects from the lane's first parameter
+		subjects := map[int]string{}       // the word each case at a depth matches
+		var patterns []string              // the words of a case pattern the shell reader split at a |
+		pattern := false                   // whether the last command left a case pattern open
 		for _, each := range scanned {
 			args := each.args
 			held := len(nesting.scopes) // the scopes open before the command
@@ -344,7 +355,8 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 				arithmetic[at].expressions[index].context = context
 			}
 			words := texts(args)
-			alone := !each.nested && !each.piped // a command that runs in this shell
+			continued := pattern && each.piped                  // a | in a case pattern is no pipeline
+			alone := !each.nested && (!each.piped || continued) // a command that runs in this shell
 			certain := alone && !each.conditional && !lost
 			key := fmt.Sprint(at) // the body the command runs in
 			if function != 0 {
@@ -353,22 +365,55 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 			if each.piped && len(scopes) != held || slices.ContainsFunc(args, func(arg word) bool { return !arg.quoted && arg.text == "coproc" }) {
 				ends.forked[key] = true // a group or compound command in a pipeline, behind & or in a coproc runs in a subshell, where a return returns from nothing
 			}
-			for _, scope := range scopes { // a group the command opens runs only when the command would, as cmd || { exit 1; } does
-				if _, seen := opened[scope]; !seen {
-					opened[scope] = certain
+			if len(scopes) > 0 {
+				last := scopes[len(scopes)-1]
+				_, seen := opened[last]
+				switch {
+				case !seen && nesting.kinds[last] == "case": // a case or one of its branches
+					branch := words
+					if len(words) > 2 && words[0] == "case" {
+						subjects[len(scopes)], branch = words[1], words[3:]
+					}
+					option[last], patterns = at == 0 && function == 0 && laneHelpBranch(subjects[len(scopes)], append(patterns, branch...)), nil // the lane's own first parameter
+				case each.piped && nesting.kinds[last] == "case":
+					patterns = append(patterns, words...)
+				default:
+					patterns = nil
+				}
+				if _, seen := opened[last]; !seen && firstOf(words) == "if" {
+					heading[last] = true
+				}
+				if firstOf(words) == "then" {
+					heading[last] = false
 				}
 			}
-			command := laneCommand(laneLeading(laneUnredirected(words)))
-			inside := scopes[slices.Index(scopes, function)+1:]
-			subshell := slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] == "(" })
-			guarded := slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] != "{" || !opened[scope] })
-			if len(command) > 0 && alone && (command[0] == "return" && !lost && !subshell || // a body may return before any exit after it, but not from a subshell
-				command[0] != "return" && !each.conditional && (lost || !guarded)) { // where the reader lost track, any command may run
+			for _, scope := range scopes { // a group the command opens runs only when the command would, as cmd || { exit 1; } does
+				if _, seen := opened[scope]; !seen { // a | in a case pattern is no pipeline
+					opened[scope] = certain || nesting.kinds[scope] == "case"
+				}
+			}
+			leading, open := laneLeadingCase(laneUnredirected(words))
+			pattern = open || continued && !slices.ContainsFunc(words, func(word string) bool { return strings.HasSuffix(word, ")") })
+			command := laneCommand(leading)
+			if len(command) > 0 && !each.nested { // each command the body runs, which may follow one that ends it
+				inside := scopes[slices.Index(scopes, function)+1:]
+				top := laneTop{command: command}
+				switch {
+				case !alone:
+				case command[0] == "return": // a body may return before any exit after it, but not from a subshell
+					top.placed = !lost && !slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] == "(" })
+					top.certain = top.placed && !each.conditional && len(inside) == 0
+				case !each.conditional: // where the reader lost track, any command may run
+					top.placed = lost || !slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] != "{" || !opened[scope] })
+					top.may = lost || !slices.ContainsFunc(inside, func(scope int) bool {
+						return !opened[scope] || nesting.kinds[scope] == "(" || nesting.kinds[scope] == "if" && !heading[scope] || option[scope]
+					})
+				}
 				if ends.tops[key] == nil {
 					ends.order = append(ends.order, key)
 					ends.where[key] = map[bool]string{true: key, false: where}[function != 0]
 				}
-				ends.tops[key] = append(ends.tops[key], command)
+				ends.tops[key] = append(ends.tops[key], top)
 			}
 			if command := laneTrapCommand(words); len(command) > 2 && slices.ContainsFunc(command[2:], laneExitSignal) {
 				exitActions = append(exitActions, command[1])
@@ -475,8 +520,11 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		if !complete {
 			return false, fmt.Errorf("lane wiring is unreadable: a lane nests function definitions deeper than this reader parses")
 		}
+		if defined, complete := evalDefinedFunctionNames(text); len(defined) > 0 || !complete { // a body in eval or trap text is one functionBodies never binds
+			return false, fmt.Errorf("lane wiring is unreadable: a %s defines a function in text an eval or a trap runs, whose body this reader does not read", where)
+		}
 		for _, part := range parts {
-			bodied[part.function] = append(bodied[part.function], part.commands...)
+			bodied[part.function] = append(bodied[part.function], part.text)
 			for _, words := range part.commands {
 				counted = append(counted, laneCall{words, part.function})
 			}
@@ -493,14 +541,6 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 			for _, words := range part.commands {
 				calls = append(calls, laneCall{words, part.function})
 			}
-		}
-	}
-	if key, command := ends.ended(); command != nil {
-		return false, fmt.Errorf("lane wiring is unreadable: a %s runs %q, which ends the lane's shell before a later command", key, strings.Join(command, " "))
-	}
-	for _, action := range exitActions {
-		if laneExitsWith(action, bodied, map[string]bool{}) {
-			return false, fmt.Errorf("lane wiring is unreadable: a lane sets an EXIT trap whose action runs exit with a status, which may turn a failure before a later command into success")
 		}
 	}
 	reading.unsetsListed()
@@ -565,6 +605,14 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		}
 		if reason != "" {
 			return false, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which %s", strings.Join(call.words, " "), reason)
+		}
+	}
+	if key, command := ends.ended(); command != nil {
+		return false, fmt.Errorf("lane wiring is unreadable: a %s runs %q, which ends the lane's shell before a later command", key, strings.Join(command, " "))
+	}
+	for _, action := range exitActions {
+		if laneMasks(action, bodied, map[string]bool{}) {
+			return false, fmt.Errorf("lane wiring is unreadable: a lane sets an EXIT trap whose action may replace the status the lane ends with, as an exit 0, a later bare exit or an exec does, which may turn a failure before a later command into success")
 		}
 	}
 	return startup, nil
@@ -1015,15 +1063,30 @@ func shadowsLaneProgram(defined string) bool {
 // laneLeadingWords are the words before a command's first word that run
 // nothing themselves: reserved words, the ( { (( and [[ that open a group or
 // a test, and the closers that may share its line.
-var laneLeadingWords = append(slices.Clone(shellKeywords), "}", "fi", "done", "esac", "!", "(", ")", "((", "[[", "case")
+var laneLeadingWords = append(slices.Clone(shellKeywords), "}", "fi", "done", "esac", "!", "(", ")", "((", "[[")
 
 // laneLeading returns words from the first assignment or command word, past
 // the reserved words, group openers and case patterns in front of it, and a
 // function definition's name, so the words of f() { x=1; } start at x=1. A
-// word that ends in ) is a case pattern unless it assigns, as y=$((x)) does.
+// word that ends in ) is a case pattern unless it assigns, as y=$((x)) does,
+// and a case line starts at the command after its first pattern, if any.
 func laneLeading(words []string) []string {
+	words, _ = laneLeadingCase(words)
+	return words
+}
+
+// laneLeadingCase is laneLeading that also reports whether words open a case
+// whose first pattern does not end in them, as the shell reader splits
+// case x in a | b) at the |, so the words after it are no pipeline.
+func laneLeadingCase(words []string) ([]string, bool) {
 	for len(words) > 0 {
 		switch {
+		case words[0] == "case":
+			end := slices.IndexFunc(words, func(word string) bool { return strings.HasSuffix(word, ")") })
+			if end < 0 {
+				return nil, true
+			}
+			words = words[end+1:]
 		case words[0] == "function" && len(words) > 1:
 			words = words[2:]
 		case len(words) > 1 && words[1] == "()":
@@ -1033,10 +1096,10 @@ func laneLeading(words []string) []string {
 		case slices.Contains(laneLeadingWords, words[0]) || isCommandPrefixWord(words[0]) || strings.HasSuffix(words[0], ")") && !laneAssignmentWord.MatchString(words[0]):
 			words = words[1:]
 		default:
-			return words
+			return words, false
 		}
 	}
-	return words
+	return words, false
 }
 
 // laneAssignmentWord is a word that assigns a variable, as a prefix, an env
@@ -1399,7 +1462,7 @@ func firstOf(words []string) string {
 // a library's top level or a function's body, outside every branch, loop,
 // subshell and pipeline, in order.
 type laneEnds struct {
-	tops      map[string][][]string
+	tops      map[string][]laneTop
 	order     []string          // each body's key, as the reader first reads it
 	where     map[string]string // each body, as an error names it
 	sourced   map[string]int
@@ -1408,15 +1471,23 @@ type laneEnds struct {
 	forked    map[string]bool // the bodies that pipe or background a group or compound command, whose returns this reader does not place
 }
 
+// laneTop is one command a body runs, and where it stands.
+type laneTop struct {
+	command []string
+	placed  bool // any exit there ends the body: no branch, loop, subshell or group behind || or && holds it
+	may     bool // an exit there that may end with 0 ends the body: no if branch, subshell, group behind || or &&, or case branch of a lane option holds it
+	certain bool // a return there runs whenever the body runs
+}
+
 // ended returns where a body runs a command that ends the lane's shell, and
 // that command, when the body runs another command after it, or nil.
 func (ends *laneEnds) ended() (string, []string) {
 	ends.memo = map[string]bool{}
 	for _, key := range ends.order {
-		for index, command := range ends.tops[key] {
-			if ends.ending(command) {
+		for index, top := range ends.tops[key] {
+			if top.command[0] != "return" && (top.placed && ends.ending(top.command, false) || top.may && ends.ending(top.command, true)) {
 				if index+1 < len(ends.tops[key]) {
-					return ends.where[key], command
+					return ends.where[key], top.command
 				}
 				break
 			}
@@ -1425,41 +1496,70 @@ func (ends *laneEnds) ended() (string, []string) {
 	return "", nil
 }
 
-// ending reports whether a command ends the lane's shell: an exit, an exec
-// of a program, a call of a function or a source of a library whose body
-// ends it before any return, or an eval of text that may.
-func (ends *laneEnds) ending(command []string) bool {
+// ending reports whether a command ends the lane's shell, or with zero only
+// one that may end it with 0: an exit, an exec of a program, a call of a
+// function or a source of a library whose body ends it, or an eval of text
+// that may.
+func (ends *laneEnds) ending(command []string, zero bool) bool {
 	if library, fixed := laneLibraryPath(command); fixed && ends.sourced[library] > 0 {
-		return ends.ends(fmt.Sprint(ends.sourced[library]))
+		return ends.ends(fmt.Sprint(ends.sourced[library]), zero)
 	}
 	switch {
-	case command[0] == "exit" || replacesShell(slices.DeleteFunc(slices.Clone(command), func(word string) bool {
-		return strings.Trim(word, "0123456789") == "" // the descriptor the shell reader splits from a quoted here-string, as in exec 3<<<"x"
-	})):
+	case command[0] == "exit":
+		return !zero || len(command) == 1 || !laneFailing(command[1])
+	case laneExecs(command):
 		return true
 	case ends.functions[command[0]]:
-		return ends.ends("function " + command[0])
-	case command[0] == "eval": // a proven eval expands only numbers, which spell no program, as in eval "exec $fd<&-"
-		return slices.ContainsFunc(laneCommands(strings.Join(command[1:], " "))[0], endsShell)
+		return ends.ends("function "+command[0], zero)
+	case command[0] == "eval": // a proven eval expands only numbers, as in eval "exec $fd<&-"
+		return ends.evalEnds(laneExpansion.ReplaceAllString(strings.Join(command[1:], " "), "0"))
 	}
 	return false
 }
 
-func (ends *laneEnds) ends(key string) bool {
-	if ended, seen := ends.memo[key]; seen {
+// evalEnds reports whether eval text runs, anywhere in it, an exit, an exec
+// of a program or a call of a function whose body may end the shell.
+func (ends *laneEnds) evalEnds(text string) bool {
+	commands, _, complete := laneScan(text)
+	return !complete || slices.ContainsFunc(commands, func(each command) bool {
+		inner := unwrapBuiltins(laneCommand(laneLeading(laneUnredirected(texts(each.args)))))
+		return len(inner) > 0 && (inner[0] == "exit" || laneExecs(inner) || ends.functions[inner[0]] &&
+			(ends.ends("function "+inner[0], false) || ends.ends("function "+inner[0], true)))
+	})
+}
+
+// ends reports whether a body ends the shell: with zero, by a command that
+// may end it with 0 before any return that always runs, and otherwise by a
+// command that always runs before any return.
+func (ends *laneEnds) ends(key string, zero bool) bool {
+	memo := fmt.Sprint(zero, " ", key)
+	if ended, seen := ends.memo[memo]; seen {
 		return ended
 	}
-	ends.memo[key] = false // a body that calls itself ends nothing more by that call
-	for _, command := range ends.tops[key] {
-		if command[0] == "return" && !ends.forked[key] {
-			break
+	ends.memo[memo] = false // a body that calls itself ends nothing more by that call
+	for _, top := range ends.tops[key] {
+		if top.command[0] == "return" {
+			if zero && top.certain || !zero && top.placed && !ends.forked[key] {
+				break
+			}
+			continue
 		}
-		if ends.ending(command) {
-			ends.memo[key] = true
+		if zero && top.may && ends.ending(top.command, true) || !zero && top.placed && (ends.ending(top.command, false) || ends.ending(top.command, true)) {
+			ends.memo[memo] = true
 			break
 		}
 	}
-	return ends.memo[key]
+	return ends.memo[memo]
+}
+
+// laneExecs reports whether a command is an exec of a program, past the
+// descriptor the shell reader splits from a quoted here-string, as in exec
+// 3<<<"x".
+func laneExecs(command []string) bool {
+	words := slices.DeleteFunc(slices.Clone(unwrapBuiltins(command)), func(word string) bool {
+		return strings.Trim(word, "0123456789") == ""
+	})
+	return len(words) > 0 && replacesShell(words)
 }
 
 // laneTrapCommand returns a trap command's words from trap on, past a --.
@@ -1481,23 +1581,46 @@ func laneFailing(status string) bool {
 	return err == nil && number%256 != 0
 }
 
-// laneExitsWith reports whether text, or a function it calls, runs exit with
-// a status that may be 0, which in an EXIT trap replaces the status the lane
-// ends with.
-func laneExitsWith(text string, bodied map[string][][]string, read map[string]bool) bool {
-	return slices.ContainsFunc(laneCommands(text)[0], func(words []string) bool {
-		return laneCallExitsWith(words, bodied, read)
-	})
+// laneMasks reports whether an EXIT trap's action, or a function it calls,
+// may replace the status the lane ends with: an exit with a status that may
+// be 0, a bare exit after another command, an exec of a program, a source,
+// or text this reader cannot read.
+func laneMasks(text string, bodied map[string][]string, read map[string]bool) bool {
+	commands, _, complete := laneScan(text)
+	ran := 0 // the commands before this one, past the empty ones that end lines
+	for _, each := range commands {
+		inner := unwrapBuiltins(laneCommand(laneLeading(laneUnredirected(texts(each.args)))))
+		if len(inner) > 0 {
+			ran++
+		}
+		switch name := firstOf(inner); {
+		case name == "exit" && (len(inner) > 1 && !laneFailing(inner[1]) || len(inner) == 1 && ran > 1), // a bare exit keeps the status only first
+			laneExecs(inner), name == "source", name == ".":
+			return true
+		case name != "" && bodied[name] != nil && !read[name]:
+			read[name] = true
+			if slices.ContainsFunc(bodied[name], func(body string) bool { return laneMasks(body, bodied, read) }) {
+				return true
+			}
+		}
+	}
+	return !complete
 }
 
-func laneCallExitsWith(words []string, bodied map[string][][]string, read map[string]bool) bool {
-	command := laneCommand(laneUnredirectedFront(words))
-	if len(command) > 1 && command[0] == "exit" && !laneFailing(command[1]) {
-		return true // an exit with a status that is not a literal failure may end the lane with 0
+// laneHelpBranch reports whether a case branch matches only -h or --help, as
+// -h | --help) does, against the lane's first parameter, as the lanes read
+// their command lines.
+func laneHelpBranch(subject string, words []string) bool {
+	end := slices.IndexFunc(words, func(word string) bool { return strings.HasSuffix(word, ")") })
+	if end < 0 || subject != "$1" && subject != "${1}" {
+		return false
 	}
-	if name := firstOf(command); bodied[name] != nil && !read[name] {
-		read[name] = true
-		return slices.ContainsFunc(bodied[name], func(words []string) bool { return laneCallExitsWith(words, bodied, read) })
+	for _, word := range words[:end+1] {
+		for _, pattern := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(word, "("), ")"), "|") {
+			if pattern != "" && pattern != "-h" && pattern != "--help" {
+				return false
+			}
+		}
 	}
-	return false
+	return true
 }

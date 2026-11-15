@@ -250,19 +250,26 @@ from the working directory of its step, and a `cd` before it moves that
 directory.
 
 An `exit` or an `exec` of a program that always runs stops the check when any
-command follows it. So does a call or a `source` whose body always runs one
-(`internal/metadatautil/lane_reading.go`). An `exit` in a branch or behind `||`
-or `&&` still counts. The lanes use that shape for `--help` and for a failed
-check.
+command follows it. So does a call, a `source` or an `eval` whose body or text
+always runs one (`internal/metadatautil/lane_reading.go`). An `exit` whose
+status may be 0 stops the check in a loop, a `case` branch or an `if`
+condition too, since those may run. One in an `if` branch, behind `||` or `&&`,
+or in a subshell still counts, as a lane's failed check does. So does one in a
+`case` branch that matches only `-h` or `--help` against the lane's own first
+parameter, as a lane's usage text does.
 
-A call still counts when the body may `return` before its `exit`. In the body
-itself, an `exit` that a later command follows stops the check even after a
-`return`. A `return` in a subshell, a pipeline, a `coproc` or the
-background returns from nothing, so it does not count. When the reader loses
-track of the nesting, as after a `coproc`, any later `exit` stops the check.
+A call stops the check when its body may exit with 0 before a `return` that
+always runs. A `return` in a branch or a loop does not count, since the body
+may skip it. In the body itself, an `exit` that a later command follows stops
+the check even after a `return`. A `return` in a subshell, a pipeline, a
+`coproc` or the background returns from nothing, so it does not count. When
+the reader loses track of the nesting, as after a `coproc`, any later `exit`
+stops the check.
 
-An `EXIT` trap that runs `exit` with a status that may be 0 stops the check
-too. Such a trap can turn a failure before the gate into success.
+An `EXIT` trap stops the check when its action, or a function it calls, may
+replace the status the lane ends with. An `exit` whose status may be 0, a bare
+`exit` after another command, an `exec` of a program and a `source` all can.
+Such a trap can turn a failure before the gate into success.
 
 `internal/metadatautil/lane_scripts.go` reads the lanes, and
 `internal/metadatautil/lane_reading.go` reads what a lane and each library it
@@ -299,6 +306,11 @@ that sets an action on a signal other than `EXIT`
 (`internal/metadatautil/lane_reading.go`). A child shell counts only with the
 options that run its file, such as `-e`, `-x` or `-o pipefail`
 (`internal/metadatautil/shell_invocations.go`).
+
+The reader reads `set -o` options only from `set`, so any `shopt -o` stops the
+check. So does `shopt -s lastpipe`, which runs a pipeline's last command, and
+any `exit` in it, in the lane's shell. A function that the text of an `eval` or
+a `trap` defines stops the check, since the reader does not read its body.
 
 Bash reads the value of a variable in arithmetic as an expression, which can
 assign `PATH`. The reader reads `((`, `$((`, `let`, a `[[` number test, a
