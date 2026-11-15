@@ -288,7 +288,12 @@ ensure_go_run_env() {
   local gopath="${GOPATH:-${cache_root}/gopath}"
   local gomodcache="${GOMODCACHE:-${cache_root}/mod-cache}"
   local gocache="${GOCACHE:-${cache_root}/build-cache}"
+  local lock_dir=""
 
+  # Lock before creating anything, so gc never removes a root as it starts.
+  for lock_dir in "${cache_root}" "${gopath}" "${gomodcache}" "${gocache}"; do
+    workcell_cache_lock_shared "${lock_dir}" || return 1
+  done
   mkdir -p "${cache_root}"
   mkdir -p "${gopath}" "${gomodcache}" "${gocache}"
   chmod 0700 "${cache_root}" 2>/dev/null || true
@@ -466,7 +471,7 @@ run_go_in_repo() {
   local repo_root="$1"
   shift
 
-  ensure_go_run_env
+  ensure_go_run_env || return 1
   local go_bin
   go_bin="$(resolve_go_bin "${repo_root}")"
   (
@@ -479,7 +484,7 @@ exec_go_run_in_repo() {
   local repo_root="$1"
   shift
 
-  ensure_go_run_env
+  ensure_go_run_env || exit 1
   local go_bin
   go_bin="$(resolve_go_bin "${repo_root}")"
   cd "${repo_root}" || exit 1
@@ -491,7 +496,7 @@ build_go_tool_in_repo() {
   local output_path="$2"
   shift 2
 
-  ensure_go_run_env
+  ensure_go_run_env || return 1
   local go_bin
   go_bin="$(resolve_go_bin "${repo_root}")"
   (
