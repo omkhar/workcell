@@ -3,9 +3,7 @@ set -euo pipefail
 function_body="$(declare -f delete_verify_colima_profile)"
 function_body="$(printf '%s\n' "${function_body}" | sed \
   -e 's|if \[\[ -x /opt/homebrew/bin/colima \]\]; then|if [[ "${COLIMA_VARIANT}" == "homebrew" ]]; then|' \
-  -e 's|if \[\[ -x /usr/local/bin/colima \]\]; then|if [[ "${COLIMA_VARIANT}" == "local" ]]; then|' \
-  -e 's|/opt/homebrew/bin/colima delete|fake_colima delete|' \
-  -e 's|/usr/local/bin/colima delete|fake_colima delete|')"
+  -e 's|if \[\[ -x /usr/local/bin/colima \]\]; then|if [[ "${COLIMA_VARIANT}" == "local" ]]; then|')"
 eval "${function_body}"
 
 profile_name="wcl-live-det-test"
@@ -15,7 +13,17 @@ reaper_calls=0
 remove_calls=0
 REAPER_STATUS=0
 
-fake_colima() {
+# delete_verify_colima_profile must reach colima through workcell_colima,
+# which sets the Colima cache root, with the binary of the detected variant.
+workcell_colima() {
+  local want_bin="/usr/local/bin/colima"
+
+  [[ "${COLIMA_VARIANT}" != "homebrew" ]] || want_bin="/opt/homebrew/bin/colima"
+  [[ "$1" == "${want_bin}" && "$2" == "${REAL_HOME}/.colima" ]] || {
+    echo "Unexpected workcell_colima binary or COLIMA_HOME: $1 $2" >&2
+    return 1
+  }
+  shift 2
   [[ "$*" == "delete --profile ${profile_name} --force" ]] || {
     echo "Unexpected Colima delete invocation: $*" >&2
     return 1

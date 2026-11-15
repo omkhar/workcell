@@ -302,24 +302,25 @@ func TestValidateProfileConfigAcceptsOnlySelectedVMAndMountType(t *testing.T) {
 // TestCacheRootMatchesShellHelper runs colima_staging_cache_root from
 // scripts/lib/launcher/host-detect.sh under a fake uname and checks that the
 // shell and Go rules give the same Colima cache root, so the launcher mounts
-// the paths that ValidateRuntimeMounts expects on macOS and on Linux. A set
-// XDG_CACHE_HOME must not move the root.
+// the paths that ValidateRuntimeMounts expects on macOS and on Linux. It does
+// the same for colima_child_cache_home and childCacheHome. A set
+// XDG_CACHE_HOME must not move either root.
 func TestCacheRootMatchesShellHelper(t *testing.T) {
 	helper, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "host-detect.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ uname, goos, xdg, want string }{
-		{"Darwin", "darwin", "", "/h/Library/Caches/colima"},
-		{"Darwin", "darwin", "/xdg", "/h/Library/Caches/colima"},
-		{"Linux", "linux", "", "/h/.cache/colima"},
-		{"Linux", "linux", "/xdg", "/h/.cache/colima"},
+	for _, tc := range []struct{ uname, goos, xdg, want, wantChild string }{
+		{"Darwin", "darwin", "", "/h/Library/Caches/colima", "/h/Library/Caches/workcell/colima-xdg"},
+		{"Darwin", "darwin", "/xdg", "/h/Library/Caches/colima", "/h/Library/Caches/workcell/colima-xdg"},
+		{"Linux", "linux", "", "/h/.cache/colima", "/h/.cache/workcell/colima-xdg"},
+		{"Linux", "linux", "/xdg", "/h/.cache/colima", "/h/.cache/workcell/colima-xdg"},
 	} {
 		shim := t.TempDir()
 		if err := os.WriteFile(filepath.Join(shim, "uname"), []byte("#!/bin/sh\necho "+tc.uname+"\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && colima_staging_cache_root`, "bash", helper)
+		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && colima_staging_cache_root && colima_child_cache_home`, "bash", helper)
 		cmd.Env = []string{"PATH=" + shim + ":/usr/bin:/bin", "REAL_HOME=/h"}
 		if tc.xdg != "" {
 			cmd.Env = append(cmd.Env, "XDG_CACHE_HOME="+tc.xdg)
@@ -328,11 +329,56 @@ func TestCacheRootMatchesShellHelper(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s xdg=%q: shell helper: %v", tc.uname, tc.xdg, err)
 		}
-		if shell := strings.TrimSuffix(string(out), "\n"); shell != tc.want {
+		lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("%s xdg=%q: shell helpers printed %q, want two lines", tc.uname, tc.xdg, out)
+		}
+		if shell := lines[0]; shell != tc.want {
 			t.Errorf("%s xdg=%q: colima_staging_cache_root = %q, want %q", tc.uname, tc.xdg, shell, tc.want)
 		}
 		if got := cacheRoot(tc.goos, "/h"); got != tc.want {
 			t.Errorf("%s xdg=%q: cacheRoot = %q, want %q", tc.uname, tc.xdg, got, tc.want)
+		}
+		if shell, got := lines[1], childCacheHome(tc.goos, "/h"); shell != got || shell != tc.wantChild {
+			t.Errorf("%s xdg=%q: colima_child_cache_home = %q, childCacheHome = %q, want %q", tc.uname, tc.xdg, shell, got, tc.wantChild)
+		}
+	}
+}
+
+// TestWorkcellColimaSetsCacheRootAndHome runs workcell_colima from
+// scripts/lib/launcher/host-detect.sh with a fake colima. A caller's HOME,
+// COLIMA_HOME and XDG_CACHE_HOME must not reach colima: it gets REAL_HOME,
+// the COLIMA_HOME argument and childCacheHome, so a start writes lima.yaml
+// with the Colima cache root outside the staging root.
+func TestWorkcellColimaSetsCacheRootAndHome(t *testing.T) {
+	helper, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "host-detect.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// bash reads the helper, so stat it here to key the test cache on it.
+	if _, err := os.Stat(helper); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ uname, goos string }{{"Darwin", "darwin"}, {"Linux", "linux"}} {
+		shim := t.TempDir()
+		fake := filepath.Join(shim, "fake-colima")
+		for name, body := range map[string]string{
+			"uname":       "#!/bin/sh\necho " + tc.uname + "\n",
+			"fake-colima": "#!/bin/sh\nprintf '%s\\n' \"HOME=$HOME\" \"COLIMA_HOME=$COLIMA_HOME\" \"XDG_CACHE_HOME=$XDG_CACHE_HOME\" \"ARGS=$*\"\n",
+		} {
+			if err := os.WriteFile(filepath.Join(shim, name), []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && workcell_colima "$2" /h/.colima start --profile p`, "bash", helper, fake)
+		cmd.Env = []string{"PATH=" + shim + ":/usr/bin:/bin", "REAL_HOME=/h", "HOME=/caller", "COLIMA_HOME=/caller/.colima", "XDG_CACHE_HOME=/caller/xdg"}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: workcell_colima: %v", tc.uname, err)
+		}
+		want := "HOME=/h\nCOLIMA_HOME=/h/.colima\nXDG_CACHE_HOME=" + childCacheHome(tc.goos, "/h") + "\nARGS=start --profile p\n"
+		if string(out) != want {
+			t.Errorf("%s: colima saw\n%s\nwant\n%s", tc.uname, out, want)
 		}
 	}
 }

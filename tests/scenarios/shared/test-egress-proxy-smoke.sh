@@ -16,6 +16,10 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-egress-proxy-scenario.XXXXXX")"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/ack-date.sh"
+# workcell_colima: every colima run here sets the Colima cache root as the
+# launcher does, so a restart keeps the staging root out of lima.yaml.
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 
 REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-egp-$$"
@@ -36,8 +40,8 @@ cleanup() {
     done
   fi
   if command -v colima >/dev/null 2>&1; then
-    colima stop --profile "${PROFILE}" >/dev/null 2>&1 || true
-    colima delete --profile "${PROFILE}" --force >/dev/null 2>&1 || true
+    workcell_colima colima "${REAL_HOME}/.colima" stop --profile "${PROFILE}" >/dev/null 2>&1 || true
+    workcell_colima colima "${REAL_HOME}/.colima" delete --profile "${PROFILE}" --force >/dev/null 2>&1 || true
   fi
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${REAL_HOME}/.colima/_lima/colima-${PROFILE}"
@@ -52,7 +56,7 @@ cleanup() {
 trap cleanup EXIT
 
 profile_docker() {
-  COLIMA_HOME="${REAL_HOME}/.colima" colima start --profile "${PROFILE}" >/dev/null
+  workcell_colima colima "${REAL_HOME}/.colima" start --profile "${PROFILE}" >/dev/null
   env DOCKER_HOST="unix://${REAL_HOME}/.colima/${PROFILE}/docker.sock" docker "$@"
 }
 
@@ -333,7 +337,7 @@ assert_no_proxy_residue "a brokered launch without the Keychain item"
 
 # The detached re-exec drops the harness-only keychain knob, so a brokered
 # detached session needs a login Keychain item and is not part of this smoke.
-guest_sockets="$(COLIMA_HOME="${REAL_HOME}/.colima" colima ssh --profile "${PROFILE}" -- ls /tmp)"
+guest_sockets="$(workcell_colima colima "${REAL_HOME}/.colima" ssh --profile "${PROFILE}" -- ls /tmp)"
 if grep -q '^workcell-broker-' <<<"${guest_sockets}"; then
   echo "a credential broker guest socket remains in the VM" >&2
   exit 1

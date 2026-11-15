@@ -35,7 +35,7 @@ source "${ROOT_DIR}/scripts/lib/shellproto.sh"
 source "${ROOT_DIR}/scripts/lib/sessionctl-shim.sh"
 
 run_host_colima() {
-  HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" "${HOST_COLIMA_BIN}" "$@"
+  HOME="${REAL_HOME}" COLIMA_HOME="${COLIMA_STATE_ROOT}" XDG_CACHE_HOME="$(colima_child_cache_home)" "${HOST_COLIMA_BIN}" "$@"
 }
 `
 
@@ -83,6 +83,13 @@ func TestCheck(t *testing.T) {
 			body: strings.Replace(happyLauncher, `HOME="${REAL_HOME}" `, "", 1) +
 				"\ndecoy() {\n  HOME=\"${REAL_HOME}\" true\n}\n",
 			wantErr: "Expected run_host_colima to restore the real host HOME instead of the Docker client sandbox home",
+		},
+		{
+			// kindFunctionBlock: run_host_colima leaves Colima's cache root,
+			// which Colima mounts read-only, at the Workcell staging root.
+			name:    "run_host_colima missing Colima cache root move",
+			body:    strings.Replace(happyLauncher, `XDG_CACHE_HOME="$(colima_child_cache_home)" `, "", 1),
+			wantErr: "Expected run_host_colima to move the Colima cache root, which Colima mounts read-only into the VM, out of the Workcell staging root",
 		},
 		{
 			// kindFirstLineRegex: wrong shebang on line 1.
