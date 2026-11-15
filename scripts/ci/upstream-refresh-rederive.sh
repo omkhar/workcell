@@ -61,9 +61,9 @@ tree_oid="$(meta .tree_oid)"
 [[ "${base_sha}" =~ ^[0-9a-f]{40}$ && "${tree_oid}" =~ ^[0-9a-f]{40}$ ]] || die "the candidate metadata has no base or tree"
 patch_sha256="$(shasum -a 256 "${patch}" | awk '{print $1}')"
 [[ "${patch_sha256}" == "$(meta .patch_sha256)" ]] || die "candidate patch digest mismatch"
-head_sha="$(git rev-parse --verify "HEAD^{commit}")"
+head_sha="$(git rev-parse --verify "HEAD^{commit}")" || die "cannot read the checkout HEAD"
 [[ "${head_sha}" == "${base_sha}" ]] || die "checkout ${head_sha} is not at candidate base ${base_sha}"
-status="$(git status --porcelain --untracked-files=all)"
+status="$(git status --porcelain --untracked-files=all)" || die "cannot read the checkout status"
 [[ -z "${status}" ]] || die "the checkout is not clean"
 
 # The candidate's Debian snapshot: the one its bootstrap manifest change sets,
@@ -97,7 +97,7 @@ rm -f "${index}"
 trap 'rm -f "${index}"' EXIT
 GIT_INDEX_FILE="${index}" git read-tree HEAD
 GIT_INDEX_FILE="${index}" git add -A
-tree="$(GIT_INDEX_FILE="${index}" git write-tree)"
+tree="$(GIT_INDEX_FILE="${index}" git write-tree)" || die "cannot write the re-derived tree"
 if [[ "${tree}" != "${tree_oid}" ]]; then
   echo "::notice::The re-derived toolchain tree ${tree} differs from the candidate tree ${tree_oid}. Upstream may have moved since the refresh."
   die "re-derived tree ${tree} is not candidate tree ${tree_oid}"
