@@ -602,3 +602,206 @@ func TestRunScenarioTestsPrintsAStoppedScenarioOutput(t *testing.T) {
 		}
 	}
 }
+
+// stopTestScenario is a scenario fixture for startScenarioRunner.
+type stopTestScenario struct {
+	name string
+	body string
+}
+
+// startScenarioRunner starts the runner on fixtures, in manifest order, with
+// env added, and waits until a fixture has created $HUNG_READY. It returns the
+// runner, its output and a channel that gets its Wait result.
+func startScenarioRunner(t *testing.T, fixtures []stopTestScenario, env ...string) (*exec.Cmd, *lockedBuffer, <-chan error, string) {
+	t.Helper()
+	scenarioRoot := t.TempDir()
+	ready := filepath.Join(scenarioRoot, "ready")
+	scenarios := []map[string]any{}
+	for _, fixture := range fixtures {
+		writeScenarioScript(t, scenarioRoot, "shared/test-"+fixture.name+".sh", fixture.body)
+		scenarios = append(scenarios, map[string]any{
+			"id": "shared/" + fixture.name, "description": fixture.name + " fixture", "lane": "secretless",
+			"platform": "any", "validation_tier": "repo-required", "manual": false,
+			"providers": []string{"codex"}, "persona": "developer",
+			"test_file": "shared/test-" + fixture.name + ".sh", "requires_credentials": false,
+		})
+	}
+	manifestPath := writeScenarioManifest(t, scenarioRoot, scenarios)
+	buildScenarioManifestTool(t, manifestPath)
+	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "run-scenario-tests.sh"))
+	cmd.Dir = repoRoot(t)
+	cmd.Env = append(append(os.Environ(),
+		"WORKCELL_SCENARIO_ROOT="+scenarioRoot,
+		"WORKCELL_SCENARIO_MANIFEST="+manifestPath,
+		"HUNG_READY="+ready,
+		"SCENARIO_DIR="+scenarioRoot,
+		"TMPDIR="+t.TempDir()), env...)
+	out := &lockedBuffer{}
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	const startTimeout = 20 * time.Second
+	for deadline := time.Now().Add(startTimeout); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			t.Fatalf("within %s of the start, no scenario had signalled that it runs: %q", startTimeout, out.String())
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	return cmd, out, done, scenarioRoot
+}
+
+// waitRunnerExit waits up to timeout for the runner to exit with code.
+func waitRunnerExit(t *testing.T, cmd *exec.Cmd, out *lockedBuffer, done <-chan error, code int, timeout time.Duration) {
+	t.Helper()
+	select {
+	case err := <-done:
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != code {
+			t.Fatalf("runner exit = %v, want %d; output %q", err, code, out.String())
+		}
+	case <-time.After(timeout):
+		_ = cmd.Process.Kill()
+		t.Fatalf("the runner did not exit within %s: %q", timeout, out.String())
+	}
+}
+
+// TestRunScenarioTestsGivesAStoppedScenarioTimeToCleanUp stops the runner
+// while a scenario runs. The scenario's cleanup trap gets the grace to finish,
+// a second signal or the end of WORKCELL_SCENARIO_STOP_GRACE ends it, and a
+// scenario that failed before the stop still has its output printed.
+func TestRunScenarioTestsGivesAStoppedScenarioTimeToCleanUp(t *testing.T) {
+	t.Parallel()
+
+	// The cleanup trap runs when SIGTERM ends the scenario.
+	cleanupBody := func(seconds string) string {
+		return "#!/bin/bash\necho \"$$\" >\"$SCENARIO_DIR/pid\"\ncleanup() { echo cleanup-start; sleep " + seconds + "; echo cleaned >\"$SCENARIO_DIR/marker\"; }\ntrap cleanup EXIT\n: >\"$HUNG_READY\"\nsleep 30\n"
+	}
+	scenarioGone := func(t *testing.T, scenarioRoot string) {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(scenarioRoot, "pid"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid := strings.TrimSpace(string(raw))
+		for deadline := time.Now().Add(3 * time.Second); !processGone(pid); time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				_ = exec.Command("kill", "-9", pid).Run()
+				t.Fatalf("the scenario %s still runs after the stop", pid)
+			}
+		}
+	}
+
+	t.Run("cleanup finishes on one signal", func(t *testing.T) {
+		t.Parallel()
+		cmd, out, done, scenarioRoot := startScenarioRunner(t, []stopTestScenario{{"cleanup", cleanupBody("2")}})
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		waitRunnerExit(t, cmd, out, done, 143, 20*time.Second)
+		if _, err := os.Stat(filepath.Join(scenarioRoot, "marker")); err != nil {
+			t.Fatalf("the cleanup trap did not finish: %v; output %q", err, out.String())
+		}
+		if got := out.String(); !strings.Contains(got, "Waiting up to 60s for scenario cleanup") || !strings.Contains(got, "STOPPED shared/cleanup\n") {
+			t.Fatalf("output %q lacks the wait notice or the STOPPED block", got)
+		}
+		scenarioGone(t, scenarioRoot)
+	})
+
+	// A second signal of the same kind, as a second Ctrl-C, kills at once.
+	for _, tc := range []struct {
+		signal syscall.Signal
+		name   string
+		code   int
+	}{{syscall.SIGINT, "SIGINT", 130}, {syscall.SIGTERM, "SIGTERM", 143}} {
+		t.Run("a second "+tc.name+" kills at once", func(t *testing.T) {
+			t.Parallel()
+			cmd, out, done, scenarioRoot := startScenarioRunner(t, []stopTestScenario{{"cleanup", cleanupBody("30")}})
+			if err := cmd.Process.Signal(tc.signal); err != nil {
+				t.Fatal(err)
+			}
+			for deadline := time.Now().Add(10 * time.Second); !strings.Contains(out.String(), "Waiting up to"); time.Sleep(20 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					_ = cmd.Process.Kill()
+					t.Fatalf("the runner did not wait for the cleanup: %q", out.String())
+				}
+			}
+			if err := cmd.Process.Signal(tc.signal); err != nil {
+				t.Fatal(err)
+			}
+			waitRunnerExit(t, cmd, out, done, tc.code, 5*time.Second)
+			if _, err := os.Stat(filepath.Join(scenarioRoot, "marker")); err == nil {
+				t.Fatalf("the cleanup trap finished although a second signal came: %q", out.String())
+			}
+			scenarioGone(t, scenarioRoot)
+		})
+	}
+
+	// The scenario stops the runner as it starts. A runner that blocked in
+	// wait for a running scenario would miss a signal whose trap ran just
+	// before that wait; no test here can time a signal into that gap, so this
+	// one shows only that a stop from a running serial scenario is acted on.
+	t.Run("a signal as a serial scenario starts stops it", func(t *testing.T) {
+		t.Parallel()
+		body := "#!/bin/bash\necho \"$$\" >\"$SCENARIO_DIR/pid\"\n: >\"$HUNG_READY\"\nkill -TERM \"$PPID\"\nsleep 30\n"
+		cmd, out, done, scenarioRoot := startScenarioRunner(t, []stopTestScenario{{"selfstop", body}}, "WORKCELL_SCENARIO_JOBS=1")
+		waitRunnerExit(t, cmd, out, done, 143, 10*time.Second)
+		if got := out.String(); !strings.Contains(got, "STOPPED shared/selfstop\n") {
+			t.Fatalf("output %q lacks the STOPPED block", got)
+		}
+		scenarioGone(t, scenarioRoot)
+	})
+
+	t.Run("the grace ends for a scenario that ignores SIGTERM", func(t *testing.T) {
+		t.Parallel()
+		body := "#!/bin/bash\ntrap '' TERM INT HUP\necho \"$$\" >\"$SCENARIO_DIR/pid\"\n: >\"$HUNG_READY\"\nwhile :; do sleep 1; done\n"
+		cmd, out, done, scenarioRoot := startScenarioRunner(t, []stopTestScenario{{"stubborn", body}}, "WORKCELL_SCENARIO_STOP_GRACE=1")
+		if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+			t.Fatal(err)
+		}
+		waitRunnerExit(t, cmd, out, done, 129, 10*time.Second)
+		if got := out.String(); !strings.Contains(got, "Waiting up to 1s for scenario cleanup") || !strings.Contains(got, "STOPPED shared/stubborn\n") {
+			t.Fatalf("output %q lacks the wait notice or the STOPPED block", got)
+		}
+		scenarioGone(t, scenarioRoot)
+	})
+
+	for _, jobs := range []string{"1", "2"} {
+		t.Run("jobs "+jobs+" prints a failed scenario's output on a stop", func(t *testing.T) {
+			t.Parallel()
+			fixtures := []stopTestScenario{
+				{"failing", "#!/bin/sh\necho failing-cause\nexit 3\n"},
+				{"hung", "#!/bin/sh\necho \"$$\" >\"$SCENARIO_DIR/pid\"\n: >\"$HUNG_READY\"\nsleep 30\n"},
+			}
+			if jobs == "2" {
+				// The hung scenario starts first, and the failing one ends
+				// while the runner waits for it.
+				fixtures[0], fixtures[1] = fixtures[1], fixtures[0]
+			}
+			cmd, out, done, scenarioRoot := startScenarioRunner(t, fixtures, "WORKCELL_SCENARIO_JOBS="+jobs)
+			for deadline := time.Now().Add(10 * time.Second); !strings.Contains(out.String(), "FAIL shared/failing\n"); time.Sleep(20 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					_ = cmd.Process.Kill()
+					t.Fatalf("the failing scenario was not recorded: %q", out.String())
+				}
+			}
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatal(err)
+			}
+			waitRunnerExit(t, cmd, out, done, 143, 10*time.Second)
+			got := out.String()
+			failed := strings.Index(got, "--- shared/failing output (exit 3; 1 lines) ---\nfailing-cause\n--- end shared/failing output ---\n")
+			stopped := strings.Index(got, "STOPPED shared/hung\n")
+			if failed < 0 || stopped < 0 || failed > stopped {
+				t.Fatalf("output %q, want the failing scenario's block before the STOPPED block", got)
+			}
+			scenarioGone(t, scenarioRoot)
+		})
+	}
+}
