@@ -2744,28 +2744,6 @@ exec /usr/local/libexec/workcell/real/copilot \
   "--available-tools=view,create,edit,apply_patch,grep,glob"
 `
 
-// copilotPolicyWrapperHappyProviderPolicy is a minimal but structurally faithful
-// runtime/container/provider-policy.sh: it contains every affirmative policy
-// needle (the two blocked-lifecycle messages, the -p/--prompt case label, the two
-// attached-prompt value extractions, the bundled-short-option case label, and the
-// bundled-short-option blocked message) and NOT the -i/--interactive prompt-alias
-// case label.
-const copilotPolicyWrapperHappyProviderPolicy = `#!/usr/bin/env bash
-copilot_policy() {
-  case "${arg}" in
-  -p | --prompt)
-    attached_prompt_value="${arg:2}"
-    attached_prompt_value="${arg#--prompt=}"
-    ;;
-  -[!-]?*)
-    workcell_die "Workcell blocked bundled Copilot short options: ${arg}"
-    ;;
-  esac
-  workcell_die "Workcell blocked Claude lifecycle command: ${arg}"
-  workcell_die "Workcell blocked Copilot lifecycle/control-plane command: ${arg}"
-}
-`
-
 // copilotPolicyWrapperHappySmoke is a minimal but structurally faithful
 // scripts/container-smoke.sh: it contains the three container-smoke needles for
 // the attached-prompt and bundled-short-option guards.
@@ -2775,10 +2753,10 @@ run_case workcell-copilot-policy-attached-long-prompt-allow-tool.out
 run_case workcell-copilot-policy-bundled-short-options.out
 `
 
-// writeCopilotPolicyWrapperRepo materializes a fake repo with the three files
+// writeCopilotPolicyWrapperRepo materializes a fake repo with the two files
 // this group reads set to the given bodies; a body of "" means "do not create
 // that file" (unreadable-target case).
-func writeCopilotPolicyWrapperRepo(t *testing.T, providerWrapper, providerPolicy, smoke string) string {
+func writeCopilotPolicyWrapperRepo(t *testing.T, providerWrapper, smoke string) string {
 	t.Helper()
 	root := t.TempDir()
 	write := func(rel, body string) {
@@ -2794,7 +2772,6 @@ func writeCopilotPolicyWrapperRepo(t *testing.T, providerWrapper, providerPolicy
 		}
 	}
 	write(providerWrapperRelPath, providerWrapper)
-	write(providerPolicyRelPath, providerPolicy)
 	write(containerSmokeRelPath, smoke)
 	return root
 }
@@ -2803,21 +2780,18 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 	tests := []struct {
 		name            string
 		providerWrapper string
-		providerPolicy  string
 		smoke           string
 		wantErr         string // "" means expect success
 	}{
 		{
 			name:            "happy path all invariants hold",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 		},
 		{
 			// Check 1 (kindPresent, provider-wrapper.sh).
 			name:            "provider wrapper keeps host-side github token env",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, "unset WORKCELL_COPILOT_GITHUB_TOKEN", "unset OTHER", 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to discard the host-side Copilot token handoff variable before exec",
 		},
@@ -2825,7 +2799,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// Check 2 (kindPresent, provider-wrapper.sh).
 			name:            "provider wrapper keeps token file path env",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, "unset WORKCELL_COPILOT_TOKEN_FILE", "unset OTHER", 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to discard the Copilot token handoff path before exec",
 		},
@@ -2833,7 +2806,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// Check 3 (kindPresent, provider-wrapper.sh — escaped ${...} needle).
 			name:            "provider wrapper missing managed COPILOT_GITHUB_TOKEN export",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, `COPILOT_GITHUB_TOKEN="${copilot_github_token}"`, `COPILOT_GITHUB_TOKEN="x"`, 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to expose Copilot auth only as COPILOT_GITHUB_TOKEN to the managed child",
 		},
@@ -2841,7 +2813,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// Check 4 (kindPresent, provider-wrapper.sh).
 			name:            "provider wrapper missing http2 pin",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, "COPILOT_ENABLE_HTTP2=false", "COPILOT_ENABLE_HTTP2=true", 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to pin Copilot HTTP/2 off on the managed path",
 		},
@@ -2849,7 +2820,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// Check 5 (kindPresent, provider-wrapper.sh).
 			name:            "provider wrapper missing secret-env-vars",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, "--secret-env-vars=GH_TOKEN,GITHUB_TOKEN,COPILOT_GITHUB_TOKEN", "--secret-env-vars=NONE", 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to declare Copilot/GitHub token env as provider secrets",
 		},
@@ -2857,7 +2827,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// Check 6 (kindPresent, provider-wrapper.sh).
 			name:            "provider wrapper missing disallow-temp-dir",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, "--disallow-temp-dir", "--allow-temp-dir", 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to deny Copilot temp-dir access on the managed path",
 		},
@@ -2865,7 +2834,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// Check 7 (kindPresent, provider-wrapper.sh — quoted needle).
 			name:            "provider wrapper missing shell-free available-tools grant",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, `"--available-tools=view,create,edit,apply_patch,grep,glob"`, `"--available-tools=view"`, 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to keep Copilot prompt/yolo tool grants shell-free",
 		},
@@ -2874,7 +2842,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// available-tools value granting a shell-like tool is a violation.
 			name:            "provider wrapper grants shell-like available tool",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper + "\n--available-tools=view,shell\n",
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Provider wrapper must not grant Copilot shell-like tools on the safe path",
 		},
@@ -2883,7 +2850,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// all-tools/all-paths guard).
 			name:            "provider wrapper grants all tools",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper + "\n  --allow-all-tools\n",
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Provider wrapper must not grant Copilot all tools or all paths on the safe path",
 		},
@@ -2892,7 +2858,6 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// two ordered probes share one message.
 			name:            "provider wrapper grants all paths",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper + "\n  --allow-all-paths\n",
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Provider wrapper must not grant Copilot all tools or all paths on the safe path",
 		},
@@ -2901,128 +2866,45 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 			// drop the trailing backslash so the fixed-string containment fails.
 			name:            "provider wrapper missing pinned copilot exec",
 			providerWrapper: strings.Replace(copilotPolicyWrapperHappyProviderWrapper, `real/copilot \`, `real/copilot`, 1),
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to launch the pinned native Copilot binary",
 		},
 		{
-			// Check 11 (kindPresent, provider-policy.sh — ${arg} needle).
-			name:            "provider policy missing claude lifecycle block",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  strings.Replace(copilotPolicyWrapperHappyProviderPolicy, "Workcell blocked Claude lifecycle command: ${arg}", "blocked", 1),
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image",
-		},
-		{
-			// Check 12 (kindPresent, provider-policy.sh).
-			name:            "provider policy missing copilot lifecycle block",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  strings.Replace(copilotPolicyWrapperHappyProviderPolicy, "Workcell blocked Copilot lifecycle/control-plane command: ${arg}", "blocked", 1),
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy to reject native Copilot lifecycle/control-plane commands",
-		},
-		{
-			// Check 13 (kindPresent, provider-policy.sh).
-			name:            "provider policy missing prompt case label",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  strings.Replace(copilotPolicyWrapperHappyProviderPolicy, "-p | --prompt)", "-x)", 1),
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy to treat only Copilot -p/--prompt as value-taking prompt flags",
-		},
-		{
-			// Check 14a (kindPresent, provider-policy.sh — first probe of the
-			// attached-prompt guard).
-			name:            "provider policy missing short attached-prompt extraction",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  strings.Replace(copilotPolicyWrapperHappyProviderPolicy, `attached_prompt_value="${arg:2}"`, `attached_prompt_value="x"`, 1),
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
-		},
-		{
-			// Check 14b (kindPresent, provider-policy.sh — second probe).
-			name:            "provider policy missing long attached-prompt extraction",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  strings.Replace(copilotPolicyWrapperHappyProviderPolicy, `attached_prompt_value="${arg#--prompt=}"`, `attached_prompt_value="y"`, 1),
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
-		},
-		{
-			// Check 14c (kindPresent, container-smoke.sh — third probe): proves the
-			// guard reads the smoke harness and shares one message.
+			// Check 12 (kindPresent, container-smoke.sh — first attached-prompt
+			// smoke probe): proves the guard reads the smoke harness.
 			name:            "smoke missing short attached-prompt coverage",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           strings.Replace(copilotPolicyWrapperHappySmoke, "workcell-copilot-policy-attached-short-prompt-allow-tool.out", "other.out", 1),
 			wantErr:         "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
 		},
 		{
-			// Check 14d (kindPresent, container-smoke.sh — fourth probe).
+			// Check 13 (kindPresent, container-smoke.sh — second probe).
 			name:            "smoke missing long attached-prompt coverage",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           strings.Replace(copilotPolicyWrapperHappySmoke, "workcell-copilot-policy-attached-long-prompt-allow-tool.out", "other.out", 1),
 			wantErr:         "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
 		},
 		{
-			// Check 15a (kindPresent, provider-policy.sh — first probe of the
-			// bundled-short-option guard).
-			name:            "provider policy missing bundled short-option case label",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  strings.Replace(copilotPolicyWrapperHappyProviderPolicy, "-[!-]?*)", "-z)", 1),
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy and smoke coverage to reject bundled Copilot short options",
-		},
-		{
-			// Check 15b (kindPresent, provider-policy.sh — second probe).
-			name:            "provider policy missing bundled short-option block",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  strings.Replace(copilotPolicyWrapperHappyProviderPolicy, "Workcell blocked bundled Copilot short options: ${arg}", "blocked", 1),
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy and smoke coverage to reject bundled Copilot short options",
-		},
-		{
-			// Check 15c (kindPresent, container-smoke.sh — third probe).
+			// Check 14 (kindPresent, container-smoke.sh).
 			name:            "smoke missing bundled short-option coverage",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           strings.Replace(copilotPolicyWrapperHappySmoke, "workcell-copilot-policy-bundled-short-options.out", "other.out", 1),
 			wantErr:         "Expected provider policy and smoke coverage to reject bundled Copilot short options",
-		},
-		{
-			// Check 16 (kindAbsent, provider-policy.sh): treating -i/--interactive
-			// as a prompt alias present is a violation.
-			name:            "provider policy treats interactive as prompt alias",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy + "\n  -p | --prompt | -i | --interactive)\n",
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy not to treat Copilot -i/--interactive as prompt aliases",
 		},
 		{
 			// A missing provider-wrapper.sh is empty content: the first affirmative
 			// provider-wrapper probe (the github-token env scrub) fails.
 			name:            "missing provider wrapper",
 			providerWrapper: "",
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           copilotPolicyWrapperHappySmoke,
 			wantErr:         "Expected provider wrapper to discard the host-side Copilot token handoff variable before exec",
 		},
 		{
-			// A missing provider-policy.sh is empty content: the first policy probe
-			// (the Claude lifecycle block) fails after every provider-wrapper probe
-			// holds.
-			name:            "missing provider policy",
-			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  "",
-			smoke:           copilotPolicyWrapperHappySmoke,
-			wantErr:         "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image",
-		},
-		{
 			// A missing container-smoke.sh is empty content: the first smoke probe
-			// (the attached short-prompt coverage) fails after the wrapper and the
-			// two policy attached-prompt probes hold.
+			// (the attached short-prompt coverage) fails after the wrapper probes
+			// hold.
 			name:            "missing container smoke",
 			providerWrapper: copilotPolicyWrapperHappyProviderWrapper,
-			providerPolicy:  copilotPolicyWrapperHappyProviderPolicy,
 			smoke:           "",
 			wantErr:         "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
 		},
@@ -3030,7 +2912,7 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			root := writeCopilotPolicyWrapperRepo(t, tc.providerWrapper, tc.providerPolicy, tc.smoke)
+			root := writeCopilotPolicyWrapperRepo(t, tc.providerWrapper, tc.smoke)
 			err := CheckCopilotPolicyWrapper(root)
 			if tc.wantErr == "" {
 				if err != nil {
@@ -3049,19 +2931,19 @@ func TestCheckCopilotPolicyWrapper(t *testing.T) {
 }
 
 // TestCheckCopilotPolicyWrapperCount asserts the check list contains exactly
-// twenty-two invariants, guarding against an accidentally truncated or
+// fourteen invariants, guarding against an accidentally truncated or
 // duplicated migration of the shell block.
 func TestCheckCopilotPolicyWrapperCount(t *testing.T) {
 	got := len(copilotPolicyWrapperChecks)
-	const want = 22
+	const want = 14
 	if got != want {
 		t.Fatalf("copilotPolicyWrapperChecks has %d checks, want %d", got, want)
 	}
 }
 
-// TestCheckCopilotPolicyWrapperRealRepo asserts that the real provider-wrapper.sh,
-// provider-policy.sh, and container-smoke.sh in this repository satisfy all
-// twenty-two Copilot-policy-wrapper invariants.  This is the key guard against a
+// TestCheckCopilotPolicyWrapperRealRepo asserts that the real provider-wrapper.sh
+// and container-smoke.sh in this repository satisfy all fourteen
+// Copilot-policy-wrapper invariants.  This is the key guard against a
 // mis-transcribed needle or a wrong target file: if any Go pattern is not a
 // byte-exact substring of the actual file (or the wrong file), this test fails
 // with the guard's stderr message.
@@ -3075,23 +2957,9 @@ func TestCheckCopilotPolicyWrapperRealRepo(t *testing.T) {
 	}
 }
 
-// copilotUnsafeFlagsHappyProviderPolicy is a minimal but structurally faithful
-// runtime/container/provider-policy.sh: it contains the second bare short-flag
-// snippet `-C | -i | -n | -r | -w)` (the FIRST bare snippet lives in the smoke
-// harness, so the two bare-snippet items are deliberately split across the two
-// files to prove the OR across them is real).
-const copilotUnsafeFlagsHappyProviderPolicy = `#!/usr/bin/env bash
-copilot_policy() {
-  case "${arg}" in
-  -C | -i | -n | -r | -w) ;;
-  esac
-}
-`
-
 // copilotUnsafeFlagsHappySmoke is a minimal but structurally faithful
 // scripts/container-smoke.sh: it contains the FIRST bare short-flag snippet
-// `copilot_short_flag in -C -i -n -r -w` (its only home; provider-policy.sh has
-// the second), the development-wrapper loader coverage needles, and the
+// `copilot_short_flag in -C -i -n -r -w`, the development-wrapper loader coverage needles, and the
 // forged-auth smoke needle.
 const copilotUnsafeFlagsHappySmoke = `#!/usr/bin/env bash
 # copilot_short_flag in -C -i -n -r -w
@@ -3129,10 +2997,10 @@ const copilotUnsafeFlagsHappyRustLib = `pub fn approved_wrapper_allows_runtime(w
 const copilotUnsafeFlagsHappyLauncherCommon = `pub const COPILOT_TOKEN_ENV: &str = "WORKCELL_COPILOT_GITHUB_TOKEN";
 `
 
-// writeCopilotUnsafeFlagsRepo materializes a fake repo with the six files this
+// writeCopilotUnsafeFlagsRepo materializes a fake repo with the five files this
 // group reads set to the given bodies; a body of "" means "do not create that
 // file" (unreadable-target case).
-func writeCopilotUnsafeFlagsRepo(t *testing.T, providerPolicy, smoke, providerWrapper, developmentWrapper, rustLib, launcherCommon string) string {
+func writeCopilotUnsafeFlagsRepo(t *testing.T, smoke, providerWrapper, developmentWrapper, rustLib, launcherCommon string) string {
 	t.Helper()
 	root := t.TempDir()
 	write := func(rel, body string) {
@@ -3147,7 +3015,6 @@ func writeCopilotUnsafeFlagsRepo(t *testing.T, providerPolicy, smoke, providerWr
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
-	write(providerPolicyRelPath, providerPolicy)
 	write(containerSmokeRelPath, smoke)
 	write(providerWrapperRelPath, providerWrapper)
 	write(developmentWrapperRelPath, developmentWrapper)
@@ -3159,7 +3026,6 @@ func writeCopilotUnsafeFlagsRepo(t *testing.T, providerPolicy, smoke, providerWr
 func TestCheckCopilotUnsafeFlags(t *testing.T) {
 	tests := []struct {
 		name               string
-		providerPolicy     string
 		smoke              string
 		providerWrapper    string
 		developmentWrapper string
@@ -3169,7 +3035,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 	}{
 		{
 			name:               "happy path all invariants hold",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              copilotUnsafeFlagsHappySmoke,
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3181,7 +3046,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			// smoke harness, so removing it there (it is absent from the policy) makes
 			// it absent from BOTH files → violation.
 			name:               "bare short flag absent from both files",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              strings.Replace(copilotUnsafeFlagsHappySmoke, "copilot_short_flag in -C -i -n -r -w", "other", 1),
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3192,7 +3056,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 		{
 			// Guard (kindPresent, provider-wrapper.sh).
 			name:               "provider wrapper missing argv re-check",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              copilotUnsafeFlagsHappySmoke,
 			providerWrapper:    strings.Replace(copilotUnsafeFlagsHappyProviderWrapper, "workcell_provider_policy_check copilot", "other", 1),
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3203,7 +3066,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 		{
 			// Guard (kindPresent, development-wrapper.sh).
 			name:               "development wrapper missing protected target rejection",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              copilotUnsafeFlagsHappySmoke,
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: strings.Replace(copilotUnsafeFlagsHappyDevelopmentWrapper, `reject_protected_runtime_arguments "$@"`, "other", 1),
@@ -3214,7 +3076,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 		{
 			// Guard (kindPresent, container-smoke.sh).
 			name:               "smoke missing development-wrapper loader coverage",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              strings.Replace(copilotUnsafeFlagsHappySmoke, "development-wrapper-copilot-loader", "other", 1),
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3226,7 +3087,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			// Multi-probe guard (first probe): exec-guard wrapper-specific pair,
 			// rust/src/lib.rs.
 			name:               "exec guard missing wrapper-specific match arm",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              copilotUnsafeFlagsHappySmoke,
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3238,7 +3098,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			// Multi-probe guard (second probe): proves the two ordered probes share
 			// one message.
 			name:               "exec guard missing runtime authorization helper",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              copilotUnsafeFlagsHappySmoke,
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3249,7 +3108,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 		{
 			// Multi-probe guard (first probe): forged-auth pair, launcher_common.rs.
 			name:               "launcher missing forged auth env token",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              copilotUnsafeFlagsHappySmoke,
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3260,7 +3118,6 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 		{
 			// Multi-probe guard (second probe, container-smoke.sh): shares the message.
 			name:               "smoke missing forged auth coverage",
-			providerPolicy:     copilotUnsafeFlagsHappyProviderPolicy,
 			smoke:              strings.Replace(copilotUnsafeFlagsHappySmoke, "forged-copilot-token", "other", 1),
 			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
 			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
@@ -3268,23 +3125,11 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
 			wantErr:            "Expected launcher and smoke coverage to reject forged Copilot auth env",
 		},
-		{
-			// A missing provider-policy.sh is empty content: the second bare
-			// snippet, which lives only in the policy, fails first.
-			name:               "missing provider policy",
-			providerPolicy:     "",
-			smoke:              copilotUnsafeFlagsHappySmoke,
-			providerWrapper:    copilotUnsafeFlagsHappyProviderWrapper,
-			developmentWrapper: copilotUnsafeFlagsHappyDevelopmentWrapper,
-			rustLib:            copilotUnsafeFlagsHappyRustLib,
-			launcherCommon:     copilotUnsafeFlagsHappyLauncherCommon,
-			wantErr:            "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: -C | -i | -n | -r | -w)",
-		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			root := writeCopilotUnsafeFlagsRepo(t, tc.providerPolicy, tc.smoke, tc.providerWrapper, tc.developmentWrapper, tc.rustLib, tc.launcherCommon)
+			root := writeCopilotUnsafeFlagsRepo(t, tc.smoke, tc.providerWrapper, tc.developmentWrapper, tc.rustLib, tc.launcherCommon)
 			err := CheckCopilotUnsafeFlags(root)
 			if tc.wantErr == "" {
 				if err != nil {
@@ -3302,76 +3147,28 @@ func TestCheckCopilotUnsafeFlags(t *testing.T) {
 	}
 }
 
-// TestCheckCopilotUnsafeFlagsBareShortFormOrSemantics exercises the new
-// kindPresentInAnyFile OR semantics directly against the first bare
-// short-flag snippet: it must hold when the snippet is present in the smoke
-// harness only, when present in the provider policy only, and must fail only
-// when absent from BOTH files — mirroring `grep -Fq -- NEEDLE f1 f2`.
-func TestCheckCopilotUnsafeFlagsBareShortFormOrSemantics(t *testing.T) {
-	const snippet = "copilot_short_flag in -C -i -n -r -w"
-	// A policy body that still satisfies every non-bare-snippet policy probe but does
-	// NOT contain the first bare snippet by default (the happy policy already
-	// omits it; the second bare snippet stays present so bare-snippet item 2 holds).
-	policyWithout := copilotUnsafeFlagsHappyProviderPolicy
-	policyWith := copilotUnsafeFlagsHappyProviderPolicy + "\n  # " + snippet + "\n"
-	// A smoke body that satisfies every non-bare-snippet smoke probe but omits the
-	// first bare snippet.
-	smokeWithout := strings.Replace(copilotUnsafeFlagsHappySmoke, snippet, "placeholder", 1)
-	smokeWith := copilotUnsafeFlagsHappySmoke
-
-	cases := []struct {
-		name    string
-		policy  string
-		smoke   string
-		wantErr bool
-	}{
-		{name: "present in smoke (file1) only", policy: policyWithout, smoke: smokeWith, wantErr: false},
-		{name: "present in policy (file2) only", policy: policyWith, smoke: smokeWithout, wantErr: false},
-		{name: "absent from both", policy: policyWithout, smoke: smokeWithout, wantErr: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			root := writeCopilotUnsafeFlagsRepo(t, tc.policy, tc.smoke, copilotUnsafeFlagsHappyProviderWrapper, copilotUnsafeFlagsHappyDevelopmentWrapper, copilotUnsafeFlagsHappyRustLib, copilotUnsafeFlagsHappyLauncherCommon)
-			err := CheckCopilotUnsafeFlags(root)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("CheckCopilotUnsafeFlags() = nil, want OR-semantics violation")
-				}
-				want := "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: " + snippet
-				if err.Error() != want {
-					t.Fatalf("CheckCopilotUnsafeFlags() error = %q, want %q", err.Error(), want)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("CheckCopilotUnsafeFlags() = %v, want nil (needle present in one file)", err)
-			}
-		})
-	}
-}
-
 // TestCheckCopilotUnsafeFlagsCount asserts the check list contains exactly
-// ten invariants, guarding against an accidentally truncated or
+// nine invariants, guarding against an accidentally truncated or
 // duplicated migration of the shell block.
 func TestCheckCopilotUnsafeFlagsCount(t *testing.T) {
 	got := len(copilotUnsafeFlagsChecks())
-	const want = 10
+	const want = 9
 	if got != want {
 		t.Fatalf("copilotUnsafeFlagsChecks() has %d checks, want %d", got, want)
 	}
 }
 
-// TestCheckCopilotUnsafeFlagsRealRepo asserts that the real provider-policy.sh,
-// container-smoke.sh, provider-wrapper.sh, development-wrapper.sh, lib.rs, and
-// launcher_common.rs in this repository satisfy all ten
+// TestCheckCopilotUnsafeFlagsRealRepo asserts that the real container-smoke.sh,
+// provider-wrapper.sh, development-wrapper.sh, lib.rs, and launcher_common.rs
+// in this repository satisfy all nine
 // Copilot-unsafe-flag invariants.  This is the key guard against a
 // mis-transcribed needle or a wrong target file: if any Go pattern is not a
 // byte-exact substring of the actual file (or the wrong file), this test fails
 // with the guard's stderr message.
 func TestCheckCopilotUnsafeFlagsRealRepo(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
-	if _, err := os.Stat(filepath.Join(repoRoot, providerPolicyRelPath)); err != nil {
-		t.Skipf("real provider-policy.sh not found at %s: %v", repoRoot, err)
+	if _, err := os.Stat(filepath.Join(repoRoot, containerSmokeRelPath)); err != nil {
+		t.Skipf("real container-smoke.sh not found at %s: %v", repoRoot, err)
 	}
 	if err := CheckCopilotUnsafeFlags(repoRoot); err != nil {
 		t.Fatalf("CheckCopilotUnsafeFlags(real repo) = %v, want nil", err)
