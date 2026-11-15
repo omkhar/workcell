@@ -719,6 +719,7 @@ func writeUpdaterFixture(t *testing.T, manifest updaterFixtureManifest, manifest
 		"scripts/check-dead-code.sh",
 		"scripts/ci/build-validator-image.sh",
 		"scripts/ci/lib/local-docker-parity.sh",
+		"scripts/ci/load-tool-pins.sh",
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
 		"scripts/install-dev-tools.sh",
