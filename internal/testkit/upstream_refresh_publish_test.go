@@ -285,3 +285,46 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		})
 	}
 }
+
+// TestUpstreamRefreshPublishToolchainCandidate proves the App publishes a
+// toolchain candidate only under a rederive verdict for that candidate's base
+// and tree, and holds or dies before any GitHub call otherwise.
+func TestUpstreamRefreshPublishToolchainCandidate(t *testing.T) {
+	t.Parallel()
+
+	other := strings.Repeat("e", 40)
+	cases := []struct {
+		name     string
+		rederive func(f publishFixture) string
+		wantErr  string
+		audit    string
+	}{
+		{name: "guard verdict in the rederive slot holds", rederive: func(f publishFixture) string { return "passed:" + f.base + ":" + f.tree },
+			audit: "the rederive job did not get the same tree from the base"},
+		{name: "rederive verdict for another base dies", rederive: func(f publishFixture) string { return "rederived:" + other + ":" + f.tree },
+			wantErr: "the rederive job used base " + other},
+		{name: "rederive verdict for another tree dies", rederive: func(f publishFixture) string { return "rederived:" + f.base + ":" + other },
+			wantErr: "the rederive job got tree " + other},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPublishFixtureOfKind(t, "toolchain", func(c string) {
+				if err := os.WriteFile(filepath.Join(c, "plain.txt"), []byte("two\n"), 0o644); err != nil {
+					panic(err)
+				}
+			}, nil)
+			out, err := f.run(t, f.base, "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT="+strings.Repeat("c", 40), "TOOLCHAIN=passed:"+f.base+":"+f.tree, "REDERIVE="+tc.rederive(f))
+			if (err != nil) != (tc.wantErr != "") || !strings.Contains(out, tc.wantErr) {
+				t.Fatalf("publish error = %v, want %q\n%s", err, tc.wantErr, out)
+			}
+			if log, _ := os.ReadFile(filepath.Join(filepath.Dir(f.path), "gh.log")); len(log) != 0 {
+				t.Fatalf("publish called gh before the verdict check:\n%s", log)
+			}
+			audit, _ := os.ReadFile(f.audit)
+			if !strings.Contains(string(audit), tc.audit) {
+				t.Fatalf("audit = %q, want %q", audit, tc.audit)
+			}
+		})
+	}
+}

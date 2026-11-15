@@ -487,6 +487,7 @@ internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	ed
 internal/testkit	TestUpstreamRefreshIncludesRuntimeGoPins	7c2d45f6	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshOverlapStep	30ee2c4a,ef7903e0	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshPublishLocalChecks	4fbe5eab,bdc0220f,bdc0220f,fd7decae	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshPublishToolchainCandidate	95bce94b,9e46d87a	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestUpstreamRefreshRederive	28e8b686,84192fd0,cfac3310	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestUpstreamRefreshScopeGuard	5d2dcbca	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,10eec93a,4561edc6,5f4bee45,70d8c1a9,809ad8df,84d882d1,84d882d1,b12cdf05,b8f34d1a,b8f34d1a,f1d02810,fbdcbbb8	unreviewed debt in a test: review the subject, then port or justify
