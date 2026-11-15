@@ -231,3 +231,7 @@ func TestCheckPinnedInputsValidatesGoosePin(t *testing.T) {
 		})
 	}
 }
+
+func toolPinsFixturePath(cfg metadatautil.PinnedInputsConfig) string {
+	return filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "tool-pins.toml")
+}

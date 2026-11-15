@@ -79,6 +79,10 @@ type markdownlintPackageLockEntry struct {
 // The GitHub Actions workflow format — uses-scan types, extractWorkflowUses,
 // toolPins/loadToolPins/parseToolPins, loadAllowedActions, and the
 // pull_request_target and YAML helpers — lives in pinnedinputs_workflows.go.
+// The tool-pin checks (scripts/ci/load-tool-pins.sh reads policy/tool-pins.toml
+// as the Go parser does, and the workflows bind the pins from its step) live in
+// pinnedinputs_toolpins.go. The inline-value checks below run only while the
+// TEMPORARY bridge there holds; PR 4 of the tool-pin split removes them.
 
 func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	check := newPinnedInputsCheck(cfg)
@@ -91,12 +95,14 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		check.validateRustupVersion,
 		check.validateRustupDigests,
 		check.validateProviderLock,
-		check.validateBuildxPins,
-		check.validateQEMUPins,
-		check.validateBuildkitPins,
-		check.validateWorkflowBuilderPins,
+		check.validateToolPinLoaderAgreement,
+		check.validateWorkflowToolPinBindings,
+		check.inlineToolPinCheck(check.validateBuildxPins),
+		check.inlineToolPinCheck(check.validateQEMUPins),
+		check.inlineToolPinCheck(check.validateBuildkitPins),
+		check.inlineToolPinCheck(check.validateWorkflowBuilderPins),
 		check.validateValidatorBuildkit,
-		check.validateCosignVersions,
+		check.inlineToolPinCheck(check.validateCosignVersions),
 		check.validateCosignReleaseBindings,
 		check.validateCosignRefsAndBuildxSetup,
 		check.loadCIReproBuildJob,
@@ -104,9 +110,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		check.validateCIReproEntriesAndTail,
 		check.validateReleaseBuildAndSyft,
 		check.loadSecurityWorkflow,
-		check.validateActionlintPins,
-		check.validateZizmorPins,
-		check.validateToolPinPolicy,
+		check.inlineToolPinCheck(check.validateActionlintPins),
+		check.inlineToolPinCheck(check.validateZizmorPins),
+		check.inlineToolPinCheck(check.validateToolPinPolicy),
 		check.validateSecurityToolDownloads,
 		check.validateSecurityWorkflowDispatch,
 		check.validateReleaseManifestAndRuntimeSources,

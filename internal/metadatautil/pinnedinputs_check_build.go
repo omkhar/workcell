@@ -234,7 +234,7 @@ func (check *pinnedInputsCheck) validateValidatorBuildkit() error {
 	if match == nil {
 		return errors.New("scripts/ci/build-validator-image.sh must default BUILDKIT_IMAGE from WORKCELL_BUILDKIT_IMAGE with a pinned fallback")
 	}
-	if err := requireEqual("WORKCELL_BUILDKIT_IMAGE", check.toolPins.buildkit, ".github/workflows/ci.yml", match[1], "scripts/ci/build-validator-image.sh"); err != nil {
+	if err := requireEqual("BuildKit image", check.pins.Buildkit, "policy/tool-pins.toml", match[1], "scripts/ci/build-validator-image.sh"); err != nil {
 		return err
 	}
 	for _, needle := range []string{
