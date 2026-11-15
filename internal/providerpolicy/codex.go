@@ -29,17 +29,20 @@ var CodexGUISubcommands = []string{"app", "app-server"}
 // hidden daemon and bridge subcommands. agents, queue and migrate-rollouts
 // reach the shared app-server, change an existing session, or rewrite session
 // history. debug reaches the app-server test client and mutates local memory.
+// git-credential (hidden) prints the Codex login to Git's credential-helper
+// protocol, and migrate-nfs-db rewrites the configured SQLite databases.
 var CodexDeniedSubcommands = []string{
 	"agents", "queue", "migrate-rollouts", "plugin", "remote-control", "exec-server",
 	"mcp", "mcp-server", "tcp-tunnel", "cloud", "cloud-tasks", "responses-api-proxy",
-	"stdio-to-uds", "sandbox", "update", "debug",
+	"stdio-to-uds", "sandbox", "update", "debug", "git-credential", "migrate-nfs-db",
 }
 
 // codexUnsafeOptions die on sight, with the argument in the message.
 // --yolo is the hidden alias of --dangerously-bypass-approvals-and-sandbox.
-// --approve-for-me and --not-so-yolo pick auto review.
+// --approve-for-me and --not-so-yolo pick auto review. --trust persists project
+// trust, MCP commands outside the sandbox included.
 var codexUnsafeOptions = []string{
-	"--yolo", "--approve-for-me", "--not-so-yolo", "--ignore-rules", "--search", "--add-dir",
+	"--yolo", "--approve-for-me", "--not-so-yolo", "--trust", "--ignore-rules", "--search", "--add-dir",
 	"--remote", "--remote-auth-token-env", "--full-auto", "-a", "--ask-for-approval", "-s",
 	"--sandbox", "--enable", "--disable",
 }
@@ -168,7 +171,7 @@ func Codex(args []string, s Session) error {
 		// `codex execpolicy check`.
 		case strings.HasPrefix(arg, "--dangerously-bypass-"),
 			slices.Contains(codexUnsafeOptions, arg),
-			attached && (name == "--yolo" || name == "--approve-for-me" || name == "--not-so-yolo"):
+			attached && (name == "--yolo" || name == "--approve-for-me" || name == "--not-so-yolo" || name == "--trust"):
 			return refuse(unsafe + arg)
 		// clap also takes a short option glued to its value (-pVALUE).
 		case strings.HasPrefix(arg, "-a") && len(arg) > 2:

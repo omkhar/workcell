@@ -34,6 +34,13 @@ GOMODCACHE="${GOMODCACHE:-${WORKCELL_VALIDATE_CACHE_HOME}/go-mod}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${WORKCELL_VALIDATE_CACHE_HOME}/cargo-target}"
 TMPDIR="${TMPDIR:-${HOME}/.tmp}"
 export HOME XDG_CACHE_HOME WORKCELL_VALIDATE_CACHE_HOME GOCACHE GOMODCACHE CARGO_TARGET_DIR TMPDIR
+# The validate cache sits under a Workcell cache root on a host, so hold the
+# shared cache lock that workcell --gc honors before creating anything there.
+# shellcheck source=scripts/lib/go-run-env.sh
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+for validate_cache_dir in "${WORKCELL_VALIDATE_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}"; do
+  workcell_cache_lock_shared "${validate_cache_dir}"
+done
 mkdir -p "${XDG_CACHE_HOME}" "${WORKCELL_VALIDATE_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
 
 require_tool() {

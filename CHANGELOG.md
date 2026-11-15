@@ -196,6 +196,19 @@ The fixes are below.
 
 ### Fixed
 
+- `workcell --gc` no longer removes a Workcell cache root that a run starts to
+  use as gc runs (#812). Each Go cache writer holds a shared lock on
+  `workcell.lock` beside the cache root. Its child processes inherit the
+  lock, so it lasts until the run and its children exit. The gc removes a
+  root only under an exclusive lock, and it does not wait for one. A root
+  that a run holds, or whose lock file is unsafe, stays.
+- A symlinked cache home works with the cache lock, and so does one spelled
+  with a trailing slash or `..`. A cache root that is a symlink shares one lock
+  with the directory that it points to. A `sudo` run that keeps `HOME` gives the
+  cache home and lock file that it creates to the user. A run that cannot take
+  the lock because of a temporary failure stops. A run that cannot lock for a lasting reason, such
+  as a missing `/usr/bin/perl`, warns, and gc keeps its root. The uninstaller
+  takes the same lock and removes the lock file with the root.
 - Strict Colima launch now passes post-start mount validation when Colima adds
   its own read-only cache root (`internal/colimautil/colima.go`). The launcher
   now gives each `colima` command `XDG_CACHE_HOME=<cache>/workcell/colima-xdg`,
