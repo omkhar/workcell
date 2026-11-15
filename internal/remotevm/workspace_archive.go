@@ -140,78 +140,114 @@ func sendWorkspaceArchive(conn io.ReadWriter, materializationID string, archive 
 // unpacks anything under root, and acks the result. It fails closed: an error
 // removes the partial materialization and acks the reason.
 func receiveWorkspace(conn io.ReadWriter, root string, limits workspaceLimits) error {
-	workspace, digest, err := receiveWorkspaceArchive(bufio.NewReaderSize(conn, 4096), root, limits)
+	workspace, digest, lock, err := receiveWorkspaceArchive(bufio.NewReaderSize(conn, 4096), root, limits)
 	if err != nil {
 		_, ackErr := fmt.Fprintf(conn, "error %q\n", err.Error())
 		return errors.Join(err, ackErr)
 	}
+	// The ok ack is written before the lock ends, so a later receive of the
+	// same ID cannot replace the copy before this one is acked.
+	defer lock.Close()
 	_, err = fmt.Fprintf(conn, "ok %s %s\n", digest, workspace)
 	return err
 }
 
-func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspaceLimits) (string, string, error) {
+// receiveWorkspaceArchive receives and unpacks one framed archive. On success
+// it returns the materializations lock still held, and the caller closes it
+// after the ack.
+func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspaceLimits) (string, string, io.Closer, error) {
 	line, err := readArchiveLine(reader)
 	if err != nil {
-		return "", "", fmt.Errorf("read workspace archive header: %w", err)
+		return "", "", nil, fmt.Errorf("read workspace archive header: %w", err)
 	}
 	fields := strings.Split(line, " ")
 	if len(fields) != 4 || fields[0] != archiveMagic {
-		return "", "", fmt.Errorf("workspace archive header is malformed")
+		return "", "", nil, fmt.Errorf("workspace archive header is malformed")
 	}
 	materializationID, err := statePathSegment("materialization id", fields[1])
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	digest := fields[2]
 	if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != digest {
-		return "", "", fmt.Errorf("workspace archive digest is malformed")
+		return "", "", nil, fmt.Errorf("workspace archive digest is malformed")
 	}
 	size, err := strconv.ParseInt(fields[3], 10, 64)
 	if maxSize := limits.maxBytes + int64(limits.maxEntries)*archiveEntryOverhead; err != nil || size < 0 || size > maxSize {
-		return "", "", fmt.Errorf("workspace archive size must be 0 to %d bytes", maxSize)
+		return "", "", nil, fmt.Errorf("workspace archive size must be 0 to %d bytes", maxSize)
 	}
 	receiver, err := openReceiverRoot(root)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	defer receiver.Close()
 	spool, spoolName, err := createSpool(receiver)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	defer receiver.Remove(spoolName)
 	defer spool.Close()
 	hash := sha256.New()
 	if read, err := io.Copy(io.MultiWriter(spool, hash), io.LimitReader(reader, size)); err != nil || read != size {
-		return "", "", fmt.Errorf("workspace archive is truncated: read %d of %d bytes", read, size)
+		return "", "", nil, fmt.Errorf("workspace archive is truncated: read %d of %d bytes", read, size)
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != digest {
-		return "", "", fmt.Errorf("workspace archive digest mismatch")
+		return "", "", nil, fmt.Errorf("workspace archive digest mismatch")
 	}
 	if _, err := spool.Seek(0, io.SeekStart); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	// The materialization root is owner-only, so no other guest account can
 	// reach the workspace while it unpacks or after it is acked.
 	if err := receiver.Mkdir("materializations", 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-		return "", "", err
+		return "", "", nil, err
 	}
 	materializations, err := openSubdirectoryRoot(receiver, "materializations")
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	defer materializations.Close()
+	// One receive at a time changes the materializations, so a late failure
+	// of one receive cannot remove the copy that another receive of the same
+	// ID acked. Closing the lock ends it.
+	dir, err := materializations.Open(".")
+	if err != nil {
+		return "", "", nil, err
+	}
+	lock := flockedFile{dir}
+	// Every return but the last ends the lock, also after a panic.
+	held := true
+	defer func() {
+		if held {
+			lock.Close()
+		}
+	}()
+	if err := syscall.Flock(int(dir.Fd()), syscall.LOCK_EX); err != nil {
+		return "", "", nil, err
+	}
 	if err := removeMaterialization(materializations, materializationID); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	if err := materializations.Mkdir(materializationID, 0o700); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	err = unpackMaterialization(receiver, materializations, materializationID, spool, limits)
 	if err != nil {
-		return "", "", errors.Join(err, removeMaterialization(materializations, materializationID))
+		return "", "", nil, errors.Join(err, removeMaterialization(materializations, materializationID))
 	}
-	return filepath.Join(root, "materializations", materializationID, MaterializedWorktree), digest, nil
+	held = false
+	return filepath.Join(root, "materializations", materializationID, MaterializedWorktree), digest, lock, nil
+}
+
+// flockedFile is a file that holds a flock. A child that a fork starts for an
+// exec shares the open file description, and with it the flock, until its
+// exec closes the copy, so a close alone can leave the lock held for that
+// gap. Close therefore ends the flock, for every copy of the description,
+// before it closes the file.
+type flockedFile struct{ *os.File }
+
+func (f flockedFile) Close() error {
+	return errors.Join(syscall.Flock(int(f.Fd()), syscall.LOCK_UN), f.File.Close())
 }
 
 // removeMaterialization removes the materialization id. A directory that the
@@ -220,14 +256,36 @@ func receiveWorkspaceArchive(reader *bufio.Reader, root string, limits workspace
 // tree owner rwx.
 func removeMaterialization(materializations *os.Root, id string) error {
 	if info, err := materializations.Lstat(id); err == nil && info.IsDir() {
-		_ = fs.WalkDir(materializations.FS(), id, func(name string, entry fs.DirEntry, err error) error {
-			if err == nil && entry.IsDir() {
-				_ = materializations.Chmod(name, 0o700)
-			}
-			return nil
-		})
+		ownDirectoryTree(materializations, id)
 	}
 	return materializations.RemoveAll(id)
+}
+
+// ownDirectoryTree gives the directory name under parent, and each directory
+// below it, owner rwx, top-down. Each step resolves one name in the root of
+// its parent directory, so the walk is linear in the tree, and like RemoveAll
+// it holds one descriptor a level. An error ends the walk below that
+// directory, and the removal then reports what it cannot remove.
+func ownDirectoryTree(parent *os.Root, name string) {
+	if parent.Chmod(name, 0o700) != nil {
+		return
+	}
+	dir, err := parent.OpenRoot(name)
+	if err != nil {
+		return
+	}
+	defer dir.Close()
+	listing, err := dir.Open(".")
+	if err != nil {
+		return
+	}
+	entries, _ := listing.ReadDir(-1)
+	listing.Close()
+	for _, entry := range entries {
+		if entry.IsDir() {
+			ownDirectoryTree(dir, entry.Name())
+		}
+	}
 }
 
 // beforeReceiverOpen runs between the check of a receiver path and its open.
