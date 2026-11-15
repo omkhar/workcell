@@ -77,7 +77,7 @@ The uninstaller removes these Workcell-owned items:
 - launcher and man-page links
 - `~/.local/state/workcell`
 - managed Colima profiles and related data
-- Workcell caches and token handoff data
+- Workcell caches, their `workcell.lock` files, and token handoff data
 - Workcell temporary files
 
 The uninstaller preserves `~/.config/workcell`, shared host packages, and unrelated Colima profiles.
@@ -87,8 +87,45 @@ Copy required evidence outside each removal path that the dry run reports.
 
 `workcell --gc` removes stale cache, temporary, session-audit, and runtime state.
 A cache root is stale only when nothing under it changed in the last 60 minutes.
-So a running Workcell keeps the cache that it uses.
-It does not provide a dry-run option.
+
+Each Workcell run that writes the Go cache holds a shared lock on `workcell.lock` beside the cache root.
+The run holds the lock on an open file that its child processes inherit.
+So the lock lasts until the run and every child that it started, such as a Go build, exit.
+A Colima VM that the run starts does not get the lock.
+
+`workcell --gc` removes a cache root only while it holds the exclusive lock, and it keeps a root that a run holds.
+So a running Workcell keeps the cache that it uses, even if the run starts during the cleanup.
+The uninstaller uses the same lock: it keeps a cache root that a run holds.
+
+The lock uses `/usr/bin/perl`, because macOS has no `flock` command.
+Without `/usr/bin/perl`, every run warns that it uses the cache without the lock.
+`workcell --gc` and the uninstaller then never remove a cache root.
+The same holds on a file system where `flock(2)` does not work, such as NFS without a lock manager.
+
+The cache home, such as `~/.cache`, must not be writable by group or other users.
+Workcell creates a missing cache home as owner-only.
+If another user can change the cache home, each run warns and `workcell --gc` keeps the cache root.
+Run `chmod go-w` on the cache home to fix that.
+Workcell checks only the cache home itself, not the directories above it.
+
+A cache home can be a symlink if only you or root can change the link and the directory it points to.
+A cache root can be a symlink too, such as `~/.cache/workcell` to `~/Library/Caches/workcell`.
+Its lock is then beside the directory that it points to, so both names share one lock.
+If such a symlink is unsafe, or a cache root resolves to its cache home or above it, each run stops instead of warning.
+A symlinked `~/.cache` is unsafe in a group-writable home directory, such as one with mode 0775, so run `chmod go-w ~`.
+`workcell --gc` reaches the directory without the symlink, so it would not see the problem.
+
+A run under `sudo` that keeps your `HOME` locks your cache root.
+A cache home that it creates, and its lock file, stay yours.
+If an older root run left a cache home or lock file that you cannot use, each run warns and `workcell --gc` keeps the cache root.
+A root run stops and leaves such a lock file when the file system cannot give the file to you.
+Remove what the root run left, or give it back to your user, to fix that.
+
+`workcell --gc` keeps a cache root that it cannot lock safely.
+If a run cannot take the lock because of a temporary failure, such as a full disk, it tries three times and then stops.
+A run that starts while `workcell --gc` or the uninstaller holds the lock waits for it and says so.
+
+`workcell --gc` does not provide a dry-run option.
 It can remove Workcell state from another local run.
 Do not run host-wide cleanup as a repository scenario.
 

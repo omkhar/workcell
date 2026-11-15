@@ -25,9 +25,10 @@ import (
 // The differential test runs runtime/container/provider-policy.sh, the shell
 // policy that this package replaces, and the Go policy over one generated
 // corpus of argument vectors, and requires the same exit status and the same
-// stderr for each one. The shell runs in the C locale (LC_ALL=C), the locale
-// that the launcher gives the container. Under a UTF-8 locale bash folds the
-// case of some non-ASCII letters, so the equivalence is a C-locale claim.
+// stderr for each one. The driver runs the shell with LC_ALL=C. The launcher
+// passes no locale to the container and the image sets none, so the policy
+// runs there in the default POSIX (C) locale. Under a UTF-8 locale bash folds
+// the case of some non-ASCII letters, so the equivalence is a C-locale claim.
 
 // diffCase is one policy call: kind "check" runs the per-provider function
 // that provider-wrapper.sh calls, and kind "validate" runs

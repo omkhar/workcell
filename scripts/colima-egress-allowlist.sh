@@ -97,7 +97,7 @@ run_clean_repo_command() {
 
 go_runtimeutil() {
   resolve_go_bin
-  ensure_go_run_env
+  ensure_go_run_env || return 1
   run_clean_repo_command env \
     GOPATH="${GOPATH}" \
     GOMODCACHE="${GOMODCACHE}" \
