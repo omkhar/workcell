@@ -281,6 +281,7 @@ VERIFY_COLIMA_CACHE_ROOT="$(verify_colima_cache_root "${REAL_HOME}")"
 # so Colima's own read-only cache mount holds no Workcell staging.
 VERIFY_COLIMA_CHILD_CACHE_HOME="$(dirname "${VERIFY_COLIMA_CACHE_ROOT}")/workcell/colima-xdg"
 source "${ROOT_DIR}/scripts/lib/owned-root.sh"
+source "${ROOT_DIR}/scripts/lib/ack-date.sh"
 VERIFY_RUN_ROOT="$(workcell_owned_root_create "${TMPDIR:-/tmp}" workcell-verify)"
 CODEX_VERIFY_HOME="$(mktemp -d "${VERIFY_RUN_ROOT}/codex.XXXXXX")"
 BARRIER_VERIFY_ROOT="$(mktemp -d "${VERIFY_RUN_ROOT}/barrier.XXXXXX")"
@@ -5715,8 +5716,7 @@ grep_repo_mcp "${MCP_VCS_OUTPUT}" 'WORKCELL_WORKSPACE_REPO_MCP_STATE=denied'
 
 # Acknowledged path: --allow-repo-mcp with a dated token plus VCS visibility
 # mounts the real repo MCP config from the workspace.
-MCP_ACK_TODAY="$(date -u +%Y-%m-%d)"
-MCP_ACK_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_VERIFY_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
+MCP_ACK_OUTPUT="$(workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_VERIFY_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>/dev/null)"
 grep_repo_mcp "${MCP_ACK_OUTPUT}" "${MCP_VERIFY_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro"
 grep_repo_mcp "${MCP_ACK_OUTPUT}" 'WORKCELL_ALLOW_REPO_MCP=1'
 grep_repo_mcp "${MCP_ACK_OUTPUT}" 'WORKCELL_WORKSPACE_REPO_MCP_STATE=acknowledged'
@@ -5734,7 +5734,7 @@ printf '# marker\n' >"${MCP_ACK_UNTRACKED_WORKSPACE}/AGENTS.md"
 git -C "${MCP_ACK_UNTRACKED_WORKSPACE}" add AGENTS.md
 # .mcp.json is UNTRACKED in the working tree (never staged).
 printf '{"mcpServers":{"real":{"command":"node"}}}\n' >"${MCP_ACK_UNTRACKED_WORKSPACE}/.mcp.json"
-MCP_ACK_UNTRACKED_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ACK_UNTRACKED_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
+MCP_ACK_UNTRACKED_OUTPUT="$(workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_ACK_UNTRACKED_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>/dev/null)"
 grep_repo_mcp "${MCP_ACK_UNTRACKED_OUTPUT}" "${MCP_ACK_UNTRACKED_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro"
 grep_repo_mcp "${MCP_ACK_UNTRACKED_OUTPUT}" 'WORKCELL_WORKSPACE_REPO_MCP_STATE=acknowledged'
 
@@ -5748,7 +5748,7 @@ git -C "${MCP_ACK_MODIFIED_WORKSPACE}" config user.email "workcell-verify@exampl
 printf '{"mcpServers":{"indexed":{"command":"stale"}}}\n' >"${MCP_ACK_MODIFIED_WORKSPACE}/.mcp.json"
 git -C "${MCP_ACK_MODIFIED_WORKSPACE}" add .mcp.json
 printf '{"mcpServers":{"worktree":{"command":"live"}}}\n' >"${MCP_ACK_MODIFIED_WORKSPACE}/.mcp.json"
-MCP_ACK_MODIFIED_OUTPUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ACK_MODIFIED_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
+MCP_ACK_MODIFIED_OUTPUT="$(workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_ACK_MODIFIED_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>/dev/null)"
 grep_repo_mcp "${MCP_ACK_MODIFIED_OUTPUT}" "${MCP_ACK_MODIFIED_WORKSPACE}/.mcp.json:/workspace/.mcp.json:ro"
 if echo "${MCP_ACK_MODIFIED_OUTPUT}" | grep -- "workcell-shadow/.*/files/.mcp.json:/workspace/.mcp.json:ro" >/dev/null; then
   echo "Acknowledged repo MCP must mount the live working-tree file, not the git-index shadow snapshot" >&2
@@ -5766,7 +5766,7 @@ if run_workcell_verify --agent claude --mode strict --workspace "${MCP_VERIFY_WO
   exit 1
 fi
 grep -q 'does not match' /tmp/workcell-repo-mcp-stale-ack.out
-if run_workcell_verify --agent claude --mode breakglass --ack-breakglass="${MCP_ACK_TODAY}" --workspace "${MCP_VERIFY_WORKSPACE}" --allow-repo-mcp --ack-repo-mcp="${MCP_ACK_TODAY}" --dry-run >/tmp/workcell-repo-mcp-breakglass.out 2>&1; then
+if workcell_with_ack_today_utc run_workcell_verify --agent claude --mode breakglass --ack-breakglass="@ACK_TODAY_UTC@" --workspace "${MCP_VERIFY_WORKSPACE}" --allow-repo-mcp --ack-repo-mcp="@ACK_TODAY_UTC@" --dry-run >/tmp/workcell-repo-mcp-breakglass.out 2>&1; then
   echo "Expected --allow-repo-mcp to be rejected as redundant in breakglass mode" >&2
   exit 1
 fi
@@ -5845,7 +5845,7 @@ done
 
 # An acknowledged symlinked MCP surface fails closed (refused), never resolved
 # or exposed.
-if run_workcell_verify --agent claude --mode strict --workspace "${MCP_SYMLINK_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run >/tmp/workcell-repo-mcp-symlink-ack.out 2>&1; then
+if workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_SYMLINK_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run >/tmp/workcell-repo-mcp-symlink-ack.out 2>&1; then
   echo "Expected an acknowledged symlinked MCP surface to be refused" >&2
   exit 1
 fi
@@ -5865,7 +5865,7 @@ git init -q -b master "${MCP_PARENT_SYMLINK_WORKSPACE}"
 git -C "${MCP_PARENT_SYMLINK_WORKSPACE}" config user.name "Workcell Verify"
 git -C "${MCP_PARENT_SYMLINK_WORKSPACE}" config user.email "workcell-verify@example.com"
 ln -s "${MCP_PARENT_SYMLINK_OUTSIDE}" "${MCP_PARENT_SYMLINK_WORKSPACE}/.github"
-if run_workcell_verify --agent claude --mode strict --workspace "${MCP_PARENT_SYMLINK_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run >/tmp/workcell-repo-mcp-parent-symlink-ack.out 2>&1; then
+if workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_PARENT_SYMLINK_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run >/tmp/workcell-repo-mcp-parent-symlink-ack.out 2>&1; then
   echo "Expected an acked MCP surface reached through a symlinked parent to be refused" >&2
   exit 1
 fi
@@ -5919,12 +5919,12 @@ git init -q -b master "${MCP_ASSURANCE_WORKSPACE}"
 git -C "${MCP_ASSURANCE_WORKSPACE}" config user.name "Workcell Verify"
 git -C "${MCP_ASSURANCE_WORKSPACE}" config user.email "workcell-verify@example.com"
 printf '{"mcpServers":{"real":{"command":"node"}}}\n' >"${MCP_ASSURANCE_WORKSPACE}/.mcp.json"
-MCP_ACK_ASSURANCE_STDERR="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>&1 >/dev/null)"
+MCP_ACK_ASSURANCE_STDERR="$(workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>&1 >/dev/null)"
 echo "${MCP_ACK_ASSURANCE_STDERR}" | grep 'session_assurance_initial=lower-assurance-repo-mcp' >/dev/null || {
   echo "Acknowledged repo MCP must downgrade session_assurance_initial to lower-assurance-repo-mcp" >&2
   exit 1
 }
-MCP_ACK_ASSURANCE_STDOUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
+MCP_ACK_ASSURANCE_STDOUT="$(workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>/dev/null)"
 grep_repo_mcp "${MCP_ACK_ASSURANCE_STDOUT}" 'WORKCELL_SESSION_ASSURANCE_INITIAL=lower-assurance-repo-mcp'
 grep_repo_mcp "${MCP_ACK_ASSURANCE_STDOUT}" 'WORKCELL_WORKSPACE_REPO_MCP_STATE=acknowledged'
 MCP_DENY_ASSURANCE_STDERR="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --dry-run 2>&1 >/dev/null)"
@@ -5953,7 +5953,7 @@ echo "${MCP_DENY_ASSURANCE_STDERR}" | grep 'execution_path=managed-tier1 ' >/dev
 # control-plane VCS and repo MCP stacks into one '+'-joined reason label so the
 # repo-MCP outbound-reach expansion is still named, not dropped by the earlier
 # control-plane-vcs return.
-MCP_BOTH_ACK_STDERR="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>&1 >/dev/null)"
+MCP_BOTH_ACK_STDERR="$(workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>&1 >/dev/null)"
 echo "${MCP_BOTH_ACK_STDERR}" | grep 'session_assurance_initial=lower-assurance-control-plane-vcs+repo-mcp' >/dev/null || {
   echo "Both acks must combine into lower-assurance-control-plane-vcs+repo-mcp, not drop repo-mcp" >&2
   exit 1
@@ -5962,7 +5962,7 @@ echo "${MCP_BOTH_ACK_STDERR}" | grep 'execution_path=lower-assurance-control-pla
   echo "Both acks must combine execution_path into lower-assurance-control-plane-vcs+repo-mcp" >&2
   exit 1
 }
-MCP_BOTH_ACK_STDOUT="$(run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
+MCP_BOTH_ACK_STDOUT="$(workcell_with_ack_today_utc run_workcell_verify --agent claude --mode strict --workspace "${MCP_ASSURANCE_WORKSPACE}" --allow-control-plane-vcs --ack-control-plane-vcs --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>/dev/null)"
 grep_repo_mcp "${MCP_BOTH_ACK_STDOUT}" 'WORKCELL_SESSION_ASSURANCE_INITIAL=lower-assurance-control-plane-vcs+repo-mcp'
 grep_repo_mcp "${MCP_BOTH_ACK_STDOUT}" 'WORKCELL_WORKSPACE_REPO_MCP_STATE=acknowledged'
 
@@ -6015,7 +6015,7 @@ printf '{"mcpServers":{"real":{"command":"node"}}}\n' >"${MCP_ISO_SOURCE}/.mcp.j
 printf '{"mcpServers":{"real":{"command":"node"}}}\n' >"${MCP_ISO_SOURCE}/.github/mcp.json"
 git -C "${MCP_ISO_SOURCE}" add AGENTS.md .mcp.json .github/mcp.json
 git -C "${MCP_ISO_SOURCE}" commit -q -m "isolated MCP fixture"
-MCP_ISO_ACK_OUTPUT="$(run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SOURCE}" --session-workspace isolated --no-default-injection-policy --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
+MCP_ISO_ACK_OUTPUT="$(workcell_with_ack_today_utc run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SOURCE}" --session-workspace isolated --no-default-injection-policy --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>/dev/null)"
 # The container /workspace must be bind-mounted from the session-owned clone.
 echo "${MCP_ISO_ACK_OUTPUT}" | grep -E -- 'workcell-sessions/[^:]+/repo:/workspace ' >/dev/null || {
   echo "Isolated session must bind-mount the session-owned clone at /workspace" >&2
@@ -6066,7 +6066,7 @@ rm "${MCP_ISO_SPARSE_SOURCE}/.mcp.json"
   echo "Test fixture invalid: .mcp.json must be absent on disk for the sparse case" >&2
   exit 1
 }
-MCP_ISO_SPARSE_OUTPUT="$(run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SPARSE_SOURCE}" --session-workspace isolated --no-default-injection-policy --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run 2>/dev/null)"
+MCP_ISO_SPARSE_OUTPUT="$(workcell_with_ack_today_utc run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SPARSE_SOURCE}" --session-workspace isolated --no-default-injection-policy --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run 2>/dev/null)"
 MCP_ISO_SPARSE_CLONE="$(echo "${MCP_ISO_SPARSE_OUTPUT}" | grep -oE '[^ ]*workcell-sessions/[^:]+/repo' | head -n1)"
 [[ -n "${MCP_ISO_SPARSE_CLONE}" ]] || {
   echo "Could not determine the isolated clone path for the sparse fixture" >&2
@@ -6089,7 +6089,7 @@ printf '# marker\n' >"${MCP_ISO_SYMLINK_SOURCE}/AGENTS.md"
 ln -s /workspace/evil.json "${MCP_ISO_SYMLINK_SOURCE}/.mcp.json"
 git -C "${MCP_ISO_SYMLINK_SOURCE}" add AGENTS.md .mcp.json
 git -C "${MCP_ISO_SYMLINK_SOURCE}" commit -q -m "isolated symlink-index fixture"
-if run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SYMLINK_SOURCE}" --session-workspace isolated --no-default-injection-policy --allow-repo-mcp "--ack-repo-mcp=${MCP_ACK_TODAY}" --dry-run >/tmp/workcell-repo-mcp-iso-symlink-index.out 2>&1; then
+if workcell_with_ack_today_utc run_workcell_verify session start --agent claude --mode strict --workspace "${MCP_ISO_SYMLINK_SOURCE}" --session-workspace isolated --no-default-injection-policy --allow-repo-mcp "--ack-repo-mcp=@ACK_TODAY_UTC@" --dry-run >/tmp/workcell-repo-mcp-iso-symlink-index.out 2>&1; then
   echo "A tracked symlink MCP index entry must be refused in an isolated acked dry-run" >&2
   exit 1
 fi
@@ -6719,9 +6719,8 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --
   exit 1
 fi
 
-ACK_BREAKGLASS_TODAY_UTC="$(date -u +%Y-%m-%d)"
-if ! run_workcell_verify --agent codex --no-default-injection-policy --mode breakglass "--ack-breakglass=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run >/dev/null 2>&1; then
-  echo "Expected dated --ack-breakglass=${ACK_BREAKGLASS_TODAY_UTC} dry-run to succeed" >&2
+if ! workcell_with_ack_today_utc run_workcell_verify --agent codex --no-default-injection-policy --mode breakglass "--ack-breakglass=@ACK_TODAY_UTC@" --dry-run >/dev/null 2>&1; then
+  echo "Expected a dry-run with --ack-breakglass at today's UTC date to succeed" >&2
   exit 1
 fi
 
@@ -6753,8 +6752,8 @@ if "${ROOT_DIR}/scripts/workcell" --agent codex --no-default-injection-policy --
   exit 1
 fi
 
-if ! run_workcell_verify --agent codex --no-default-injection-policy --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true >/dev/null 2>&1; then
-  echo "Expected dated --ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC} dry-run to succeed" >&2
+if ! workcell_with_ack_today_utc run_workcell_verify --agent codex --no-default-injection-policy --prepare --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@" --dry-run -- bash -lc true >/dev/null 2>&1; then
+  echo "Expected a dry-run with --ack-arbitrary-command at today's UTC date to succeed" >&2
   exit 1
 fi
 
@@ -6775,7 +6774,7 @@ if ! grep -q -- '--ack-arbitrary-command=1999-01-01 does not match today' "${ACK
 fi
 rm -f "${ACK_ARBITRARY_STALE_STDERR_FILE}"
 
-ARBITRARY_DRY_RUN_OUTPUT="$(run_workcell_verify --agent codex --no-default-injection-policy --prepare --allow-arbitrary-command "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" --dry-run -- bash -lc true 2>/dev/null)"
+ARBITRARY_DRY_RUN_OUTPUT="$(workcell_with_ack_today_utc run_workcell_verify --agent codex --no-default-injection-policy --prepare --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@" --dry-run -- bash -lc true 2>/dev/null)"
 if [[ -z "${ARBITRARY_DRY_RUN_OUTPUT}" ]]; then
   echo "Expected acknowledged arbitrary command dry-run to succeed" >&2
   exit 1

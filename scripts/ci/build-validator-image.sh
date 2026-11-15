@@ -21,6 +21,14 @@ CACHE_SCOPE="${WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE:-validator-local}"
 # "max" only on push-to-main runs where the cache is operator-trusted.
 CACHE_WRITE_MODE="${WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE:-min}"
 BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea}"
+# The image must name the reviewed BuildKit repository with no registry host or
+# other prefix, in the format policy/tool-pins.toml requires. The bracket lists
+# are spelled out so the match does not depend on the locale.
+readonly BUILDKIT_IMAGE_RE='^moby/buildkit:[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_][ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-]*@sha256:[0123456789abcdef]{64}$'
+if [[ ! "${BUILDKIT_IMAGE}" =~ ${BUILDKIT_IMAGE_RE} ]]; then
+  echo "WORKCELL_BUILDKIT_IMAGE must be moby/buildkit:<tag>@sha256:<digest>, found: ${BUILDKIT_IMAGE}" >&2
+  exit 1
+fi
 
 cleanup() {
   cleanup_workcell_ci_docker

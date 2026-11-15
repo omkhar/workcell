@@ -44,13 +44,14 @@ endpoints = ["generativelanguage.googleapis.com:443", "ai.google.dev:443"]
 # other_commands names the remaining top-level commands.
 [flags]
 subcommands = [
-  "mcp", "extensions", "skills", "hooks", "gemma",
+  "mcp", "extensions", "skills", "hooks", "gemma", "models",
 ]
 other_commands = ["extension", "skill", "hook"]
 allow = [
   "--accept-raw-output-risk", "--acp", "--allowed-mcp-server-names", "-d",
   "--debug", "--delete-session", "-e", "--experimental-acp", "--extensions",
-  "-h", "--help", "-i", "-l", "--list-extensions", "--list-sessions", "-m",
+  "-h", "--help", "-i", "-l", "--list-extensions", "--list-models",
+  "--list-sessions", "-m",
   "--model", "-o", "--output-format", "-p", "--prompt", "--prompt-interactive",
   "-r", "--raw-output", "--resume", "--screen-reader", "--session-file",
   "--session-id", "--skip-trust", "-v", "--version", "-w", "--worktree",

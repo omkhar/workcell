@@ -47,6 +47,17 @@ internal/metadatautil	TestClaudeMentionWorkflowShape	0087c4d7,118724b0,45cddd2f,
 internal/metadatautil	checkClaudeMentionReach	bf0bcc67,bf0bcc67,f2e98a0c	finds expression spans and the action, secret or environment names in decoded YAML scalars; a match only rejects or adds checks
 internal/metadatautil	checkSecretsUse	6c1fd84d,b75c08fe	reads the secrets context in a decoded expression; anything but one literal secret name fails
 internal/metadatautil	normalizeClaudeMentionNode	04f5fe0b,ac3399b8	picks the action reference in the decoded uses value; the digest covers the rest
+internal/metadatautil	TestCheckPinnedInputsRejectsToolPinImageFromAnotherRepository	30d03cdc	a test builds the expected error text from the repository it mutates in the fixture policy file
+internal/metadatautil	TestCheckPinnedInputsRequiresToolPinLoaderAgreement	d308b9e3	a test precondition on the fixture text that the test itself rewrites
+internal/metadatautil	TestToolPinLoaderAcceptsExactlyTheGoFormats	5c86da12,f7ed5bd5	a test skips candidate values one key = "value" line cannot hold and checks the Go format on the value it wrote
+internal/metadatautil	TestToolPinBindingChecksRejectBypasses	0db23ad6	a test precondition on the test workflow text that the test itself rewrites; TEMPORARY, removed with the tool-pin bridge
+internal/metadatautil	containsToolPinValue	e7172b96	the index finds a policy/tool-pins.toml value inside a decoded workflow YAML scalar; it only denies, so text a comment holds cannot satisfy it
+internal/metadatautil	fixtureToolPin	740c4107,abc18589,b91a13db	a test reads one key = "value" line of the fixture policy file it is about to mutate
+internal/metadatautil	parseToolPins	81e0f0b1	the pattern checks a decoded policy/tool-pins.toml value against its key format
+internal/metadatautil	pinnedInputsCheck.toolPinBridgeInline	4c97e72f,de7641ae,fa7872f6	TEMPORARY tool-pin bridge: a match on raw workflow text only ends the bridge, which turns the stricter binding checks on; it never relaxes a check
+internal/metadatautil	rejectInlineToolPins	ce23d36a	the substring finds a tool-pin image repository inside a decoded workflow YAML scalar; it only denies
+internal/metadatautil	rejectToolPinLoaderEnv	6d4747d3,7b56a4cb,d91244a9,dc54a3fe	the prefixes check a decoded workflow or job env key name; they only deny
+internal/metadatautil	replaceInReleaseJob	4ac3aaf4,9d4ac0c7	a test locates the job it mutates in the release workflow fixture
 internal/metadatautil	actionInputNames	a39bcf76	the pattern checks one decoded YAML mapping key of action metadata
 internal/metadatautil	parseActionRef	0a2ee96f	the pattern splits one decoded workflow step uses: value
 internal/metadatautil	pinnedWorkflowActionRefs	6ec42091,9dce78c5	the prefixes check a decoded workflow step uses: value
@@ -103,6 +114,8 @@ internal/metadatautil	applyGoosePin	44449382,4e0bc989,b31f8cd0	the patterns rewr
 internal/metadatautil	dockerfileArgPin	ee0c6d9d	the search reads the fields of whole Dockerfile instructions, which dockerfileLogicalInstructions splits
 internal/metadatautil	dockerfileLogicalInstructions	3a489cc9,8920ee15,d07e859c	the Dockerfile splitter itself: it reads comment, continuation, heredoc and escape-directive syntax, and refuses any line that is not an instruction
 internal/metadatautil	validateClaudeMentionPlacement	77b0728d	a case-insensitive deny: any mention of the action, secret or environment outside claude-mention.yml fails, so over-matching only rejects
+internal/metadatautil	toolPinImagePattern	34674b86,bcbe3cfe	builds the anchored per-repository image format from a fixed repository constant
+internal/metadatautil	toolPinRefs	42addc7b,b4bf0af4	the patterns read pins step references in a decoded workflow YAML scalar, and a loose pattern that sees more references than the strict one fails the step
 internal/metadatautil	validateGooseInstall	20131f69	the search picks the RUN instruction that names the goose release URL among whole instructions; validateGooseInstallRun then reads its commands, and a second RUN with the URL fails
 internal/metadatautil	readGoosePinInstructions	39ba5691	the pattern checks a stable X.Y.Z version on the value of the one ARG instruction
 internal/metadatautil	applyPlanText	429ed54b,9666434d	unreviewed debt: review the subject, then port or justify
@@ -199,10 +212,9 @@ internal/metadatautil	pinnedInputsCheck.validateCIReproEntriesAndTail	9d3f0df3	u
 internal/metadatautil	pinnedInputsCheck.validateCIReproStrategy	7e8452b9,c6a9cfca,ccbc910c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCargoRustVersion	be820749	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCodeownersAndHostedPolicy	59e723e9	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	pinnedInputsCheck.validateCosignReleaseBindings	9bbe138a	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinnedInputsCheck.validateCosignReleaseBindings	a893555f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCosignVersions	32b3e304	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseArtifactFlows	c3bf63ff	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	pinnedInputsCheck.validateReleaseBuildAndSyft	fd5547f7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseManifestAndRuntimeSources	584f0f40,fc9ae287	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleasePublishingInputs	145c5d36	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateReleaseRequiredSteps	fdbfa4fa	unreviewed debt: review the subject, then port or justify
@@ -319,6 +331,7 @@ internal/metadatautil	validateDebianBootstrapPins	6ec441c7,9b91d8f0	unreviewed d
 internal/metadatautil	validateDebianSnapshot	709a350f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateDiscoverabilitySurface	32233c0f,3701cf9c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateGitHubAPIURL	c8f348a5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateJobToolPinSteps	4fdab752	the prefix checks a decoded step uses: value
 internal/metadatautil	validateNodeMarkdownlintPinnedInputs	1b747f1f,217884f9,361c845f,4058be84,a00a3081,a342f88f,abf9a4c5,ac86cfb2,bbeacf0e,bed3f7cf,c6e103b2,da153a0e,ec9a6cd1,f4061ed6	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateNodeProviderLock	aa25bc5b,aa25bc5b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateOptionalWorkflowPin	37a42590,810c07df,b33c10f8	unreviewed debt: review the subject, then port or justify
@@ -326,7 +339,9 @@ internal/metadatautil	validateProviderChecksumUpdate	eafad8d7	unreviewed debt: r
 internal/metadatautil	validateReleaseAttestationSteps	31c493c3,31c493c3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateReleaseAttestationVerifier	ec30c192	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateRuntimeBuildPreload	eca9d606	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	validateUpstreamRefreshJobs	4a1377ab,832859f5,832859f5,96779f0c,ab5bf77a,f2aad5bd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	validateStepToolPinBindings	99105ea2	the pattern checks a decoded step if: expression for a status function that would run it after a failed pins step
+internal/metadatautil	validateToolPinActionInputs	5de4bec7	the prefix checks a decoded step uses: value
+internal/metadatautil	validateUpstreamRefreshJobs	4a1377ab,832859f5,832859f5,96779f0c,ab5bf77a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateValidatorImageIdentityScript	8a9c5859	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validateWorkflowAction	985e2c77,ecc9ee9b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	validatedCodexRoutingInstructions	c5b42920	unreviewed debt: review the subject, then port or justify
@@ -340,6 +355,7 @@ internal/metadatautil	workflowRefHits	67df4185,a8f1f86a,b5a33b9b	unreviewed debt
 internal/metadatautil	wrappedCommand	3e44657e,53923640,6a96b240,6c88352a,8949f85e,b0f0a35b,c83453df,cd42118c,ce48222a,e200d8a8	unreviewed debt: review the subject, then port or justify
 internal/testkit	TestCopilotReleaseCheckGuardsEachLocalOnlyBranch	6a60f3ff,b059be7d	pins the reviewed local-run guard on each skip and cache branch of verify-upstream-copilot-release.sh; the guard helpers' behaviour is tested by the TestGitHubRelease* tests
 internal/testkit	TestGitHubUnauthenticatedGetNamesTheSpentQuota	3288323f,b0624deb,c60f58bc	a test assertion on the refusal text or rendered output that the test itself produces
+internal/testkit	TestToolPinImageConsumersRejectOtherRepositories	55750ef1	a test assertion on the refusal text that the script under test prints
 internal/testkit	TestUninstallRefusesSymlinkedScript	d2735c1b	the search checks the output of an uninstall run through a symlink, not script text
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
 internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
@@ -459,13 +475,14 @@ internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePubl
 internal/testkit	TestUpdateUpstreamPinsCheckReusesRecordedDebianPlan	565a5a3f,e7267aca,e7267aca,f1211436	the search checks the output of an updater fixture run that reuses a recorded plan, not script text
 internal/testkit	TestUpdateUpstreamPinsDebianArchiveOutage	15d9b107,3d7d78ab,e59f2b53,edf34290	the search checks the output and the resolution log of an updater fixture run, not script text
 internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateUpstreamPinsToolPinBumpChangesNoWorkflow	8ac3433b	a test assertion on the summary output that the updater under test produces
 internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	edeb6dc4	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshIncludesRuntimeGoPins	7c2d45f6	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshOverlapStep	30ee2c4a,ef7903e0	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshPublishLocalChecks	4fbe5eab,bdc0220f,bdc0220f,fd7decae	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpstreamRefreshScopeGuard	5d2dcbca	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,356845cb,4561edc6,809ad8df,84d882d1,84d882d1,875c2600,b8f34d1a,f1d02810	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpstreamRefreshSplitDryRun	09b8f877,356845cb,4561edc6,809ad8df,84d882d1,b12cdf05,b8f34d1a,b8f34d1a,f1d02810,fbdcbbb8	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoExecutesPublicContractHistoryGate	4e0b3a69	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoRejectsStaleMarkdownlintInstall	bef5cf72,e6974c0f	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidateRepoUsesLockedMarkdownlint	06f3db68,56939475,cccd41de	unreviewed debt in a test: review the subject, then port or justify
@@ -557,6 +574,7 @@ internal/testkit	splitEdit	79c6f592,9bbfdcfa,e6fee40c	unreviewed debt in a test:
 internal/testkit	stableProgramLiteral	0b32dcde	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	stagedCanonicalEntrypoint	2d175265	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	unreachedDelegation	17772321,25250625	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	updaterFixtureToolPin	605afb33	a test reads one key = "value" line of the policy file the updater fixture copies
 internal/testkit	updaterFixtureValues	172af3bd	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	validateContainerSmokeHarness	162d2ca4,1e51ce8c,56b17ac3,76e18943,8643818c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	validateControlScriptModes	66e29302,f159c56a	unreviewed debt in a test: review the subject, then port or justify

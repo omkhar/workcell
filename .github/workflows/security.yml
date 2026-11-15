@@ -49,10 +49,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - id: pins
+        name: Load tool pins
+        run: ./scripts/ci/load-tool-pins.sh
+
       - name: Install actionlint
         env:
-          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
-          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: ${{ steps.pins.outputs.actionlint_sha256 }}
+          ACTIONLINT_VERSION: ${{ steps.pins.outputs.actionlint_version }}
         run: |
           curl -fsSL \
             --retry 3 \
@@ -71,8 +75,8 @@ jobs:
 
       - name: Install zizmor
         env:
-          ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
-          ZIZMOR_VERSION: 1.31.1
+          ZIZMOR_SHA256: ${{ steps.pins.outputs.zizmor_sha256 }}
+          ZIZMOR_VERSION: ${{ steps.pins.outputs.zizmor_version }}
         run: |
           curl -fsSL \
             --retry 3 \
@@ -105,10 +109,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - id: pins
+        name: Load tool pins
+        run: ./scripts/ci/load-tool-pins.sh
+
       - name: Install zizmor
         env:
-          ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
-          ZIZMOR_VERSION: 1.31.1
+          ZIZMOR_SHA256: ${{ steps.pins.outputs.zizmor_sha256 }}
+          ZIZMOR_VERSION: ${{ steps.pins.outputs.zizmor_version }}
         run: |
           curl -fsSL \
             --retry 3 \

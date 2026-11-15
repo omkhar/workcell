@@ -84,6 +84,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/ci/build-validator-image.sh",
 		"scripts/ci/lib/local-docker-parity.sh",
+		"scripts/ci/load-tool-pins.sh",
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
 		"scripts/install-dev-tools.sh",
@@ -759,23 +760,6 @@ func TestCheckPinnedInputsRejectsInvalidRustupDigest(t *testing.T) {
 	}
 }
 
-func TestCheckPinnedInputsRejectsDocsBuildxVersionDrift(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "docs.yml"), func(content string) string {
-		return strings.Replace(content, "  WORKCELL_BUILDX_VERSION: v", "  WORKCELL_BUILDX_VERSION: v9.", 1)
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a drifted buildx version in docs.yml")
-	}
-	if !strings.Contains(err.Error(), "WORKCELL_BUILDX_VERSION") || !strings.Contains(err.Error(), "docs.yml") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want docs.yml buildx drift rejection", err)
-	}
-}
-
 func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
 	t.Parallel()
 
@@ -802,8 +786,9 @@ func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
 func TestCheckPinnedInputsRejectsToolPinPolicyDrift(t *testing.T) {
 	t.Parallel()
 
-	// Cover a plain version pin, an image pin (special chars), and a
-	// regex-extracted pin. The mutation is derived from whatever value the
+	// Cover a release-tag pin, an image pin (special chars), and a digest pin.
+	// The policy file is the single source, so a malformed value is caught by
+	// its format check. The mutation is derived from whatever value the
 	// fixture holds, so a routine pin bump does not require editing this test.
 	for _, key := range []string{"cosign", "buildkit", "zizmor_sha256"} {
 		key := key
@@ -820,8 +805,8 @@ func TestCheckPinnedInputsRejectsToolPinPolicyDrift(t *testing.T) {
 				return updated
 			})
 			err := metadatautil.CheckPinnedInputs(cfg)
-			if err == nil || !strings.Contains(err.Error(), "does not match policy/tool-pins.toml") {
-				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want tool-pin policy drift rejection", err)
+			if err == nil || !strings.Contains(err.Error(), "[tool_pins] "+key+" must match") {
+				t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want tool-pin format rejection", err)
 			}
 		})
 	}
@@ -833,7 +818,7 @@ func TestCheckPinnedInputsRejectsUnknownToolPinKey(t *testing.T) {
 	cfg := writePinnedInputsFixture(t)
 	toolPinsPath := filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "tool-pins.toml")
 	rewriteFile(t, toolPinsPath, func(content string) string {
-		return strings.Replace(content, "[tool_pins]", "[tool_pins]\nbogus = \"x\"", 1)
+		return strings.Replace(content, "\n[tool_pins]\n", "\n[tool_pins]\nbogus = \"x\"\n", 1)
 	})
 	err := metadatautil.CheckPinnedInputs(cfg)
 	if err == nil || !strings.Contains(err.Error(), "unknown key") {
@@ -857,23 +842,6 @@ func TestCheckPinnedInputsRejectsUnsupportedUsesForm(t *testing.T) {
 	err := metadatautil.CheckPinnedInputs(cfg)
 	if err == nil || !strings.Contains(err.Error(), "unsupported uses:") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want unsupported-uses rejection", err)
-	}
-}
-
-func TestCheckPinnedInputsRejectsDocsBuildkitImageDrift(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "docs.yml"), func(content string) string {
-		return strings.Replace(content, "  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:", "  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:00000000", 1)
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a drifted BuildKit image in docs.yml")
-	}
-	if !strings.Contains(err.Error(), "WORKCELL_BUILDKIT_IMAGE") || !strings.Contains(err.Error(), "docs.yml") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want docs.yml BuildKit drift rejection", err)
 	}
 }
 
@@ -1254,24 +1222,6 @@ func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMHintCall(t *test
 	requirePinnedInputsErrorContains(t, cfg, "markdownlint-cli npm failure path")
 }
 
-func TestCheckPinnedInputsRejectsInvalidZizmorDigest(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
-	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_SHA256: [0-9a-f]{64}`), "ZIZMOR_SHA256: deadbeef")
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a non-sha256 zizmor digest")
-	}
-	if !strings.Contains(err.Error(), "security zizmor sha") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want zizmor digest rejection", err)
-	}
-}
-
 func TestCheckPinnedInputsRejectsUnboundedWorkflowDownloadSize(t *testing.T) {
 	t.Parallel()
 
@@ -1287,83 +1237,6 @@ func TestCheckPinnedInputsRejectsUnboundedWorkflowDownloadSize(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must bound actionlint downloads") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want download size cap rejection", err)
-	}
-}
-
-func TestCheckPinnedInputsRejectsZizmorVersionMismatch(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
-	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_VERSION: [0-9]+\.[0-9]+\.[0-9]+`), "ZIZMOR_VERSION: 0.0.0")
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted mismatched zizmor versions")
-	}
-	if !strings.Contains(err.Error(), "one reviewed value for ZIZMOR_VERSION") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want zizmor version mismatch rejection", err)
-	}
-}
-
-func TestCheckPinnedInputsRejectsReleaseZizmorVersionMismatch(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
-	rewriteFile(t, releaseWorkflowPath, func(content string) string {
-		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_VERSION: [0-9]+\.[0-9]+\.[0-9]+`), "ZIZMOR_VERSION: 0.0.0")
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a release workflow zizmor version mismatch")
-	}
-	if !strings.Contains(err.Error(), "ZIZMOR_VERSION must match") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want release zizmor version mismatch rejection", err)
-	}
-}
-
-func TestCheckPinnedInputsRejectsReleaseZizmorDigestMismatch(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	releaseWorkflowPath := filepath.Join(cfg.WorkflowsDir, "release.yml")
-	rewriteFile(t, releaseWorkflowPath, func(content string) string {
-		return replaceFirstMatch(t, content, regexp.MustCompile(`ZIZMOR_SHA256: [0-9a-f]{64}`), "ZIZMOR_SHA256: deadbeef")
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted a release workflow zizmor digest mismatch")
-	}
-	if !strings.Contains(err.Error(), "release zizmor sha") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want release zizmor digest rejection", err)
-	}
-}
-
-func TestCheckPinnedInputsRejectsCrossWorkflowZizmorDigestMismatch(t *testing.T) {
-	t.Parallel()
-
-	cfg := writePinnedInputsFixture(t)
-	securityWorkflowPath := filepath.Join(cfg.WorkflowsDir, "security.yml")
-	rewriteFile(t, securityWorkflowPath, func(content string) string {
-		return replaceAllMatches(
-			t,
-			content,
-			regexp.MustCompile(`ZIZMOR_SHA256: [0-9a-f]{64}`),
-			"ZIZMOR_SHA256: 0000000000000000000000000000000000000000000000000000000000000000",
-		)
-	})
-
-	err := metadatautil.CheckPinnedInputs(cfg)
-	if err == nil {
-		t.Fatal("metadatautil.CheckPinnedInputs() unexpectedly accepted mismatched workflow zizmor digests")
-	}
-	if !strings.Contains(err.Error(), "ZIZMOR_SHA256 must match") {
-		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want cross-workflow zizmor digest mismatch rejection", err)
 	}
 }
 

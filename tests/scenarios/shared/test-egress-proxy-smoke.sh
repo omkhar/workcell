@@ -14,6 +14,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-egress-proxy-scenario.XXXXXX")"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/ack-date.sh"
 # workcell_colima: every colima run here sets the Colima cache root as the
 # launcher does, so a restart keeps the staging root out of lima.yaml.
 # shellcheck source=/dev/null
@@ -22,7 +24,6 @@ source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 REAL_HOME="$(resolve_workcell_real_home)"
 PROFILE="wcl-egp-$$"
 WORKSPACE="${TMP_DIR}/workspace"
-ACK_TODAY_UTC="$(date -u '+%Y-%m-%d')"
 
 cleanup() {
   local status=$?
@@ -100,9 +101,9 @@ curl -sS -o /dev/null --max-time 15 -k https://1.1.1.1/ && echo "ip_literal=open
 getent hosts example.com >/dev/null && echo "dns=open" || echo "dns=blocked"
 EOF
 
-"${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKSPACE}" \
+workcell_with_ack_today_utc "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKSPACE}" \
   --colima-profile "${PROFILE}" --no-default-injection-policy \
-  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+  --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
   -- bash -c "$(cat "${TMP_DIR}/probe.sh")" \
   >"${TMP_DIR}/probe.stdout" 2>"${TMP_DIR}/probe.stderr"
 grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/probe.stderr"
@@ -117,9 +118,9 @@ assert_no_proxy_residue "an attached run"
 # --egress-proxy=off keeps the allowlist session: the agent uses the VM
 # resolver, the allowlisted host works, and an IP literal stays blocked by the
 # profile-wide rules. No sidecar or session network is created.
-"${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKSPACE}" \
+workcell_with_ack_today_utc "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${WORKSPACE}" \
   --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy=off \
-  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+  --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
   -- bash -c "$(cat "${TMP_DIR}/probe.sh")" \
   >"${TMP_DIR}/off.stdout" 2>"${TMP_DIR}/off.stderr"
 grep -q '^egress_enforcement=allowlist$' "${TMP_DIR}/off.stderr"
@@ -135,9 +136,9 @@ for host in api.githubcopilot.com api.github.com github.com; do
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "https://${host}/")" && echo "${host}=${code}" || echo "${host}=fail"
 done
 EOF
-"${ROOT_DIR}/scripts/workcell" --agent copilot --workspace "${WORKSPACE}" \
+workcell_with_ack_today_utc "${ROOT_DIR}/scripts/workcell" --agent copilot --workspace "${WORKSPACE}" \
   --colima-profile "${PROFILE}" --no-default-injection-policy \
-  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+  --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
   -- bash -c "$(cat "${TMP_DIR}/copilot-probe.sh")" \
   >"${TMP_DIR}/copilot.stdout" 2>"${TMP_DIR}/copilot.stderr"
 grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/copilot.stderr"
@@ -148,9 +149,9 @@ done
 assert_no_proxy_residue "a Copilot run"
 
 # The detached session makes one denied request, so its deny log is not empty.
-"${ROOT_DIR}/scripts/workcell" session start --session-workspace direct --agent codex --workspace "${WORKSPACE}" \
+workcell_with_ack_today_utc "${ROOT_DIR}/scripts/workcell" session start --session-workspace direct --agent codex --workspace "${WORKSPACE}" \
   --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy=on \
-  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+  --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
   -- bash -c 'curl -sS -o /dev/null --max-time 15 --connect-to example.com:443:api.openai.com:443 https://example.com/; exec sleep 600' \
   >"${TMP_DIR}/detached.stdout" 2>"${TMP_DIR}/detached.stderr"
 session_id="$(sed -n 's/^session_id=//p' "${TMP_DIR}/detached.stdout")"
@@ -207,7 +208,7 @@ security add-generic-password -s workcell-claude-api-key -a smoke -w "${canary}"
 printf 'version = 1\n\n[credentials.claude_api_key]\nresolver = "keychain-broker"\n' >"${TMP_DIR}/broker-policy.toml"
 broker_flags=(--agent claude --workspace "${WORKSPACE}" --colima-profile "${PROFILE}"
   --injection-policy "${TMP_DIR}/broker-policy.toml"
-  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}")
+  --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@")
 brokered_workcell() {
   local keychain="$1"
   shift
@@ -222,7 +223,7 @@ curl -sS -o /dev/null -w 'status=%{http_code}\n' --max-time 30 --cacert "${bundl
   -H "x-api-key: ${placeholder}" -H 'anthropic-version: 2023-06-01' https://api.anthropic.com/v1/models || echo "status=fail"
 echo "canary_hits=$({ env; cat /proc/[0-9]*/environ; grep -rs . "${bundle}" "${HOME}/.claude"; } 2>/dev/null | grep -c sk-canary)"
 EOF
-brokered_workcell "${TMP_DIR}/smoke.keychain-db" "${broker_flags[@]}" -- bash -c "$(cat "${TMP_DIR}/broker-probe.sh")" \
+workcell_with_ack_today_utc brokered_workcell "${TMP_DIR}/smoke.keychain-db" "${broker_flags[@]}" -- bash -c "$(cat "${TMP_DIR}/broker-probe.sh")" \
   >"${TMP_DIR}/broker.stdout" 2>"${TMP_DIR}/broker.stderr"
 grep -q '^credential_mode=brokered$' "${TMP_DIR}/broker.stderr"
 grep -Eq '^placeholder=wcph-[0-9a-f]{32}$' "${TMP_DIR}/broker.stdout"
@@ -268,8 +269,8 @@ curl -sS -o /dev/null -w 'spliced=%{http_code}\n' --max-time 30 --cacert "${bund
   https://chatgpt.com/ || echo "spliced=fail"
 echo "canary_hits=$({ env; cat /proc/[0-9]*/environ; grep -rs . "${bundle}" "${HOME}/.codex"; } 2>/dev/null | grep -c sk-canary)"
 EOF
-brokered_workcell "${TMP_DIR}/smoke.keychain-db" "${codex_flags[@]}" \
-  --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
+workcell_with_ack_today_utc brokered_workcell "${TMP_DIR}/smoke.keychain-db" "${codex_flags[@]}" \
+  --allow-arbitrary-command "--ack-arbitrary-command=@ACK_TODAY_UTC@" \
   -- bash -c "$(cat "${TMP_DIR}/codex-probe.sh")" >"${TMP_DIR}/codex.stdout" 2>"${TMP_DIR}/codex.stderr"
 grep -q '^credential_mode=brokered$' "${TMP_DIR}/codex.stderr"
 grep -Eq '^auth=\{"OPENAI_API_KEY":"wcph-[0-9a-f]{32}"\}$' "${TMP_DIR}/codex.stdout"
@@ -327,7 +328,7 @@ grep -Eiq '401|unauthorized|invalid_api_key|incorrect api key' "${TMP_DIR}/plain
 assert_no_proxy_residue "an --egress-proxy=off Codex run"
 
 # Without the Keychain item the broker stops the launch before the agent runs.
-if brokered_workcell "${TMP_DIR}/empty.keychain-db" "${broker_flags[@]}" -- true >/dev/null 2>"${TMP_DIR}/broker-missing.stderr"; then
+if workcell_with_ack_today_utc brokered_workcell "${TMP_DIR}/empty.keychain-db" "${broker_flags[@]}" -- true >/dev/null 2>"${TMP_DIR}/broker-missing.stderr"; then
   echo "a brokered launch without the Keychain item started" >&2
   exit 1
 fi
