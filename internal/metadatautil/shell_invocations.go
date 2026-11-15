@@ -421,9 +421,10 @@ func continuesLine(word string) bool {
 type command struct {
 	args        []word
 	conditional bool
-	orElse      bool // it runs only when the command before it fails, after ||
-	piped       bool // a pipeline stage or a background job, which runs in a subshell
-	nested      bool // text an eval, a trap or a child shell runs, as the lane reader reads it
+	orElse      bool   // it runs only when the command before it fails, after ||
+	piped       bool   // a pipeline stage or a background job, which runs in a subshell
+	nested      bool   // text an eval, a trap or a child shell runs, as the lane reader reads it
+	follows     string // the control operator in front of it on its line, as ;; or ;
 }
 
 // splitCommands cuts one logical line into the separate commands bash runs, at
@@ -454,7 +455,7 @@ func splitCommands(words []word) []command {
 			piped := each.text == "|" || each.text == "|&"
 			last := &commands[len(commands)-1]
 			last.piped = last.piped || piped || each.text == "&"
-			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", orElse: each.text == "||", piped: piped})
+			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", orElse: each.text == "||", piped: piped, follows: each.text})
 			continue
 		}
 		last := &commands[len(commands)-1]

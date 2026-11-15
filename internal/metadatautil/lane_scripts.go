@@ -63,9 +63,12 @@ func LaneScripts(rootDir string) ([]string, error) {
 		moved     bool
 		pinned    bool          // ${ROOT_DIR} is the repository root
 		libraries []laneLibrary // the repository libraries a pinned lane sources
+		site      laneSite
+		rel       string // a lane script's path
 	}
 	var runs []laneRun
 	var scripts []string
+	callers := map[string][][]string{} // the arguments of each step's run of a lane script
 	for _, lane := range []struct{ dir, pattern string }{{"scripts", "validate-repo.sh"}, {"scripts/ci", "job-*.sh"}, {".github/workflows", ""}} {
 		matches := mustGlob(filepath.Join(rootDir, lane.dir, lane.pattern))
 		if lane.pattern == "" {
@@ -81,7 +84,7 @@ func LaneScripts(rootDir string) ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				runs, scripts = append(runs, laneRun{body: string(body), pinned: pinned, libraries: libraries}), append(scripts, rel)
+				runs = append(runs, laneRun{body: string(body), pinned: pinned, libraries: libraries, site: laneSite{lane: true}, rel: rel})
 				continue
 			}
 			var document workflowDocument
@@ -99,27 +102,42 @@ func LaneScripts(rootDir string) ([]string, error) {
 						return nil, fmt.Errorf("%s job %s: %w", rel, name, err)
 					}
 					startup = startup || startupFileStep(document, job, step)
-					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: startup})
+					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: startup, site: laneSite{env: step.Env}})
 				}
 			}
 		}
 	}
-	for _, run := range runs {
+	slices.SortStableFunc(runs, func(a, b laneRun) int {
+		switch {
+		case a.site.lane == b.site.lane:
+			return 0
+		case b.site.lane:
+			return -1
+		}
+		return 1
+	})
+	for _, run := range runs { // each step before each lane script, which counts only where a step runs it
+		if run.site.callers = callers[run.rel]; run.site.lane && run.rel != "scripts/validate-repo.sh" && len(run.site.callers) == 0 {
+			continue
+		}
 		// A lane that assigns PATH, BASH_ENV or ENV may change the program each
 		// later command runs, a script's own #! interpreter included, so it
 		// wires no script.
-		startup, err := laneReadable(run.body, run.libraries, run.pinned)
+		startup, err := laneReadable(run.body, run.libraries, run.pinned, run.site)
 		if err != nil {
 			return nil, err
 		}
 		if startup {
 			continue
 		}
+		if run.site.lane {
+			scripts = append(scripts, run.rel)
+		}
 		moved := run.moved || strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
 		for _, words := range laneCommands(run.body)[0] {
-			name, direct := words[0], true
+			name, direct, args := words[0], true, words[1:]
 			if _, _, file := shellProgram(words, "$_"); file != "" {
-				name, direct = file, false // bash scripts/x.sh runs x.sh
+				name, direct, args = file, false, words[slices.Index(words[1:], file)+2:] // bash scripts/x.sh runs x.sh
 			}
 			// A cd or pushd, or a sourced body this reader does not see, may move
 			// the directory, so a later relative path names no known script.
@@ -139,11 +157,22 @@ func LaneScripts(rootDir string) ([]string, error) {
 			}
 			if laneScriptPath.MatchString(name) {
 				scripts = append(scripts, name)
+				if !run.site.lane {
+					callers[name] = append(callers[name], args)
+				}
 			}
 		}
 	}
 	slices.Sort(scripts)
 	return slices.Compact(scripts), nil
+}
+
+// laneSite is where a body runs: a step, with its own env, or a lane script,
+// with the arguments each step that runs it passes.
+type laneSite struct {
+	env     map[string]string
+	callers [][]string
+	lane    bool
 }
 
 // laneLibraryRoot is the ${ROOT_DIR}/ or $ROOT_DIR/ in front of a library path.
