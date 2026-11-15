@@ -138,7 +138,9 @@ func shellProgram(words []string, stdin string) (program string, runs bool, file
 	// Options come first, and -- may end them. c or s anywhere in a short
 	// cluster, as in -lc or -es, counts. Each o or O in a cluster, and
 	// --rcfile or --init-file, takes the next word as its value, as in
-	// -O extglob or -euo pipefail.
+	// -O extglob or -euo pipefail. Only the options in shellRunOptions, and
+	// the option names in shellRunNames, leave the shell running its program:
+	// any other, as -o noexec, -D or --version, may run none of it.
 	body, fromStdin, noExec := false, false, false
 	i := 1
 	for ; i < len(words); i++ {
@@ -153,13 +155,26 @@ func shellProgram(words []string, stdin string) (program string, runs bool, file
 		if !strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "+") {
 			break // the first operand
 		}
-		if !strings.HasPrefix(option, "--") {
-			body = body || strings.Contains(option[1:], "c")
-			fromStdin = fromStdin || strings.Contains(option[1:], "s")
-			if strings.Contains(option[1:], "n") {
-				noExec = option[0] == '-' // -n reads the program and runs nothing; +n runs it
+		if strings.HasPrefix(option, "--") {
+			if !slices.Contains([]string{"--norc", "--noprofile", "--noediting"}, option) {
+				return "", false, ""
 			}
-			i += strings.Count(option[1:], "o") + strings.Count(option[1:], "O")
+			continue
+		}
+		body = body || strings.Contains(option[1:], "c")
+		fromStdin = fromStdin || strings.Contains(option[1:], "s")
+		if strings.Contains(option[1:], "n") {
+			noExec = option[0] == '-' // -n reads the program and runs nothing; +n runs it
+		}
+		for _, letter := range option[1:] {
+			switch {
+			case letter == 'o' || letter == 'O':
+				if i++; i >= len(words) || !slices.Contains(shellRunNames[letter], words[i]) {
+					return "", false, ""
+				}
+			case !strings.ContainsRune(shellRunOptions, letter):
+				return "", false, ""
+			}
 		}
 	}
 	switch {
@@ -174,6 +189,18 @@ func shellProgram(words []string, stdin string) (program string, runs bool, file
 	}
 	return "", false, words[i] // the operand names a script file
 }
+
+// shellRunOptions are the short options a shell may take and still run its
+// program, c, s and n read apart, and shellRunNames the values -o and -O may
+// take: options that stop or end a program early, as noexec, onecmd or -D,
+// are in neither.
+var (
+	shellRunOptions = "euxvBHcsn"
+	shellRunNames   = map[rune][]string{
+		'o': {"errexit", "nounset", "pipefail", "posix", "xtrace", "verbose"},
+		'O': {"dotglob", "extglob", "globstar", "inherit_errexit", "lastpipe", "nocaseglob", "nocasematch", "nullglob"},
+	}
+)
 
 func commandBrace(each command) int {
 	args := each.args
@@ -1199,6 +1226,16 @@ func shellWords(line string, stack []byte) (
 				emit(line[index], true)
 			case character == '"':
 				quote = 0
+			case strings.HasPrefix(line[index:], "$(("):
+				// An arithmetic expansion is not a command substitution: the
+				// quote stays open around it, so the line keeps its words.
+				arithmetic += 2
+				text.WriteString("$((")
+				syntax.WriteString("___")
+				index += 2
+			case arithmetic > 0 && (character == '(' || character == ')'):
+				arithmetic += map[bool]int{true: 1, false: -1}[character == '(']
+				emit(character, true)
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
 				// A command substitution resumes shell syntax inside the
 				// quotes. Suspend the quote rather than forget it, so that the
@@ -1242,7 +1279,8 @@ func shellWords(line string, stack []byte) (
 			decoded = decoded || ansiC
 			unresolved = unresolved || !ansiC
 			inWord, quoted = true, true
-		case character == ' ' || character == '\t':
+		case (character == ' ' || character == '\t') && arithmetic == 0:
+			// A space inside $(( )) is part of the expansion's one word.
 			flush()
 		case character == '#' && !inWord:
 			if substituted {
@@ -1250,17 +1288,17 @@ func shellWords(line string, stack []byte) (
 			}
 			return words, heredocs, 0, stack, false, line[index:]
 		case character == '$' && index+2 < len(line) && line[index+1] == '(' && line[index+2] == '(':
-			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
-			arithmetic++
+			// The << inside $((1 << 2)) is a shift, not a heredoc operator,
+			// and a ; or | inside it is an operator of the expression. The
+			// count is of the parentheses open, so $((1) ) closes too.
+			arithmetic += 2
 			text.WriteString(line[index : index+3])
 			syntax.WriteString(line[index : index+3])
 			index += 2
 			inWord = true
-		case arithmetic > 0 && character == ')' && index+1 < len(line) && line[index+1] == ')':
-			arithmetic--
-			text.WriteString("))")
-			syntax.WriteString("))")
-			index++
+		case arithmetic > 0 && (character == '(' || character == ')'):
+			arithmetic += map[bool]int{true: 1, false: -1}[character == '(']
+			emit(character, false)
 			inWord = true
 		case arithmetic == 0 && character == '<' && index+1 < len(line) && line[index+1] == '<':
 			flush()
@@ -1284,7 +1322,7 @@ func shellWords(line string, stack []byte) (
 			// A delimiter word ends at an operator, as in cat <<EOF; echo
 			// ready, where bash reads the delimiter EOF and runs the echo.
 			flush()
-		case strings.IndexByte(";&|", character) >= 0 &&
+		case arithmetic == 0 && strings.IndexByte(";&|", character) >= 0 &&
 			!(strings.IndexByte("&|", character) >= 0 && index > 0 &&
 				strings.IndexByte("<>", line[index-1]) >= 0) &&
 			!(character == '&' && index+1 < len(line) && line[index+1] == '>'):

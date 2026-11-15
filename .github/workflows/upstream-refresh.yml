@@ -239,11 +239,11 @@ jobs:
               --json number,state
           )"
           issue_count="$(jq 'length' <<<"${issues_json}")"
-          if [[ "${issue_count}" -gt 1 ]]; then
+          if [[ ! "${issue_count}" =~ ^[01]$ ]]; then
             echo "Expected at most one ${tracking_label} issue, found ${issue_count}." >&2
             exit 1
           fi
-          if [[ "${issue_count}" -eq 0 ]]; then
+          if [[ "${issue_count}" == 0 ]]; then
             gh issue create --title "${tracking_title}" --body-file "${issue_body}" --label "${tracking_label}" >/dev/null
             exit 0
           fi

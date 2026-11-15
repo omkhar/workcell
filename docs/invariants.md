@@ -258,8 +258,8 @@ lane file.
 The reader models these features (`internal/metadatautil/lane_reading.go`).
 A command word may be a literal program name or a function that the lane or a
 library defines. It may be a path, which a literal slash outside its
-expansions makes it. It may be one expansion of a variable whose every write is
-a single literal program name. A write by `+=`, `read`, a substitution or a
+expansions makes it. It may be one expansion of a variable that the lane
+writes, whose every write is a single literal program name. A write by `+=`, `read`, a substitution or a
 positional parameter leaves the variable unspelled.
 
 A builtin counts only when the reader models it: `set`, `shopt`, `hash`, the
@@ -272,9 +272,19 @@ builtin stops the check, as `alias`, `enable` and `fc` do.
 The reader reads the literal text of an `eval`, a `trap` action and a child
 shell's program, at most eight deep, after any leading redirection. A source
 must name a fixed `${ROOT_DIR}/` library, which the reader then reads as part of
-the lane. A `hash -p`, a `mapfile -C` callback, `set -n` and
-`shopt -s extdebug` stop the check. So does a `trap` whose action expands and
-runs on a signal other than `EXIT` (`internal/metadatautil/lane_reading.go`).
+the lane. A `hash -p`, a `mapfile -C` callback, `set -n`, `set -t`,
+`shopt -so noexec` and `shopt -s extdebug` stop the check. So does a `trap`
+whose action expands and runs on a signal other than `EXIT`
+(`internal/metadatautil/lane_reading.go`). A child shell counts only with the
+options that run its file, such as `-e`, `-x` or `-o pipefail`
+(`internal/metadatautil/shell_invocations.go`).
+
+Bash reads the value of a variable in arithmetic as an expression, which can
+assign `PATH`. The reader reads `((`, `$((`, `let`, a `[[` number test, a
+subscript and a substring offset. Each operand must be a number, or a variable
+whose every write is a number (`internal/metadatautil/lane_arithmetic.go`). A subscript of
+an associative array that the lane declares first counts too. A `declare -i`
+and a `${x@P}` stop the check.
 
 A `${ROOT_DIR}/` path counts only in a lane script that sets `ROOT_DIR` to the
 repository root first and makes it `readonly` on the next line. Bash then keeps
@@ -315,7 +325,9 @@ Each reader charges its parsing to a bound linear in the length of the text.
 Text past a bound stops the check with an error, so no lane costs more than a
 fixed multiple of its size (`internal/metadatautil/lane_scripts_test.go`). A
 lane that overwrites a library or a gate before it runs it is outside this
-model. So is arithmetic on a value that the lane reads at run time.
+model. So is a lane that plants a program in a `PATH` directory, or that runs
+its gate under `timeout`. The reader takes a write as made even when it sits in
+a branch or a function that never runs.
 
 A sentence that claims enforcement needs such a span within two lines, and
 it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger

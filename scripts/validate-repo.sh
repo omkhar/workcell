@@ -738,7 +738,7 @@ fi
 # declarations and type aliases, which end in `fn`/`(` rather than `{`.
 # rustfmt (enforced above) keeps each block opener on a single line.
 while IFS=: read -r extern_file extern_line _; do
-  if ! sed -n "$((extern_line - 1))p" "${extern_file}" | grep '// SAFETY:' >/dev/null; then
+  if ! awk -v line="${extern_line}" 'NR == line - 1' "${extern_file}" | grep '// SAFETY:' >/dev/null; then
     echo "unsafe extern block missing a preceding // SAFETY: comment at ${extern_file}:${extern_line}" >&2
     exit 1
   fi

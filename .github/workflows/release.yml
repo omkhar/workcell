@@ -111,7 +111,7 @@ jobs:
           runs_response="$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/runs?branch=main&event=push&head_sha=${target_sha}&per_page=100")"
           run_count="$(jq -r '.total_count // -1' <<<"${runs_response}")"
-          if [[ ! "${run_count}" =~ ^[0-9]+$ || "${run_count}" -gt 100 ]]; then
+          if [[ ! "${run_count}" =~ ^([0-9]|[1-9][0-9]|100)$ ]]; then
             echo "Release commit workflow-run inventory is invalid or exceeds 100 entries." >&2
             exit 2
           fi
