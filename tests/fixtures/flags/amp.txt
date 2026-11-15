@@ -6,6 +6,7 @@
 --attach
 --color
 --desktop
+--effort
 --execute
 --executor
 --fast
@@ -17,6 +18,7 @@
 --log-level
 --mcp-config
 --mode
+--model
 --no-archive-after-execute
 --no-color
 --no-ide
@@ -25,13 +27,17 @@
 --no-tui
 --notifications
 --orb-execute
+--orb-provider
 --orb-size
 --plugin-ready-timeout
+--profile
 --project
 --remote-control-terminal
 --runner-dir
 --settings-file
 --share
+--share-network
+--space
 --stream-json
 --stream-json-input
 --stream-json-thinking
