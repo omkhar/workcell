@@ -210,6 +210,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"later command after eval in a substitution", "out=$(eval \"$cmd\"; true) || exit 1\n", "command-substitution"},
 		{"tool behind command --", "command -- git fetch || true\n", "or-true"},
 		{"tool behind command -p --", "command -p -- git fetch || true\n", "or-true"},
+		{"tool behind a long wrapper chain", "command -p " + strings.Repeat("-p ", 12) + "-- git fetch || true\n", "or-true"},
 		{"marker on a later command", "git fetch || true; printf '%s\\n' ok # fail-closed: output is harmless\n", "or-true"},
 		{"|| true behind a quote nested in a substitution", "x=\"$(getent passwd \"${uid}\" | cut -d: -f1 || true)\"\n", "or-true"},
 		{"pipefail set after the pipeline", "out=$(git ls-files | sort) || exit 1\nset -o pipefail\n", "command-substitution"},
@@ -379,9 +380,25 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"pipefail set eight evals deep", strings.Repeat("eval ", 8) + "set -o pipefail\n", ""},
 		{"pipefail set nine evals deep", strings.Repeat("eval ", 9) + "set -o pipefail\n", "quiet-grep-pipe"},
 		{"eval text past the reader's budget", "eval \"" + strings.Repeat("a\n", 20000) + "b\"\n", "quiet-grep-pipe"},
-		// A set that never runs still turns pipefail off, the safe direction
-		// for the pipe rules, so the quiet grep after it is not counted.
-		{"pipefail cleared in an untaken branch", "set -o pipefail\nif false; then set +o pipefail; fi\nyes | grep -q y || exit 1\n", ""},
+		// pipefail makes a quiet grep stage unsafe, so a set that may turn it
+		// on counts wherever it may run, and only one certain to run turns it
+		// off: the quiet grep after a set that never runs is still counted.
+		{"pipefail cleared in an untaken branch", "set -o pipefail\nif false; then set +o pipefail; fi\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a called function", "f() { set -o pipefail; }\nf\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set on a function body's line", "f() {\n  set -o pipefail\n}\nf\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a group", "{ set -o pipefail; }\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set before a quiet grep in one group", "{ set -o pipefail; yes | grep -q y || exit 1; }\n", "quiet-grep-pipe"},
+		{"pipefail set in an if", "if true; then set -o pipefail; fi\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a case arm", "case x in x) set -o pipefail;; esac\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a for body", "for _ in 1; do set -o pipefail; done\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a subshell", "(\n  set -o pipefail\n  yes | grep -q y || exit 1\n)\n", "quiet-grep-pipe"},
+		{"pipefail set by a DEBUG trap", "trap 'set -o pipefail' DEBUG\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by a mapfile callback", "mapfile -C 'set -o pipefail #' -c 1 a </dev/null\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by an eval of a substitution", "eval \"$(echo set -o pipefail)\"\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by an eval of an expansion", "x='; set -o pipefail'\neval echo $x\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by a computed command word", "s=set\n$s -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by a sourced library", "source ./lib.sh\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set and cleared at the top level", "if true; then set -o pipefail; fi\nset +o pipefail\nyes | grep -q y || exit 1\n", ""},
 		{"quiet grep in a function stage", "set -o pipefail\ng() { grep -q y; }\nyes | g || exit 1\n", "quiet-grep-pipe"},
 		{"quiet grep in a function a stage calls", "set -o pipefail\ng() { grep -q y; }\nh() {\n  g\n}\nyes | h || exit 1\n", "quiet-grep-pipe"},
 		{"function bodies past the quiet grep reader's budget", "set -o pipefail\n" + strings.Repeat("f() {\n", 2000) + strings.Repeat("}\n", 2000) + "yes | g || exit 1\n", "quiet-grep-pipe"},
@@ -414,10 +431,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"set +o pipefail as an argument of :", "set -o pipefail\n: set +o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
 		{"shopt -uo pipefail as an argument of echo", "set -o pipefail\necho shopt -uo pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
 		{"pipefail turned off by builtin set", "set -o pipefail\nbuiltin set +o pipefail\nyes | grep -q y || exit 1\n", ""},
-		{"pipefail turned off right of a command", "set -o pipefail\ntest -n \"$x\" && set +o pipefail\nyes | grep -q y || exit 1\n", ""},
-		{"pipefail turned off in an untaken branch", "set -o pipefail\nif false; then set +o pipefail; fi\nyes | grep -q y || exit 1\n", ""},
+		{"pipefail turned off right of a command", "set -o pipefail\ntest -n \"$x\" && set +o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
 		{"pipefail turned off by eval", "set -o pipefail\neval 'set +o pipefail'\nyes | grep -q y || exit 1\n", ""},
-		{"pipefail turned off on a group's later line", "set -o pipefail\n{\n  echo x\n  set +o pipefail\n}\nyes | grep -q y || exit 1\n", ""},
+		{"pipefail turned off on a group's later line", "set -o pipefail\n{\n  echo x\n  set +o pipefail\n}\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
 		{"quiet grep in a case stage", "set -o pipefail\nyes | case y in y) grep -q y;; esac || exit 1\n", "quiet-grep-pipe"},
 		{"quiet grep in a later case arm", "set -o pipefail\nyes | case $x in n) true;; *) grep -q y;; esac || exit 1\n", "quiet-grep-pipe"},
 		{"quiet grep in a for stage", "set -o pipefail\nyes | for i in 1; do grep -q y; done || exit 1\n", "quiet-grep-pipe"},
@@ -429,6 +445,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"quiet grep after a loop stage closes", "set -o pipefail\nyes | while read -r l; do\n  true\ndone\ngrep -q y f || exit 1\n", ""},
 		{"quiet grep after a spaced named descriptor redirection", "set -o pipefail\nyes | {fd}> /dev/null grep -q y || exit 1\n", "quiet-grep-pipe"},
 		{"a function defined past the definition reader's bound", "x=\"" + strings.Repeat("a \\\n", 20000) + "\"\nlaunch() { : & }\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"substitutions nested past the reader's bound", "x=\"" + strings.Repeat("$(printf %s \"", 9) + strings.Repeat("\")", 9) + "\"\n", "command-substitution"},
+		{"substitutions nested to the reader's bound", "x=\"" + strings.Repeat("$(printf %s \"", 8) + strings.Repeat("\")", 8) + "\"\n", ""},
+		{"substitutions past the reader's bound", "x=\"" + strings.Repeat("$(printf %s) ", 400) + "\"\n", "command-substitution"},
 		{"marked quiet grep", "set -o pipefail\n# fail-closed: find stops after one line\nfind . -print -quit | grep -q . || exit 1\n", ""},
 	}
 	for _, testCase := range cases {
@@ -695,6 +714,16 @@ func TestShellFailOpenFindingsWorkGrowsLinearly(t *testing.T) {
 	shapes := map[string]func(n int) string{
 		"command eval": func(n int) string { return strings.Repeat("command eval ", n) + "true\n" },
 		"then eval":    func(n int) string { return strings.Repeat("if true; then eval ", n) + "true\n" },
+		"nested substitutions": func(n int) string {
+			return "x=" + strings.Repeat("$(git ", n) + strings.Repeat(")", n) + " || exit 1\n"
+		},
+		"quoted nested substitutions": func(n int) string {
+			return "x=\"" + strings.Repeat("$(a \"", n) + strings.Repeat("\")", n) + "\"\n"
+		},
+		"substitutions": func(n int) string { return "x=" + strings.Repeat("$(git a) ", n) + "|| exit 1\n" },
+		"substitutions eight deep": func(n int) string {
+			return "x=" + strings.Repeat("$(git $(a $(a $(a $(a $(a $(a $(a )))))))) ", n) + "|| exit 1\n"
+		},
 	}
 	for name, shape := range shapes {
 		t.Run(name, func(t *testing.T) {
