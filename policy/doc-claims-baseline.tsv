@@ -76,9 +76,7 @@ adapters/codex/.codex/AGENTS.md	unanchored-claim	Workcell denies repository MCP 
 adapters/codex/.codex/AGENTS.md	unanchored-claim	`TestCodexAdapterConfigParity` enforces the config baseline parity.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/.codex/agents/distinguished_security.md	unanchored-claim	- Recommend the narrowest control that blocks the path.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/.codex/agents/openai_codex_platform.md	unanchored-claim	- What must be enforced by the outer container or VM.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/README.md	unanchored-claim	- It also blocks MCP servers, `responses-api-proxy`, `stdio-to-uds`, and `tcp-tunnel`.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/README.md	unanchored-claim	- The wrapper also blocks unsafe autonomy, network, profile, and configuration flags.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/README.md	unanchored-claim	- The wrapper blocks `agents`, `queue`, `migrate-rollouts`, plugins, cloud, remote-control, `exec-server`, update, sandbox, debug, and unclassified subcommands.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/README.md	unanchored-claim	- `reject_unsafe_codex_args` denies unapproved subcommands by default.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/copilot/README.md	unanchored-claim	- The default path blocks plugins, MCP, custom agents, hooks, skills, dynamic retrieval, and remote sessions.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/gemini/README.md	unanchored-claim	- `reject_unsafe_gemini_args` blocks permission bypass, sandbox, extra directory, yolo, and approval-mode flags.	claim predates the rule; cite the enforcing path or drop the claim
