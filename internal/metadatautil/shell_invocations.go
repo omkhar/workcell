@@ -27,6 +27,10 @@ import (
 // which loses invocations rather than inventing them.
 //
 // quoted records a delimiter with any quoting, which keeps bash from expanding the body, and start and end are the bytes of the operator and delimiter in the line, so a reader can put the body back where the command reads it.
+//
+// A delimiter word that a backslash-newline continues onto the next line is
+// unresolved too, since a reader that splits lines would compare the half it
+// has seen.
 type heredoc struct {
 	delimiter  string
 	stripTabs  bool
@@ -35,14 +39,43 @@ type heredoc struct {
 	start, end int
 }
 
-func (h heredoc) endsAt(line string) bool {
+// endsAt reads one physical line of the body, as strings.Lines returns it,
+// and reports whether the body ends there. Bash compares the whole line but
+// its newline, so a carriage return before the newline keeps the body open.
+// For a delimiter with no quoting it first joins a line that ends in an odd
+// run of backslashes with the next, so foo\ followed by EOF reads as fooEOF;
+// held carries the joined part between calls, and the reader starts it empty.
+func (h heredoc) endsAt(line string, held *string) bool {
+	text := strings.TrimSuffix(line, "\n")
+	if !h.quoted && text != line && backslashContinues(text) {
+		// Only the joined line's length up to the delimiter's matters: a
+		// longer one is kept as a newline, which no unquoted delimiter holds,
+		// so the work stays linear in the body.
+		joined := *held + text[:len(text)-1]
+		if h.stripTabs {
+			joined = strings.TrimLeft(joined, "\t")
+		}
+		if len(joined) > len(h.delimiter) {
+			joined = "\n"
+		}
+		*held = joined
+		return false
+	}
+	text, *held = *held+text, ""
 	if h.unresolved {
 		return false
 	}
 	if h.stripTabs {
-		return strings.TrimLeft(line, "\t") == h.delimiter
+		return strings.TrimLeft(text, "\t") == h.delimiter
 	}
-	return line == h.delimiter
+	return text == h.delimiter
+}
+
+// backslashContinues reports whether text ends in an odd run of backslashes,
+// the last of which escapes the newline after it.
+func backslashContinues(text string) bool {
+	run := len(text) - len(strings.TrimRight(text, "\\"))
+	return run%2 == 1
 }
 
 // word is one word of a logical line, and whether any part of it was quoted.
@@ -616,12 +649,27 @@ func quoteCloseIndex(line string, quote byte) int {
 	return -1
 }
 
+// blankBefore reports whether the byte before text[at] is a blank, so a word
+// ends there.
+func blankBefore(text string, at int) bool {
+	return at > 0 && (text[at-1] == ' ' || text[at-1] == '\t')
+}
+
+// openerJoinLimit bounds the physical lines heredocsAsHereStrings joins into
+// one line it must read whole, so the work of reading a script stays linear.
+const openerJoinLimit = 64
+
 // heredocsAsHereStrings moves every heredoc body into the line that opens it, as the here-string heredocWord spells, so the command that reads it keeps it.
 func heredocsAsHereStrings(script string) string {
 	var out, body strings.Builder
 	var opened, pending []heredoc
 	var bodies []string
-	var held string // the line that opened the pending bodies
+	var held string   // the line that opened the pending bodies
+	var joined string // the body line a backslash-newline continues, as endsAt joins it
+	var opener string // the opening line a backslash-newline continues, without it
+	var lines string  // the physical lines of that opening line, as written
+	var joins int     // the physical lines joined into that opening line so far
+	var prefix string // the end of a quoted span the opening line starts with
 	var openQuote byte
 	var stack []byte
 	release := func() {
@@ -639,9 +687,10 @@ func heredocsAsHereStrings(script string) string {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		if len(pending) > 0 {
 			switch each := pending[0]; {
-			case !each.endsAt(text) && each.stripTabs:
-				body.WriteString(strings.TrimLeft(line, "\t"))
-			case !each.endsAt(text):
+			case !each.endsAt(line, &joined):
+				if each.stripTabs {
+					line = strings.TrimLeft(line, "\t")
+				}
 				body.WriteString(line)
 			default:
 				// bash expands an unquoted delimiter's body, so one with an
@@ -658,29 +707,57 @@ func heredocsAsHereStrings(script string) string {
 			}
 			continue
 		}
-		offset := 0
 		if openQuote != 0 {
 			at := quoteCloseIndex(text, openQuote)
 			if at < 0 {
 				out.WriteString(line)
 				continue
 			}
-			text, openQuote, offset = text[at+1:], 0, at+1
+			text, openQuote, prefix = text[at+1:], 0, text[:at+1]
 		}
-		_, opened, openQuote, stack, _, _ = shellWords(text, stack)
+		// Bash reads a line a backslash-newline continues as one with the
+		// next before it reads a heredoc operator, so <<EO\ before F opens a
+		// body that ends at EOF. The joined line is read here in place of
+		// its halves where the break can matter: inside a word, or on a line
+		// that opens a body, which starts only after the joined line. A break
+		// after a blank, with no body open, starts the next word as a new
+		// line would, so the next line is read alone and the work stays
+		// linear. A continuation inside an open quote or substitution is left
+		// to shellWords, which leaves such a delimiter unresolved.
+		text, lines = opener+text, lines+line
+		_, found, quote, rest, continues, _ := shellWords(text, stack)
+		if continues && quote == 0 && len(rest) == 0 && len(stack) == 0 && strings.HasSuffix(line, "\\\n") &&
+			(len(found) > 0 || !blankBefore(text, len(text)-1)) {
+			text = text[:len(text)-1]
+			if joins++; joins <= openerJoinLimit {
+				opener = text
+				continue
+			}
+			// Past the limit the reader stops joining and reads the rest of
+			// the script as a body it cannot end, as for a delimiter it
+			// cannot resolve.
+			found = append(found, heredoc{unresolved: true, start: len(text), end: len(text)})
+		}
+		joins = 0
+		whole, quoted := lines, prefix
+		opener, lines, prefix, opened, openQuote, stack = "", "", "", found, quote, rest
 		if len(opened) == 0 {
-			out.WriteString(line)
+			out.WriteString(whole)
 			continue
 		}
+		if whole != line { // the opening line was continued: put back its joined text
+			line = quoted + text + "\n"
+		}
 		for i := range opened {
-			opened[i].start += offset
-			opened[i].end += offset
+			opened[i].start += len(quoted)
+			opened[i].end += len(quoted)
 		}
 		pending, held = opened, line
 	}
 	if len(pending) > 0 {
 		release()
 	}
+	out.WriteString(lines)
 	return out.String()
 }
 
@@ -826,6 +903,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 	var invocations []Invocation
 	var current strings.Builder
 	var heredocs []heredoc
+	var joined string // the heredoc body line a backslash-newline continues
 	var openQuote byte
 	var quotes []byte
 	var position int
@@ -886,6 +964,12 @@ func ShellInvocations(script, commandName string) []Invocation {
 	conditionalGroup, groupDepth := -1, 0
 	for line := range strings.Lines(script) {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if len(heredocs) > 0 && openQuote == 0 {
+			if heredocs[0].endsAt(line, &joined) {
+				heredocs = heredocs[1:]
+			}
+			continue
+		}
 		if openQuote != 0 {
 			// Bash reads these lines as text inside one word, which runs no
 			// command. What follows the closing byte on that line is syntax
@@ -904,7 +988,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			text = ": " + text[at+1:]
 		}
 		if len(heredocs) > 0 {
-			if heredocs[0].endsAt(text) {
+			if heredocs[0].endsAt(text+"\n", &joined) {
 				heredocs = heredocs[1:]
 			}
 			continue
@@ -1301,7 +1385,16 @@ func shellWords(line string, stack []byte) (
 			inWord = true
 		}
 	}
+	if continues && pending {
+		// The delimiter word, or the word after the operator, runs on to the
+		// next line, so the text here is not the delimiter bash compares.
+		unresolved = true
+	}
 	flush()
+	if continues && pending {
+		heredocs = append(heredocs, heredoc{"", stripTabs, true, false, operatorAt, index})
+		pending = false
+	}
 	if substituted {
 		words = nil
 	}

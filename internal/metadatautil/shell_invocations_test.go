@@ -5,6 +5,7 @@ package metadatautil_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
@@ -285,6 +286,41 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"two"}},
 		},
 		{
+			name:   "a body line a backslash continues joins the delimiter line after it",
+			script: "cat <<PLAN\nfoo\\\nPLAN\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a tab-stripped body line a backslash continues joins the delimiter line after it",
+			script: "cat <<-PLAN\n\tfoo\\\n\tPLAN\noras cp one\n\tPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a body line a backslash continues can spell the delimiter",
+			script: "cat <<PLAN\nPL\\\nAN\noras cp one\nPLAN\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "an escaped backslash continues no body line",
+			script: "cat <<PLAN\nfoo\\\\\nPLAN\noras cp one\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "a quoted delimiter's body joins no lines",
+			script: "cat <<'PLAN'\nfoo\\\nPLAN\noras cp one\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "a carriage return keeps the body open",
+			script: "cat <<PLAN\nPLAN\r\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a delimiter a backslash continues is the joined word",
+			script: "cat <<PL\\\nAN\nPL\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
 			name:   "a heredoc body with a quoted delimiter runs nothing",
 			script: "cat <<'PLAN'\noras cp one\nPLAN\noras cp two\n",
 			want:   [][]string{{"two"}},
@@ -464,6 +500,55 @@ func TestShellInvocations(t *testing.T) {
 				t.Fatalf("ShellInvocations() = %q, want %q", got, testCase.want)
 			}
 		})
+	}
+}
+
+// A heredoc body ends where bash ends it: at a line that is exactly the
+// delimiter, carriage return included, after a body line that ends in an odd
+// run of backslashes is joined with the next for a delimiter with no quoting,
+// and with a delimiter word a backslash-newline continues read whole.
+func TestEveryShellCommandEndsHeredocsWhereBashDoes(t *testing.T) {
+	t.Parallel()
+	for name, script := range map[string]string{
+		"a continued body line":             "cat <<EOF\nfoo\\\nEOF\nhidden\nEOF\nafter\n",
+		"a continued tab-stripped line":     "cat <<-EOF\n\tfoo\\\n\tEOF\nhidden\n\tEOF\nafter\n",
+		"three backslashes":                 "cat <<EOF\nfoo\\\\\\\nEOF\nhidden\nEOF\nafter\n",
+		"a carriage return":                 "cat <<EOF\nEOF\r\nhidden\nEOF\nafter\n",
+		"a continued delimiter word":        "cat <<EO\\\nF\nEO\nhidden\nEOF\nafter\n",
+		"a continued heredoc operator":      "cat <<\\\nEOF\nhidden\nEOF\nafter\n",
+		"a joined line spells the end":      "cat <<EOF\nEO\\\nF\nafter\nEOF\n",
+		"an escaped backslash":              "cat <<EOF\nfoo\\\\\nEOF\nafter\n",
+		"a quoted delimiter joins no line":  "cat <<'EOF'\nfoo\\\nEOF\nafter\n",
+		"tabs after a continued line":       "cat <<-EOF\n\tEO\\\n\tF\nhidden\n\tEOF\nafter\n",
+		"a body opened on a continued line": "cat <<EOF \\\n&& after\nhidden\nEOF\n",
+		"a comment sign inside a word":      "echo a\\\n#<<EOF\nhidden\nEOF\nafter\n",
+		"tabs before a continued end":       "cat <<-EOF\n\t\t\t\t\\\n\tEOF\nafter\n",
+		"many tab breaks between words":     "echo " + strings.Repeat("a\t\\\n", 100) + "b\nafter\n",
+		"a lone backslash line":             "\\\nafter\n",
+		"many continued words":              strings.Repeat("echo a\\\nb\n", 100) + "after\n",
+		"many breaks between words":         "echo " + strings.Repeat("a \\\n", 100) + "b\nafter\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := metadatautil.EveryShellCommand(script)
+			if slices.ContainsFunc(got, func(command []string) bool { return slices.Contains(command, "hidden") }) {
+				t.Fatalf("EveryShellCommand(%q) = %q, which runs a body line", script, got)
+			}
+			if !slices.ContainsFunc(got, func(command []string) bool { return slices.Equal(command, []string{"after"}) }) {
+				t.Fatalf("EveryShellCommand(%q) = %q, want the command after the body", script, got)
+			}
+		})
+	}
+}
+
+func TestEveryShellCommandStopsJoiningAWordPastTheLimit(t *testing.T) {
+	t.Parallel()
+	// Past the limit the reader reads the rest of the script as a body it
+	// cannot end, as for a delimiter it cannot resolve.
+	script := "echo " + strings.Repeat("a\\\n", 64) + "<\\\n<EOF\nhidden\nEOF\n"
+	got := metadatautil.EveryShellCommand(script)
+	if slices.ContainsFunc(got, func(command []string) bool { return slices.Contains(command, "hidden") }) {
+		t.Fatalf("EveryShellCommand() = %q, which runs a body line", got)
 	}
 }
 
