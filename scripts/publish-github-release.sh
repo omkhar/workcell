@@ -90,6 +90,9 @@ cleanup() {
 trap cleanup EXIT
 build_go_tool_in_repo "${ROOT_DIR}" "${HOSTUTIL_BIN}" ./cmd/workcell-hostutil
 "${HOSTUTIL_BIN}" release classify-tag "${TAG_NAME}" >/dev/null
+# A command a variable names may change shell options, so pipefail is set
+# again for the pipelines below.
+set -o pipefail
 
 TAG_REF="refs/tags/${TAG_NAME}"
 TAG_OBJECT_SHA="$(git -C "${ROOT_DIR}" --no-replace-objects rev-parse --verify "${TAG_REF}^{tag}")" || {

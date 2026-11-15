@@ -78,6 +78,9 @@ run_gate() {
     failures=$((failures + 1))
   fi
 }
+# run_gate runs words its caller passes, which may change shell options, so
+# pipefail is set again for the pipelines below.
+set -o pipefail
 
 gate_commit() {
   local oid="$1" merge_base file

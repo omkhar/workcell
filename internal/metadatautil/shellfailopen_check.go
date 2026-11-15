@@ -645,8 +645,17 @@ func shellBudgetedPipefailTurns(raw string, budget *int, depth int) (turns pipef
 	var commands [][]string
 	operators := []string{";"} // the operator before each command
 	commands = append(commands, nil)
+	inTest := 0 // inside [[ ]], && and || join tests, not commands
 	for _, each := range words {
-		if !each.quoted && isOperator(each.text) {
+		if !each.quoted {
+			switch each.text {
+			case "[[":
+				inTest++
+			case "]]":
+				inTest = max(inTest-1, 0)
+			}
+		}
+		if !each.quoted && isOperator(each.text) && !(inTest > 0 && (each.text == "&&" || each.text == "||")) {
 			commands, operators = append(commands, nil), append(operators, each.text)
 			continue
 		}
@@ -693,10 +702,15 @@ func shellBudgetedPipefailTurns(raw string, budget *int, depth int) (turns pipef
 			}
 			command = command[min(1, len(command)):]
 		}
+		if len(command) > 0 && shellArrayAssignment.MatchString(command[0]) {
+			command = nil // the words up to its ) are the array's elements, not a command
+		}
 		command = unwrapBuiltins(command[assignmentPrefix(command):])
 		alone := !slices.Contains([]string{"|", "|&"}, operators[at]) && !slices.Contains([]string{"|", "|&", "&"}, operators[at+1])
 		turn := shellSetsPipefail(command)
-		turns.unread = turns.unread || shellOptionsUnread(command)
+		if shellOptionsUnread(command) {
+			turns.unread, turns.off = true, true // options an expansion spells may turn pipefail off
+		}
 		// inner reads text bash may run as commands: an eval's, which runs
 		// here, or a trap action's or a mapfile callback's, which run later.
 		inner := func(text string, here bool) {
@@ -716,7 +730,7 @@ func shellBudgetedPipefailTurns(raw string, budget *int, depth int) (turns pipef
 		switch {
 		case len(command) == 0:
 		case expands(command[0]):
-			turns.may, turns.cleared = true, false // a command an expansion spells may turn pipefail on
+			turns.may, turns.cleared, turns.off = true, false, true // a command an expansion spells may turn pipefail on or off
 		case command[0] == "source" || command[0] == "." || command[0] == "alias", command[0] == "eval" && slices.ContainsFunc(command[1:], expands):
 			turns.may, turns.cleared, turns.off = true, false, true // a library, an alias or an expansion eval runs may turn pipefail on or off
 		case command[0] == "eval" && len(command) > 1:
@@ -751,6 +765,10 @@ func shellBudgetedPipefailTurns(raw string, budget *int, depth int) (turns pipef
 	}
 	return turns
 }
+
+// shellArrayAssignment is the first word of an array assignment, as a=( or
+// a+=( spells it.
+var shellArrayAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=\(`)
 
 // shellDropsWords reports whether raw holds a command substitution inside
 // double quotes, whose line shellWords drops with every command on it.
