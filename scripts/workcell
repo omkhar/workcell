@@ -8576,8 +8576,9 @@ replace_shadow_symlinks_with_placeholder() {
 }
 
 # Workspace control-plane directories that the safe path masks, in match
-# order. Each one matches at any depth in the Git index. The find walks match
-# a name without a slash at any depth, and a path with a slash at the top only.
+# order. Each one matches at any depth in the Git index and in the working
+# tree: the find walks match a name without a slash by name, and a path with a
+# slash by path, in any case (workspace_control_plane_slash_dir_paths).
 WORKSPACE_CONTROL_PLANE_DIRS=(
   .codex .claude .copilot .gemini .amp .goose
   .github/instructions .github/copilot .github/hooks .github/agents .github/skills
@@ -8618,12 +8619,63 @@ workspace_control_plane_nested_file_paths() {
   done
 }
 
+# workspace_control_plane_slash_dir_paths prints, NUL-separated, the
+# workspace-relative path of each WORKSPACE_CONTROL_PLANE_DIRS entry with a
+# slash that can show in the session: each entry at the top, each directory or
+# symlink at that path below the top, and that path below each symlink at a
+# leading part of it, such as x/.agents/plugins below a symlink at x/.agents.
+# The match ignores case, as APFS does, so x/.Agents/Plugins counts, and one
+# walk finds both kinds. The callers refuse a path below a symlink before they
+# test it. A pipe, not a process substitution, so pipefail returns the status
+# of a failed walk.
+workspace_control_plane_slash_dir_paths() {
+  local workspace="$1"
+  local rel="" lead="" path=""
+  local -a slash_rels=() path_tests=() link_tests=()
+
+  for rel in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
+    [[ "${rel}" == */* ]] || continue
+    printf '%s\0' "${rel}"
+    slash_rels+=("${rel}")
+    path_tests+=(${path_tests[@]+-o} -ipath "*/${rel}")
+    lead="${rel}"
+    while [[ "${lead}" == */* ]]; do
+      lead="${lead%/*}"
+      link_tests+=(${link_tests[@]+-o} -ipath "*/${lead}")
+    done
+  done
+  find "${workspace}" \( -name .git -type d -prune \) -o \
+    \( \( -type d -o -type l \) \( "${path_tests[@]}" \) \) -print0 -o \
+    \( -type l \( "${link_tests[@]}" \) \) -print0 |
+    while IFS= read -r -d '' path; do
+      path="${path#"${workspace}/"}"
+      # The pipe runs this loop in a subshell, so the option ends with it.
+      shopt -s nocasematch
+      for rel in "${slash_rels[@]}"; do
+        if [[ "/${path}" == */"${rel}" ]]; then
+          printf '%s\0' "${path}"
+        fi
+        [[ -L "${workspace}/${path}" ]] || continue
+        lead="${rel}"
+        while [[ "${lead}" == */* ]]; do
+          lead="${lead%/*}"
+          if [[ "/${path}" == */"${lead}" ]]; then
+            printf '%s\0' "${path}/${rel#"${lead}/"}"
+          fi
+        done
+      done
+    done || return 1
+}
+
+# git_index_control_plane_dir_roots prints, NUL-separated, each control-plane
+# directory that holds a path in the Git index, at any depth. A failed index
+# read returns non-zero.
 git_index_control_plane_dir_roots() {
   local workspace="$1"
   local path="" dir=""
 
   workspace_is_git_worktree "${workspace}" || return 0
-  while IFS= read -r -d '' path; do
+  run_clean_host_command git -C "${workspace}" ls-files -z --cached | while IFS= read -r -d '' path; do
     for dir in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
       if [[ "${path}" == "${dir}"/* ]]; then
         printf '%s\0' "${dir}"
@@ -8636,7 +8688,7 @@ git_index_control_plane_dir_roots() {
         continue 2
       fi
     done
-  done < <(run_clean_host_command git -C "${workspace}" ls-files -z --cached)
+  done
 }
 
 # Refuse when any parent directory component of a workspace-relative control
@@ -8648,19 +8700,135 @@ refuse_symlinked_workspace_parent_component() {
   local workspace="$1"
   local relative_path="$2"
   [[ "${relative_path}" == */* ]] || return 0
-  local parent="${relative_path%/*}"
-  local current="${workspace}"
+  local current=""
+  # Parameter expansion, not read: a name may hold a newline.
+  current="$(workspace_symlinked_parent_component "${workspace}" "${relative_path%/*}")" || return 0
+  echo "Workcell refuses workspace control path ${relative_path}: parent component is a symlink and could redirect it outside the workspace: ${current}" >&2
+  exit 2
+}
+
+# workspace_symlinked_parent_component WORKSPACE DIR prints the first
+# component of WORKSPACE/DIR that is a symlink and succeeds, or fails when
+# there is none.
+workspace_symlinked_parent_component() {
+  local current="$1"
+  local rest="$2"
   local component=""
-  local -a components=()
-  IFS='/' read -r -a components <<<"${parent}"
-  for component in "${components[@]}"; do
+
+  while [[ -n "${rest}" ]]; do
+    component="${rest%%/*}"
+    if [[ "${rest}" == */* ]]; then
+      rest="${rest#*/}"
+    else
+      rest=""
+    fi
     [[ -n "${component}" ]] || continue
     current="${current}/${component}"
     if [[ -L "${current}" ]]; then
-      echo "Workcell refuses workspace control path ${relative_path}: parent component is a symlink and could redirect it outside the workspace: ${current}" >&2
-      exit 2
+      printf '%s' "${current}"
+      return 0
     fi
   done
+  return 1
+}
+
+# workspace_container_path_resolve WORKSPACE REL prints where /workspace/REL
+# leads inside the container, which mounts WORKSPACE at /workspace. It reads
+# each symlink under /workspace on the host and follows it as the container
+# does, so a link to /workspace/x that dangles on the host still resolves.
+# Status 0: the path stays under /workspace. Status 1: the path leaves
+# /workspace, and the output is the rest of it. Status 2: a link cannot be
+# read, or more than 40 links follow. The output has no final newline, so a
+# name that ends in a newline keeps it.
+workspace_container_path_resolve() {
+  local workspace="$1"
+  local rest="$2"
+  local current="/workspace" component="" next="" target=""
+  local hops=0
+
+  while [[ -n "${rest}" ]]; do
+    component="${rest%%/*}"
+    if [[ "${rest}" == */* ]]; then
+      rest="${rest#*/}"
+    else
+      rest=""
+    fi
+    case "${component}" in
+      '' | .) continue ;;
+      ..)
+        current="${current%/*}"
+        current="${current:-/}"
+        continue
+        ;;
+    esac
+    next="${current%/}/${component}"
+    case "${next}" in
+      /workspace | /workspace/*) ;;
+      *)
+        printf '%s' "${next}${rest:+/${rest}}"
+        return 1
+        ;;
+    esac
+    if [[ -L "${workspace}${next#/workspace}" ]]; then
+      hops=$((hops + 1))
+      ((hops <= 40)) || return 2
+      # The sentinel keeps a trailing newline that is part of the target.
+      target="$(readlink -- "${workspace}${next#/workspace}" && printf x)" || return 2
+      target="${target%x}"
+      target="${target%$'\n'}"
+      [[ -n "${target}" ]] || return 2
+      [[ "${target}" != /* ]] || current="/"
+      rest="${target}${rest:+/${rest}}"
+      continue
+    fi
+    current="${next}"
+  done
+  printf '%s' "${current}"
+}
+
+# refuse_redirected_workspace_control_path WORKSPACE REL stops the launch when
+# a parent component of the control path REL is a symlink and REL can show in
+# the session. A parent link can resolve only inside the container: a link to
+# /workspace/evil dangles on the host. So REL counts as present when the host
+# or the Git index has it, or when the container view of its parent holds it.
+# A view that leaves /workspace reads image content. A view below /proc, /dev
+# or /sys, or one that climbs back with .., can reach the workspace again, so
+# it counts as present. An absent REL below a link stays a legal layout.
+refuse_redirected_workspace_control_path() {
+  local workspace="$1"
+  local relative_path="$2"
+  local parent="" current="" linked="" resolved="" status=0
+
+  [[ "${relative_path}" == */* ]] || return 0
+  parent="${relative_path%/*}"
+  linked="$(workspace_symlinked_parent_component "${workspace}" "${parent}")" || return 0
+
+  if [[ ! -e "${workspace}/${relative_path}" ]] && [[ ! -L "${workspace}/${relative_path}" ]] &&
+    ! git_index_has_path "${workspace}" "${relative_path}"; then
+    # The status rides after the last newline, so a trailing newline in the
+    # resolved name survives the command substitution.
+    resolved="$(
+      status=0
+      workspace_container_path_resolve "${workspace}" "${parent}" || status=$?
+      printf '\n%d' "${status}"
+    )"
+    status="${resolved##*$'\n'}"
+    resolved="${resolved%$'\n'*}"
+    case "${status}" in
+      0)
+        current="${workspace}${resolved#/workspace}/${relative_path##*/}"
+        [[ -e "${current}" ]] || [[ -L "${current}" ]] || return 0
+        ;;
+      1)
+        case "/${resolved}/" in
+          //proc/* | //dev/* | //sys/* | */../*) ;;
+          *) return 0 ;;
+        esac
+        ;;
+    esac
+  fi
+  echo "Workcell refuses workspace control path ${relative_path}: parent component is a symlink and could redirect it outside the workspace: ${linked}" >&2
+  exit 2
 }
 
 register_workspace_control_plane_file_mount() {
@@ -8675,7 +8843,9 @@ register_workspace_control_plane_file_mount() {
   # it is missing. Present means it exists (following symlinks) OR is a symlink
   # itself (dangling on host) OR is tracked in the git index; that -L/index
   # coverage keeps a dangling-on-host leaf symlink and a file reached through a
-  # symlinked parent both classified as present.
+  # symlinked parent both classified as present. A parent link that resolves
+  # only inside the container is checked first, since the host sees no file.
+  refuse_redirected_workspace_control_path "${workspace}" "${relative_path}"
   if [[ ! -e "${source_path}" ]] && [[ ! -L "${source_path}" ]] && ! git_index_has_path "${workspace}" "${relative_path}"; then
     return 0
   fi
@@ -8739,7 +8909,10 @@ register_workspace_control_plane_dir_mount() {
   local source_path="${workspace}/${relative_path}"
   local destination="/workspace/${relative_path}"
 
-  [[ -e "${source_path}" ]] || return 0
+  # A parent link can resolve only inside the container, and a leaf link that
+  # dangles on the host can too, so check both before the presence test.
+  refuse_redirected_workspace_control_path "${workspace}" "${relative_path}"
+  [[ -e "${source_path}" ]] || [[ -L "${source_path}" ]] || return 0
   # A symlinked parent (an .agents link for .agents/plugins) would make the
   # mount source a directory outside the workspace.
   refuse_symlinked_workspace_parent_component "${workspace}" "${relative_path}"
@@ -8997,26 +9170,40 @@ prepare_workspace_control_plane_shadow() {
     exit 2
   fi
 
+  # The name walk finds each control directory without a slash at any depth.
+  # The slash list holds each entry with a slash at any depth, each such path
+  # below a symlink, and each control directory in the Git index. A failed
+  # walk or index read must not pass as "no control directory".
+  local control_dir_hits="${CONTROL_PLANE_SHADOW_ROOT}/control-dir-hits"
+  if ! find "${workspace}" \
+    \( -name .git -type d -prune \) -o \
+    \( \( -type d -o -type l \) \( "${control_dir_name_tests[@]}" \) \) -print0 >"${control_dir_hits}"; then
+    echo "Refusing workspace: Workcell could not inventory the control-plane directories: ${workspace}" >&2
+    exit 2
+  fi
+  local slash_control_dirs="${CONTROL_PLANE_SHADOW_ROOT}/slash-control-dirs"
+  if ! { workspace_control_plane_slash_dir_paths "${workspace}" && git_index_control_plane_dir_roots "${workspace}"; } |
+    LC_ALL=C sort -zu >"${slash_control_dirs}"; then
+    echo "Refusing workspace: Workcell could not inventory the nested control-plane directories: ${workspace}" >&2
+    exit 2
+  fi
+
   if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
     while IFS= read -r -d '' path; do
       rel="${path#"${workspace}/"}"
       register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
-    done < <(
-      find "${workspace}" \
-        \( -name .git -type d -prune \) -o \
-        \( \( -type d -o -type l \) \( "${control_dir_name_tests[@]}" \) \) -print0
-    )
+    done <"${control_dir_hits}"
 
-    for rel in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
-      [[ "${rel}" == */* ]] || continue
+    while IFS= read -r -d '' rel; do
       register_workspace_control_plane_dir_mount "${workspace}" "${rel}"
-    done
+    done <"${slash_control_dirs}"
 
     while IFS= read -r -d '' rel; do
       register_workspace_control_plane_file_mount "${workspace}" "${rel}"
     done <"${nested_control_files}"
 
     for rel in "${WORKSPACE_CONTROL_PLANE_FILES[@]}"; do
+      refuse_redirected_workspace_control_path "${workspace}" "${rel}"
       if workspace_rel_is_mcp_surface "${rel}"; then
         if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
           # Acknowledged: mount from the session workspace (the isolated clone in
@@ -9045,20 +9232,15 @@ prepare_workspace_control_plane_shadow() {
     while IFS= read -r -d '' path; do
       rel="${path#"${workspace}/"}"
       add_shadow_dir_mount "${workspace}" "${rel}"
-    done < <(
-      find "${workspace}" \
-        \( -name .git -type d -prune \) -o \
-        \( \( -type d -o -type l \) \( "${control_dir_name_tests[@]}" \) \) -print0
-    )
-    for rel in "${WORKSPACE_CONTROL_PLANE_DIRS[@]}"; do
-      [[ "${rel}" == */* ]] || continue
+    done <"${control_dir_hits}"
+    while IFS= read -r -d '' rel; do
+      # A parent link can lead to a directory that only the container sees, so
+      # refuse it before the host presence test.
+      refuse_redirected_workspace_control_path "${workspace}" "${rel}"
       if [[ -d "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
         add_shadow_dir_mount "${workspace}" "${rel}"
       fi
-    done
-    while IFS= read -r -d '' rel; do
-      add_shadow_dir_mount "${workspace}" "${rel}"
-    done < <(git_index_control_plane_dir_roots "${workspace}" | LC_ALL=C sort -zu)
+    done <"${slash_control_dirs}"
 
     while IFS= read -r -d '' rel; do
       # A symlinked parent could redirect the masked path outside the
@@ -9068,6 +9250,7 @@ prepare_workspace_control_plane_shadow() {
     done <"${nested_control_files}"
 
     for rel in "${WORKSPACE_CONTROL_PLANE_FILES[@]}"; do
+      refuse_redirected_workspace_control_path "${workspace}" "${rel}"
       if [[ -f "${workspace}/${rel}" ]] || [[ -L "${workspace}/${rel}" ]] || git_index_has_path "${workspace}" "${rel}"; then
         if workspace_rel_is_mcp_surface "${rel}"; then
           if [[ "${ALLOW_REPO_MCP}" -eq 1 ]]; then
