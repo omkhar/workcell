@@ -84,7 +84,9 @@ func TestHostedControlsRunnerUsesGitHubTokenOutsideActions(t *testing.T) {
 
 func TestHostedControlsVerifierRelaysAmbientTokenOnce(t *testing.T) {
 	root := t.TempDir()
-	verifier := filepath.Join(root, "verify-github-hosted-controls.sh")
+	// The mutant sits at the verifier's own path in a private tree, where its
+	// entry guard accepts it.
+	verifier := filepath.Join(root, "scripts", "verify-github-hosted-controls.sh")
 	sourcePath := filepath.Join(repoRoot(t), "scripts", "verify-github-hosted-controls.sh")
 	content, err := os.ReadFile(sourcePath)
 	if err != nil {

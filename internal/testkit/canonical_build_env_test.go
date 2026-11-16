@@ -721,27 +721,57 @@ func stagedCanonicalEntrypoint(
 }
 
 func canonicalEntrypointOrder(text, relative, firstOperation string) bool {
-	anchors := []string{
+	plain := []string{
 		`ROOT_DIR="$(CDPATH='' cd -- `,
 		`source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"`,
 		`workcell_require_modern_privileged_bash "$@"`,
 		"workcell_require_canonical_build_environment",
 		firstOperation,
 	}
+	// An entry-guarded script resolves its tree root first, stops when that
+	// root is empty, and takes ROOT_DIR and its helpers from it.
+	guarded := []string{
+		`workcell_entry_root="$(`,
+		`[[ -n "${workcell_entry_root}" ]] || {`,
+		`ROOT_DIR="${workcell_entry_root}"`,
+		`source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"`,
+		`workcell_require_modern_privileged_bash "$@"`,
+		"workcell_require_canonical_build_environment",
+		firstOperation,
+	}
 	if relative == "scripts/verify-github-hosted-controls.sh" {
-		anchors[0] = `source "${BASH_SOURCE[0]%/*}/lib/canonical-build-env.sh"`
-		anchors[1] = `workcell_require_modern_privileged_bash "$@"`
-		anchors[2] = `ROOT_DIR="$(CDPATH='' cd -- `
-	}
-	previous := -1
-	for _, anchor := range anchors {
-		current := strings.Index(text, anchor)
-		if current <= previous {
-			return false
+		plain = []string{
+			`source "${BASH_SOURCE[0]%/*}/lib/canonical-build-env.sh"`,
+			`workcell_require_modern_privileged_bash "$@"`,
+			`ROOT_DIR="$(CDPATH='' cd -- `,
+			"workcell_require_canonical_build_environment",
+			firstOperation,
 		}
-		previous = current
+		guarded = []string{
+			`workcell_entry_root="$(`,
+			`[[ -n "${workcell_entry_root}" ]] || {`,
+			`source "${workcell_entry_root}/scripts/lib/canonical-build-env.sh"`,
+			`workcell_require_modern_privileged_bash "$@"`,
+			`ROOT_DIR="${workcell_entry_root}"`,
+			"workcell_require_canonical_build_environment",
+			firstOperation,
+		}
 	}
-	return true
+	for _, anchors := range [][]string{plain, guarded} {
+		previous := -1
+		for _, anchor := range anchors {
+			current := strings.Index(text, anchor)
+			if current <= previous {
+				previous = -2
+				break
+			}
+			previous = current
+		}
+		if previous >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCanonicalBuildEnvironmentDirectEntrypoints(t *testing.T) {
