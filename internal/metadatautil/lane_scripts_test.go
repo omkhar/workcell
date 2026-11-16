@@ -4,6 +4,7 @@
 package metadatautil_test
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -36,6 +37,9 @@ func TestLaneScripts(t *testing.T) {
 		"scripts/ci/job-cd.sh":     "cd /tmp\nscripts/p.sh\n",
 		"scripts/ci/job-src.sh":    jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/x.sh\"\nscripts/r.sh\n",
 		"scripts/ci/job-bare.sh":   "gate.sh\n",
+		"scripts/ci/job-zz.sh":     "./scripts/zz.sh\n",
+		".github/workflows/jobs.yml": "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          ./scripts/ci/job-x.sh\n          scripts/ci/job-cd.sh x\n" +
+			"          bash ./scripts/ci/job-src.sh\n          ./scripts/ci/job-bare.sh\n",
 		".github/workflows/x.yml": "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./scripts/d.sh --flag\n      - run: echo scripts/e.sh\n" +
 			"      - run: ${ROOT_DIR}/scripts/v.sh\n      - run: w.sh\n        working-directory: scripts\n" +
 			"      - run: scripts/j.sh\n        working-directory: other\n      - run: |\n          cd other\n          scripts/l.sh\n" +
@@ -446,7 +450,13 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"unset of a list that holds PATH", "for name in CC PATH; do unset \"${name}\"; done\n" + gate, nil, "names a variable by"},
 		{"indirect expansion of a positional parameter", ": \"${!1-}\"\n" + gate, nil, "whose name a parameter or an expansion computes"},
 		{"unset of a listed name before its loop", "unset \"${name}\"\nfor name in CC; do :; done\n" + gate, nil, "names a variable by"},
-		{"arithmetic after the reader loses track of nesting", "coproc { :; }\nn=0\n(( n ))\n" + gate, nil, inArithmetic},
+		{"arithmetic after the reader loses track of nesting", "coproc C ( :; )\nn=0\n(( n ))\n" + gate, nil, inArithmetic},
+		{"arithmetic after a named coproc of a group", "coproc C { :; }\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after time -p of a group", "time -p { :; }\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a subshell of one word in an if", "if true; then (echo); fi\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a subshell whose first line ends in a quoted )", "(echo \")\"\n)\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a case at the start of a subshell in a substitution", "x=$( (case x in x) :;; esac); echo )\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a subshell of one word in a substitution", "x=$( (echo); echo )\nn=0\n(( n ))\n" + gate, nil, "wired"},
 		{"indirect expansion and unset of a prefix listing", "for name in \"${!GO@}\" CC; do : \"${!name-}\"; unset \"${name}\"; done\n" + gate, nil, "wired"},
 		{"arithmetic before the first assignment", "(( n )) || true; n=0\n" + gate, nil, inArithmetic},
 		{"arithmetic after a conditional assignment", "false && n=0; (( n ))\n" + gate, nil, inArithmetic},
@@ -798,11 +808,11 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		{"f() { case x in *) exit 0;; esac; }; f", ended}, {"f() { case x in x | y) exit 0;; esac; }; f", ended}, {"f() {\n  case x in\n    *)\n      exit 0\n      ;;\n  esac\n}\nf", ended},
 		{"for i in 1; do exit 0; done", ended}, {"while :; do exit 0; done", ended}, {"until false; do exit 0; done", ended}, {"select x in a; do exit 0; done", ended},
 		{"f() { if false; then return; fi; exit 0; }; f", ended}, {"f() { for i in; do return; done; exit 0; }; f", ended}, {"f() { while false; do return; done; exit 0; }; f", ended},
-		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", "wired"}, {"case \"${1}\" in -h|--help) exit 0;; esac", "wired"},
-		{"case \"$1\" in\n  --profile | --help)\n    exit 0\n    ;;\nesac", "wired"}, {"case \"${1:-}\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", ended},
-		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\n  *) exit 0 ;;\nesac", ended}, {"case \"$2\" in --help) exit 0;; esac", "wired"}, {"case \"${EVENT}\" in\n  issues)\n    exit 0\n    ;;\n  x) ;;\nesac", "wired"},
-		{"case \"$E\" in\n  a) : ;;\n  *)\n    exit 0\n    ;;\nesac", ended}, {"case \"$E\" in a*) exit 0;; esac", ended}, {"case \"$E\" in\n  * | a)\n    exit 0\n    ;;\nesac", ended}, {"case \"$E\" in * | a) exit 0;; esac", ended}, {"case \"$1\" in * | -h) exit 0;; esac", ended}, {"case \"$E\" in\n  a)\n    ls * | cat\n    ;;\n  b)\n    exit 0\n    ;;\nesac", "wired"}, {"case \"${E}x\" in a) exit 0;; esac", ended},
-		{"case \"$0\" in a) exit 0;; esac", ended}, {"case \"$E\" in \"$F\") exit 0;; esac", ended}, {"f() {\n  case \"$E\" in\n    a)\n      exit 0\n      ;;\n  esac\n}\nf", "wired"},
+		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", ended}, {"case \"${1}\" in -h|--help) exit 0;; esac", ended},
+		{"case \"$1\" in\n  --profile | --help)\n    exit 0\n    ;;\nesac", ended}, {"case \"${1:-}\" in\n  -h | --help)\n    exit 0\n    ;;\nesac", ended},
+		{"case \"$1\" in\n  -h | --help)\n    exit 0\n    ;;\n  *) exit 0 ;;\nesac", ended}, {"case \"$2\" in --help) exit 0;; esac", ended}, {"case \"${EVENT}\" in\n  issues)\n    exit 0\n    ;;\n  x) ;;\nesac", ended},
+		{"case \"$E\" in\n  a) : ;;\n  *)\n    exit 0\n    ;;\nesac", ended}, {"case \"$E\" in a*) exit 0;; esac", ended}, {"case \"$E\" in\n  * | a)\n    exit 0\n    ;;\nesac", ended}, {"case \"$E\" in * | a) exit 0;; esac", ended}, {"case \"$1\" in * | -h) exit 0;; esac", ended}, {"case \"$E\" in\n  a)\n    ls * | cat\n    ;;\n  b)\n    exit 0\n    ;;\nesac", ended}, {"case \"${E}x\" in a) exit 0;; esac", ended},
+		{"case \"$0\" in a) exit 0;; esac", ended}, {"case \"$E\" in \"$F\") exit 0;; esac", ended}, {"f() {\n  case \"$E\" in\n    a)\n      exit 0\n      ;;\n  esac\n}\nf", ended},
 		{"f() { case \"$1\" in -h) exit 0;; esac; }; f x", ended}, {"case x in\n  x)\n    exit 1\n    ;;\nesac", "wired"},
 		{"case x in a | b | x) exit 0;; esac", ended}, {"case x in\n  a) : ;;\n  x | y)\n    exit 0\n    ;;\nesac", ended},
 		{"f() {\n  case \"$1\" in\n    -h | --help)\n      exit 0\n      ;;\n  esac\n}\nf -h", ended},
@@ -823,7 +833,7 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		struct{ name, library, want string }{"a library that defines a function in eval text", "eval 'g() { exit 0; }'\n", inEval},
 		struct{ name, library, want string }{"a library whose case branch exits", "case x in *) exit 0;; esac\n", ended},
 		struct{ name, library, want string }{"a library whose help case exits", "case \"$1\" in -h|--help) exit 0;; esac\n", ended},
-		struct{ name, library, want string }{"a library whose case on a variable exits", "case \"$E\" in a) exit 0;; esac\n", "wired"})
+		struct{ name, library, want string }{"a library whose case on a variable exits", "case \"$E\" in a) exit 0;; esac\n", ended})
 	for _, tc := range cases {
 		lanes = append(lanes, struct{ name, lane, library, want string }{tc.name, `source "${ROOT_DIR}/scripts/lib/l.sh"`, tc.library, tc.want})
 	}
@@ -842,6 +852,212 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), unread) || !strings.Contains(err.Error()+"$", tc.want) { // a want that ends in $ ends the error
 				t.Fatalf("LaneScripts() = %q, %v, want an error with %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestLaneScriptsReadsCaseBranches reads a case branch as a condition only
+// where no lane fixes its subject: a step's env sets it from the github
+// context, or it is a lane script's $1 that no step's arguments select. A
+// pattern list split at |, a quoted or glob pattern, and a branch a ;& or ;;&
+// runs each run whenever the case does, and a lane script counts only where a
+// step runs it.
+func TestLaneScriptsReadsCaseBranches(t *testing.T) {
+	t.Parallel()
+	const (
+		ended = "ends the lane's shell before a later command"
+		event = "        env:\n          E: ${{ github.event_name }}\n"
+		lane  = "while [[ $# -gt 0 ]]; do\n  case \"$1\" in\n    --profile)\n      P=\"${2:-}\"\n      shift 2\n      ;;\n    -h | --help)\n      exit 0\n      ;;\n    *)\n      exit 2\n      ;;\n  esac\ndone\n./scripts/gate.sh\n"
+		flags = "    -h | --help)\n      exit 0\n      ;;\n"
+	)
+	step := func(run, env string) string {
+		return "      - run: |\n          " + strings.ReplaceAll(run, "\n", "\n          ") + "\n" + env
+	}
+	gated := func(text, env string) string { return step(text+"\n./scripts/gate.sh", env) }
+	runs := func(args string) string { return step("./scripts/ci/job-a.sh"+args, "") }
+	type row struct{ name, on, top, job, steps, lane, library, validate, want string }
+	rows := []row{
+		{name: "an env value from the github context", steps: gated("case \"${E}\" in\n  issues)\n    exit 0\n    ;;\n  issue_comment) ;;\n  *)\n    exit 1\n    ;;\nesac", event), want: "wired"},
+		{name: "a literal pattern list", steps: gated("case $E in a | b) exit 0;; esac", event), want: "wired"},
+		{name: "a pattern list opened by (", steps: gated("case $E in (a) exit 0;; esac", event), want: "wired"},
+		{name: "a later literal pattern list", steps: gated("case $E in y) :;; x | z) exit 0;; esac", event), want: "wired"},
+		{name: "a pipeline in an earlier branch", steps: gated("case \"$E\" in\n  a)\n    ls * | cat\n    ;;\n  b)\n    exit 0\n    ;;\nesac", event), want: "wired"},
+		{name: "a literal env value", steps: gated("case $E in a | b) exit 0;; esac", "        env:\n          E: a\n"), want: ended},
+		{name: "an env value from another env", steps: gated("case $E in a | b) exit 0;; esac", "        env:\n          E: ${{ env.X }}\n"), want: ended},
+		{name: "an env value with more after the github context", steps: gated("case $E in a | b) exit 0;; esac", "        env:\n          E: ${{ github.event_name }}${{ env.X }}\n"), want: ended},
+		{name: "a job env value", job: "    env:\n      E: ${{ github.event_name }}\n", steps: gated("case $E in a | b) exit 0;; esac", ""), want: ended},
+		{name: "an env value the step assigns", steps: gated("E=a\ncase $E in a | b) exit 0;; esac", event), want: ended},
+		{name: "an env value the step reads", steps: gated("read -r E <<<a\ncase $E in a | b) exit 0;; esac", event), want: ended},
+		{name: "an env value printf -v sets", steps: gated("printf -v E a\ncase $E in a | b) exit 0;; esac", event), want: ended},
+		{name: "an env value an expansion assigns", steps: gated(": \"${E:=a}\"\ncase $E in a | b) exit 0;; esac", event), want: ended},
+		{name: "an env value a later command assigns", steps: gated(": x$E;E=1\ncase $E in 1) exit 0;; esac", event), want: ended},
+		{name: "a read of a longer name", steps: gated("echo \"$EE\"\ncase $E in a) exit 0;; esac", event), want: "wired"},
+		{name: "a variable bash sets", steps: gated("case $LINENO in 1) exit 0;; esac", "        env:\n          LINENO: ${{ github.run_number }}\n"), want: ended},
+		{name: "a subject with a default", steps: gated("case \"${E:-}\" in a) exit 0;; esac", event), want: ended},
+		{name: "a pattern list opened by a ( word", steps: gated("case $E in ( a | b) exit 0;; esac", event), want: "wired"},
+		{name: "a quoted pattern", steps: gated("case $E in \"a\") exit 0;; esac", event), want: ended},
+		{name: "an escaped pattern", steps: gated("case $E in \\a) exit 0;; esac", event), want: ended},
+		{name: "a pattern list of two words", steps: gated("case $E in a b) exit 0;; esac", event), want: ended},
+		{name: "a piece of two words", steps: gated("case $E in a b | c) exit 0;; esac", event), want: ended},
+		{name: "a case whose in is on the next line", steps: gated("case $E\nin\n  a) exit 0;;\nesac", event), want: ended},
+		{name: "a background command before an exit", steps: gated("case $E in *) :; true & exit 0;; esac", event), want: ended},
+		{name: "an eval that opens a case", steps: gated("case $E in a) eval 'case x in'\n  exit 0;; esac", event), want: ended},
+		{name: "a pattern that matches any one character", steps: gated("case $E in y) :;; ?) exit 0;; esac", event), want: ended},
+		{name: "a second case after the first closes", steps: gated("case $E in a) :;; esac\ncase $E in b) exit 0;; esac", event), want: "wired"},
+		{name: "an eval of a ;; in a branch", steps: gated("case $E in *) eval ';;'\n  exit 0;; esac", event), want: ended},
+		{name: "a case in a branch on the case line", steps: gated("time case $E in *) case $E in b) exit 0;; esac;; esac", event), want: "wired"},
+		{name: "a case in a branch on a pattern line", steps: gated("case $E in\n  *) case $E in *) exit 0;; esac;;\nesac", event), want: ended},
+		{name: "a branch after an eval that opens a case", steps: gated("case $E in *) eval 'case x in'\n  :;;\n  exit 0\nesac", event), want: ended},
+		{name: "a function a branch defines", steps: gated("case $E in a) f() { while true; do exit 0; done; } ;; esac\nf", event), want: ended},
+	}
+	for _, text := range []string{
+		"case $E in\n  y) : ;;\n  x | *) exit 0 ;;\nesac", "case $E in y) :;; x | *) exit 0;; esac", "case $E in y) :;; x|*) exit 0;; esac",
+		"case $E in y) :;; * | x) exit 0;; esac", "case $E in y) :;; x | ?*) exit 0;; esac", "case $E in y) :;; x | $HOME) exit 0;; esac",
+		"case $E in y) :;; '*'|*) exit 0;; esac", "case $E in y) :;; z) :;; x | *) exit 0;; esac", "case $E in x | y) :;; z | *) exit 0;; esac",
+		"case $E in y) :;; \"$HOME\") exit 0;; esac", "case $E in\n  y) : ;;\n  \"$HOME\")\n    exit 0\n    ;;\nesac", "case $E in y) :;; \"\"*) exit 0;; esac",
+		"case $E in *) :;& x) exit 0;; esac", "case $E in ?*) :;& x) exit 0;; esac", "case $E in *) ;& x) exit 0;; esac",
+		"case $E in a) :;& b) :;& c) exit 0;; esac", "case $E in *) :;;& x) exit 0;; esac", "case $E in\n  *)\n    :\n    ;&\n  x)\n    exit 0\n    ;;\nesac",
+		"case $E in ( y | *) exit 0;; esac", "case $E in (y | *) exit 0;; esac", "case $E in y |\n  *) exit 0;; esac",
+		"case $E in\n  y) : ;;\n  x |\n  *)\n    exit 0\n    ;;\nesac", "case $E in y) :;; x | *) { exit 0; };; esac", "case $E in a) :;; x | y | *) exit 0;; esac",
+	} {
+		rows = append(rows, row{name: fmt.Sprintf("a step that runs %q", text), steps: gated(text, event), want: ended},
+			row{name: fmt.Sprintf("a lane script that runs %q", text), steps: runs(""), lane: strings.ReplaceAll(text, "$E", "$HOME") + "\n./scripts/gate.sh\n", want: ended})
+	}
+	rows = append(rows,
+		row{name: "a lane script no step runs", steps: step("true", ""), lane: lane, want: "unwired"},
+		row{name: "a lane script run with literal options", steps: runs(" --profile x"), lane: lane, want: "wired"},
+		row{name: "a lane script run with no arguments", steps: runs(""), lane: lane, want: "wired"},
+		row{name: "a lane script run with an expanded option value", steps: runs(" --profile \"$X\""), lane: lane, want: "wired"},
+		row{name: "a lane script run by bash with literal options", steps: step("bash ./scripts/ci/job-a.sh --profile x", ""), lane: lane, want: "wired"},
+		row{name: "a lane script run with --help", steps: runs(" --profile x --help"), lane: lane, want: ended},
+		row{name: "a lane script run with -h", steps: runs(" -h"), lane: lane, want: ended},
+		row{name: "a lane script run with an expanded option", steps: runs(" \"$X\""), lane: lane, want: ended},
+		row{name: "a lane script run with a glob", steps: runs(" --pro*"), lane: lane, want: ended},
+		row{name: "a lane script run by bash with --help", steps: step("bash ./scripts/ci/job-a.sh --help", ""), lane: lane, want: ended},
+		row{name: "a lane script run again with --help", steps: runs(" --profile x") + runs(" --help"), lane: lane, want: ended},
+		row{name: "a lane script that shifts before its case", steps: runs(" --profile x"), lane: "shift\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters", steps: runs(" --profile x"), lane: "set -- --help\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters after set -", steps: runs(" --profile x"), lane: "set - --help\n" + lane, want: ended},
+		row{name: "a lane script that sets options", steps: runs(" --profile x"), lane: "set -euo pipefail\n" + lane, want: "wired"},
+		row{name: "a lane script with a second case on $1", steps: runs(" --profile x"), lane: lane + "case \"$1\" in -h) exit 0;; esac\n./scripts/gate.sh\n", want: ended},
+		row{name: "a lane script whose branch shifts twice", steps: runs(" --profile x --help"), lane: strings.Replace(lane, "shift 2", "shift\n      shift", 1), want: ended},
+		row{name: "a lane script whose glob branch comes first", steps: runs(" -x"), lane: strings.Replace(lane, "    --profile)", "    -*)\n      shift\n      ;;\n    --profile)", 1), want: ended},
+		row{name: "a lane script whose branch falls through", steps: runs(" --profile x"), lane: strings.Replace(lane, "      shift 2\n      ;;\n", "      shift 2\n      ;&\n", 1), want: ended},
+		row{name: "a lane script whose function reads $1", steps: runs(" --profile x"), lane: "f() {\n  case \"$1\" in\n" + flags + "  esac\n}\nf\n" + lane, want: ended},
+		row{name: "a lane script run where SHELLOPTS is set", steps: step("./scripts/ci/job-a.sh --profile x", "        env:\n          SHELLOPTS: noexec\n"), lane: lane, want: "unwired"},
+		row{name: "a step env that sets SHELLOPTS", steps: gated("true", "        env:\n          SHELLOPTS: noexec\n"), want: "unwired"},
+		row{name: "a step env that sets SHELLOPTS onecmd", steps: gated("true", "        env:\n          SHELLOPTS: onecmd\n"), want: "unwired"},
+		row{name: "a job env that sets BASHOPTS", job: "    env:\n      BASHOPTS: lastpipe\n", steps: gated(": | exit 0", ""), want: "unwired"},
+		row{name: "a workflow env that exports a function", top: "env:\n  BASH_FUNC_bash%%: '() { :; }'\n", steps: step("bash ./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step env name with %%", steps: gated("true", "        env:\n          x%%: y\n"), want: "unwired"},
+		row{name: "a step env with a BASH_FUNC_ name", steps: gated("true", "        env:\n          BASH_FUNC_x: y\n"), want: "unwired"},
+		row{name: "a step env that sets SHELLOPTS in another case", steps: gated("true", "        env:\n          Shellopts: noexec\n"), want: "unwired"},
+		row{name: "a lane script that evals a set of its parameters", steps: runs(" --profile x"), lane: "eval 'set -- --help'\n" + lane, want: ended},
+		row{name: "a lane script whose branch shifts after an and", steps: runs(" --profile x"), lane: strings.Replace(lane, "      shift 2", "      true && shift 2", 1), want: ended},
+		row{name: "a lane script whose branch shifts in an if", steps: runs(" --profile x"), lane: strings.Replace(lane, "      shift 2", "      if true; then shift 2; fi", 1), want: ended},
+		row{name: "a lane script whose branch shifts by two counts", steps: runs(" --profile x"), lane: strings.Replace(lane, "shift 2", "shift\n      shift 2", 1), want: ended},
+		row{name: "a lane script whose branch shifts by an expansion", steps: runs(" --profile x"), lane: strings.Replace(lane, "      shift 2", "      shift \"${N:-0}\"\n      shift 2", 1), want: ended},
+		row{name: "a lane script whose branch shifts after a pattern list on its line", steps: runs(" -p x"), lane: strings.Replace(lane, "    --profile)\n      P=\"${2:-}\"\n      shift 2\n      ;;\n", "    -p | --profile) shift 2;;\n", 1), want: "wired"},
+		row{name: "a lane script whose glob branch comes before a literal one", steps: runs(" --xa --help"), lane: strings.Replace(lane, "    --profile)", "    --x*)\n      shift\n      ;;\n    --xa)\n      shift 2\n      ;;\n    --profile)", 1), want: ended},
+		row{name: "a lane script whose case matches no argument", steps: runs(" -x --help"), lane: strings.Replace(lane, "    *)\n      exit 2\n      ;;\n", "", 1), want: ended},
+		row{name: "a lane script whose shifting branch exits", steps: runs(" --profile x"), lane: strings.Replace(lane, "      shift 2\n", "      shift 2\n      exit 0\n", 1), want: ended},
+		row{name: "a lane script whose case reads $2", steps: runs(" --profile -h"), lane: strings.ReplaceAll(strings.Replace(lane, "    -h | --help)", "    -h)", 1), "\"$1\"", "\"$2\""), want: ended},
+		row{name: "a lane script whose case reads ${2}", steps: runs(" --profile -h"), lane: strings.ReplaceAll(strings.Replace(lane, "    -h | --help)", "    -h)", 1), "\"$1\"", "\"${2}\""), want: ended},
+		row{name: "a lane script whose function shifts", steps: runs(" --profile x"), lane: "f() {\n  shift\n}\n" + lane, want: "wired"},
+		row{name: "a lane script whose function's case is called with -h", steps: runs(""), lane: "f() {\n  case \"$1\" in\n" + flags + "  esac\n}\nf -h\n./scripts/gate.sh\n", want: ended},
+		row{name: "a lane script whose library reads the arguments it is sourced with", steps: runs(""), lane: jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\" -h\n./scripts/gate.sh\n", library: "case \"$1\" in\n" + flags + "esac\n", want: ended},
+		row{name: "a lane script only validate-repo.sh runs", steps: step("true", ""), validate: laneRoot + "\n\"${ROOT_DIR}/scripts/ci/job-a.sh\"\n", lane: "./scripts/gate.sh\n", want: "unwired"},
+		row{name: "a case that closes a substitution", steps: gated("x=$(case x in x) echo;; esac)\nexit 0", ""), want: ended},
+		row{name: "a case that closes a quoted substitution", steps: gated("x=\"$(case x in x) echo;; esac)\"\nexec true", ""), want: ended},
+		row{name: "a case that closes a process substitution", steps: gated("cat <(case x in x) echo;; esac)\nexit 0", ""), want: ended},
+		row{name: "a case that closes a substitution in a lane script", steps: runs(""), lane: "x=$(case x in x) echo;; esac)\nexit 0\n./scripts/gate.sh\n", want: ended},
+		row{name: "a substitution that runs a word starting with case", steps: gated("x=\"$(caser)\"\nexit 0", ""), want: ended},
+		row{name: "a substitution with case as an argument", steps: gated("x=\"$(echo case)\"\nexit 0", ""), want: "holds a case with no esac"},
+		row{name: "a case that closes a substitution before the gate", steps: gated("x=$(case x in x) echo;; esac)\ny=1", ""), want: "wired"},
+		row{name: "an env value from the repository", steps: gated("case \"$V\" in o/r) exit 0;; esac", "        env:\n          V: ${{ github.repository }}\n"), want: ended},
+		row{name: "an env value from the workflow name", steps: gated("case \"$V\" in w) exit 0;; esac", "        env:\n          V: ${{ github.workflow }}\n"), want: ended},
+		row{name: "an env value from the event of a workflow one event runs", on: "push", steps: gated("case $E in push) exit 0;; esac", event), want: ended},
+		row{name: "an env value from the head ref", steps: gated("case $E in main) exit 0;; esac", "        env:\n          E: ${{ github.head_ref }}\n"), want: "wired"},
+		row{name: "a lane script run with a brace", steps: runs(" --profile {x,--help}"), lane: lane, want: ended},
+		row{name: "a lane script run with an unquoted expansion", steps: step("./scripts/ci/job-a.sh --profile $X", "        env:\n          X: x --help\n"), lane: lane, want: ended},
+		row{name: "a lane script run with an unquoted substitution", steps: runs(" --profile $(echo x --help)"), lane: lane, want: ended},
+		row{name: "a lane script run with $IFS", steps: runs(" --profile x$IFS--help"), lane: lane, want: ended},
+		row{name: "a lane script run with \"$@\"", steps: runs(" --profile \"$@\""), lane: lane, want: ended},
+		row{name: "a lane script run with a quoted option", steps: runs(" \"--profile\" x"), lane: lane, want: ended},
+		row{name: "a lane script run after an assignment and before a redirection", steps: step("X=1 ./scripts/ci/job-a.sh --profile x 2>&1", ""), lane: lane, want: "wired"},
+		row{name: "a lane script run with a quoted option value", steps: runs(" --profile 'x y'"), lane: lane, want: "wired"},
+		row{name: "a lane script run with a matrix value", job: "    strategy:\n      matrix:\n        p: ['x --help']\n", steps: runs(" --profile ${{matrix.p}}"), lane: lane, want: "unwired"},
+		row{name: "a lane script xargs runs", steps: step("echo --help | xargs ./scripts/ci/job-a.sh", ""), lane: lane, want: ended},
+		row{name: "a lane script run as itself and by xargs", steps: step("./scripts/ci/job-a.sh\necho --help | xargs ./scripts/ci/job-a.sh", ""), lane: lane, want: ended},
+		row{name: "a lane script whose selected branch does not shift", steps: runs(" --a --a"), lane: strings.Replace(lane, "    --profile)", "    --a)\n      ;;\n    --profile)", 1), want: ended},
+		row{name: "a step after one that writes GITHUB_PATH", steps: step("echo /tmp/b >> \"$GITHUB_PATH\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that writes another directory to ${GITHUB_PATH}", steps: step("echo /tmp/b >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that adds its tool directory to GITHUB_PATH", steps: step("echo \"${RUNNER_TEMP}/bin\" >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a job env that sets PATH", job: "    env:\n      PATH: /tmp/b:/usr/bin:/bin\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step env that sets PATH", steps: gated("true", "        env:\n          PATH: /tmp/b:/usr/bin:/bin\n"), want: "unwired"},
+		row{name: "a step after an action no review lists", steps: "      - uses: actions/github-script@v7\n        with:\n          script: x\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a local action", steps: "      - uses: ./.github/actions/a\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a reviewed action", steps: "      - uses: actions/checkout@v4\n" + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step of a job in a container whose env sets SHELLOPTS", job: "    container:\n      image: debian\n      env:\n        SHELLOPTS: noexec\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step of a job in a container", job: "    container: debian\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step env name with an expression", steps: gated("true", "        env:\n          ${{ 'SHELLOPTS' }}: noexec\n"), want: "unwired"},
+		row{name: "a step whose body has an expression", steps: gated("echo ${{ matrix.c }}", ""), want: "unwired"},
+		row{name: "a step whose if is false", steps: gated("true", "        if: false\n"), want: "unwired"},
+		row{name: "a step whose if is a false expression", steps: gated("true", "        if: ${{ 1 == 2 }}\n"), want: "unwired"},
+		row{name: "a job whose if is false", job: "    if: ${{ false }}\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step whose if calls a status function", steps: gated("true", "        if: always()\n"), want: "wired"},
+		row{name: "a step whose if reads a context", steps: gated("true", "        if: github.event_name == 'push'\n"), want: "wired"},
+		row{name: "a workflow only a run by hand starts", on: "workflow_dispatch", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a workflow no event starts", on: "{}", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a workflow a push or a run by hand starts", on: "[push, workflow_dispatch]", steps: step("./scripts/gate.sh", ""), want: "wired"},
+	)
+	// Round 15: each row below failed at the layer before it.
+	validate := func(text string) string {
+		return "#!/bin/bash\nset -euo pipefail\n" + laneRoot + "\n" + text + "\nexit 0\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n"
+	}
+	rows = append(rows,
+		// A case word after a reserved word in a command substitution opens a case.
+		row{name: "a case after { in a substitution", validate: validate("x=$({ case x in x) echo;; esac; })"), want: ended},
+		row{name: "a case after if in a substitution", validate: validate("x=$(if case x in x) true;; esac; then echo; fi)"), want: ended},
+		row{name: "a case after while in a substitution", validate: validate("x=$(while case x in x) false;; esac; do :; done)"), want: ended},
+		row{name: "a case after time in a substitution", validate: validate("x=$(time case x in x) echo;; esac)"), want: ended},
+		row{name: "a case after time -p in a substitution", validate: validate("x=$(time -p case x in x) echo;; esac)"), want: ended},
+		row{name: "a case after coproc in a substitution", validate: validate("x=$(until coproc case x in x) false;; esac; do :; done)"), want: ended},
+		row{name: "a case after a function name in a substitution", validate: validate("x=$(until function f case x in x) false;; esac; do :; done)"), want: ended},
+		row{name: "a case at the start of a subshell in a substitution", validate: validate("x=$( (case x in x) echo;; esac) )"), want: ended},
+		row{name: "a case after if in a process substitution", validate: validate("cat <(if case x in x) true;; esac; then echo; fi)"), want: ended},
+		row{name: "a case after { in a quoted substitution", validate: validate("x=\"$({ case x in x) echo;; esac; })\""), want: ended},
+		row{name: "a case after { in a substitution in a step", steps: gated("x=$({ case x in x) echo;; esac; })\nexit 0", ""), want: ended},
+		row{name: "a { after other text in a substitution", validate: validate("x=$(echo { case x in y)"), want: "holds a case with no esac"},
+		row{name: "a case with no esac in a substitution", validate: validate("x=$(echo case)"), want: "holds a case with no esac"},
+		row{name: "a case of two patterns in a substitution", validate: validate("x=$(case x in x) echo;; y) echo;; esac)"), want: ended},
+	)
+	for _, tc := range rows {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			files := map[string]string{"scripts/validate-repo.sh": "true\n", "scripts/ci/job-a.sh": tc.lane, ".github/workflows/w.yml": "on: " + cmp.Or(tc.on, "[issues, issue_comment]") + "\n" + tc.top + "jobs:\n  j:\n    runs-on: ubuntu-latest\n" + tc.job + "    steps:\n" + tc.steps}
+			if tc.library != "" {
+				files["scripts/lib/l.sh"] = tc.library
+			}
+			if tc.validate != "" {
+				files["scripts/validate-repo.sh"] = tc.validate
+			}
+			writeLaneTree(t, root, files)
+			got, err := metadatautil.LaneScripts(root)
+			switch tc.want {
+			case "wired", "unwired":
+				if err != nil {
+					t.Fatal(err)
+				}
+				if wired := slices.Contains(got, "scripts/gate.sh"); wired != (tc.want == "wired") {
+					t.Fatalf("LaneScripts() = %q, want scripts/gate.sh %s", got, tc.want)
+				}
+			default:
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("LaneScripts() = %q, %v, want an error with %q", got, err, tc.want)
+				}
 			}
 		})
 	}

@@ -454,9 +454,10 @@ func continuesLine(word string) bool {
 type command struct {
 	args        []word
 	conditional bool
-	orElse      bool // it runs only when the command before it fails, after ||
-	piped       bool // a pipeline stage or a background job, which runs in a subshell
-	nested      bool // text an eval, a trap or a child shell runs, as the lane reader reads it
+	orElse      bool   // it runs only when the command before it fails, after ||
+	piped       bool   // a pipeline stage or a background job, which runs in a subshell
+	nested      bool   // text an eval, a trap or a child shell runs, as the lane reader reads it
+	follows     string // the control operator in front of it on its line, as ;; or ;
 }
 
 // splitCommands cuts one logical line into the separate commands bash runs, at
@@ -487,7 +488,7 @@ func splitCommands(words []word) []command {
 			piped := each.text == "|" || each.text == "|&"
 			last := &commands[len(commands)-1]
 			last.piped = last.piped || piped || each.text == "&"
-			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", orElse: each.text == "||", piped: piped})
+			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", orElse: each.text == "||", piped: piped, follows: each.text})
 			continue
 		}
 		last := &commands[len(commands)-1]
@@ -869,6 +870,17 @@ func flattenSubstitutions(script string) string {
 // each substitution it moves between a line of ( and a line of ), so a reader
 // of its writes reads it as the subshell it runs in.
 func flattenGrouped(script string, grouped bool) string {
+	flat, _ := flattenGroupedCases(script, grouped)
+	return flat
+}
+
+// flattenGroupedCases is flattenGrouped, and also reports whether a
+// substitution closed while its text held a case word with no esac after it.
+// The ) that ends a pattern list then closed it, since substitutionKeyword did
+// not read that case where a command starts, so the text after it is not what
+// bash runs.
+func flattenGroupedCases(script string, grouped bool) (string, bool) {
+	unended := false
 	open, closer := "\n", "\n"
 	if grouped {
 		open, closer = "\n(\n", "\n)\n"
@@ -876,13 +888,14 @@ func flattenGrouped(script string, grouped bool) string {
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
 	// boundary, whether that text is inside double quotes, the byte that
-	// closes it, and how many unquoted parentheses inside it are open, so the
-	// ) of <(…) or of a subshell does not close a $( ).
+	// closes it, and a stack of the unquoted ( and case commands open inside
+	// it, innermost last, so the ) of <(…) or of a subshell does not close a
+	// $( ), and the ) that ends a pattern of the innermost case does not.
 	type frame struct {
 		text   strings.Builder
 		quoted bool
 		closer byte
-		parens int
+		nest   []byte // ( for a parenthesis, c for a case
 	}
 	frames := []*frame{{}}
 	single := false
@@ -933,14 +946,24 @@ func flattenGrouped(script string, grouped bool) string {
 				i++
 			}
 		case top.closer == ')' && !top.quoted && c == '(':
-			top.parens++
+			top.nest = append(top.nest, '(')
 			top.text.WriteByte(c)
-		case top.closer == ')' && !top.quoted && c == ')' && top.parens > 0:
-			top.parens--
+		case top.closer == ')' && !top.quoted && c == ')' && len(top.nest) > 0:
+			if top.nest[len(top.nest)-1] == '(' {
+				top.nest = top.nest[:len(top.nest)-1]
+			} // else the end of a pattern list of the innermost case
+			top.text.WriteByte(c)
+		case top.closer == ')' && !top.quoted && substitutionKeyword(script, i, top.text.String(), "case"):
+			top.nest = append(top.nest, 'c')
+			top.text.WriteByte(c)
+		case top.closer == ')' && !top.quoted && len(top.nest) > 0 && top.nest[len(top.nest)-1] == 'c' && substitutionKeyword(script, i, top.text.String(), "esac"):
+			top.nest = top.nest[:len(top.nest)-1]
 			top.text.WriteByte(c)
 		case c == top.closer && !top.quoted:
 			frames = frames[:len(frames)-1]
 			out.WriteString(open + top.text.String() + closer)
+			words := substitutionCaseWords.FindAllStringSubmatch(top.text.String(), -1)
+			unended = unended || len(words) > 0 && words[len(words)-1][1] == "case"
 		case top.quoted:
 			top.text.WriteByte(markQuotedNewline(c))
 		default:
@@ -957,7 +980,43 @@ func flattenGrouped(script string, grouped bool) string {
 	for _, open := range slices.Backward(frames) {
 		out.WriteString("\n" + open.text.String())
 	}
-	return out.String()
+	return out.String(), unended
+}
+
+// substitutionCaseWords finds each case and esac word in a substitution's
+// text, in order: each stands alone between blanks or operators, wherever it
+// stands, so a case that is an argument counts too, which only fails closed.
+var substitutionCaseWords = regexp.MustCompile(`(?:^|[ \t\n;&|()])(case|esac)(?:[ \t\n;&|()]|$)`)
+
+// substitutionKeyword reports whether a reserved word starts at script[at]
+// where a command starts, after the text before it in a substitution: at its
+// start, after a newline, ;, &, |, ( or ), or after a run of reserved words
+// that another command follows, as { case, if ! case, time -p case, coproc
+// case and function f case are. Any other text before it, as an argument,
+// makes it no reserved word; flattenGroupedCases then reports the frame that
+// closes at its pattern's ), so a spelling this misses fails closed.
+func substitutionKeyword(script string, at int, before, keyword string) bool {
+	rest := script[at:]
+	if !strings.HasPrefix(rest, keyword) || len(rest) > len(keyword) && !strings.ContainsRune(" \t\n;&|)", rune(rest[len(keyword)])) {
+		return false
+	}
+	for {
+		before = strings.TrimRight(before, " \t")
+		if before == "" || strings.ContainsRune("\n;&|()", rune(before[len(before)-1])) {
+			return true
+		}
+		fields := strings.Fields(before)
+		last := fields[len(fields)-1]
+		before = before[:len(before)-len(last)]
+		switch {
+		case slices.Contains([]string{"then", "do", "else", "elif", "{", "!", "time", "if", "while", "until", "coproc"}, last):
+		case len(fields) > 1 && last == "-p" && fields[len(fields)-2] == "time": // time -p
+		case len(fields) > 1 && fields[len(fields)-2] == "function": // function NAME, whose body may be any compound command
+			before = strings.TrimSuffix(strings.TrimRight(before, " \t"), "function")
+		default:
+			return false
+		}
+	}
 }
 
 // markQuotedNewline turns a quoted newline into quotedNewline, so a word stays on one line; commandWords turns it back, so a shell program keeps its lines.

@@ -375,23 +375,85 @@ a substitution in an unquoted heredoc runs, so it counts. A workflow path starts
 from the working directory of its step, and a `cd` before it moves that
 directory.
 
+A CI job script counts only when a step runs it by a path the check resolves.
+A step resolves no path when its `env`, at any level, sets `BASH_ENV`, `ENV`,
+`SHELLOPTS`, `BASHOPTS` or `PATH`, which picks the bash itself. The same holds
+for a `BASH_FUNC_` name or a name with `%%`, which bash imports as a function.
+It holds too for a name with a `${{` expression, which may spell any of these.
+Each later step of the job resolves none either
+(`internal/metadatautil/workflow_refs.go`). A job script that such a step runs
+inherits that `env`, so the step does not count it.
+
+The same holds after a step whose body names `GITHUB_PATH`, since that may put
+another bash first on `PATH`. The one write that does not count adds the job's
+own `${RUNNER_TEMP}/bin`. It holds after a `uses` step too, unless a reviewed
+list names its action (`internal/metadatautil/lane_scripts.go`). Any other
+action may set these names or add to `PATH`.
+
+A step whose body holds a `${{` expression resolves no path, since GitHub pastes
+its value into the text before bash reads it. No step of a job with a
+`container` resolves a path, since its image sets the env and the bash.
+
+A step or job whose `if` names no context and calls no status function, as
+`if: false` does, may never run, so it resolves no path. A workflow whose `on`
+lists no event, or only `workflow_dispatch`, resolves none either.
+
 An `exit` or an `exec` of a program that always runs stops the check when any
 command follows it. So does a call, a `source` or an `eval` whose body or text
 always runs one (`internal/metadatautil/lane_reading.go`). An `exit` whose
 status may be 0 stops the check in a loop, a `case` branch or an `if`
 condition too, since those may run. One in an `if` branch, behind `||` or `&&`,
-or in a subshell still counts, as a lane's failed check does. So does one in a
-`case` branch of literal patterns on one variable, as `-h | --help)` on the
-lane's own `$1` is. A literal subject or a glob such as `*)` matches whenever
-the case runs, and a function's `$1` is its caller's, so neither counts.
+or in a subshell still counts, as a lane's failed check does.
+
+A `case` branch is a condition only when each of its patterns is a literal
+word and no `;&` or `;;&` runs it (`internal/metadatautil/lane_cases.go`). Its
+subject must also be a value that no lane fixes.
+
+One such value is a variable that a step's own `env` sets to a `github` value
+that differs from run to run. These are the `sha`, the `head_ref` and the
+`event_name` of a workflow that more than one event starts. A value such as
+`github.repository` stays the same, so it does not count. The step must name
+that variable only to expand it. The other is the `$1` of a CI job script, read
+against the arguments that each step passes.
+
+The check reads those arguments as a `case` loop on `$1` reads them. Each
+argument it reaches must be a literal word that a literal branch matches before
+any other branch does. That branch must run one `shift`, which skips the values
+it reads, so `--base "$X"` passes. Each value it skips must stay one word, so
+it holds no unquoted expansion, brace or pattern, and no `@`. A branch that an
+argument selects runs.
+
+A second `case` on `$1`, a `shift` outside a branch or a `set` of the
+parameters makes every branch run. So does a step that runs the script through
+`xargs`, `find` or `env`, since the check cannot pair those arguments with the
+step's text.
+
+Under any other subject every branch counts as running, as under a literal
+word, `$LINENO` or a function's `$1`. So does every branch of a `case` that an
+`eval` or a child shell opens, and every command of a function a branch
+defines.
+
+Some residuals remain. The patterns of a `case` on `github.event_name` may
+match every event that starts the workflow. The check takes a step's own `env`
+to win over a value that an earlier step writes to `GITHUB_ENV`. It does not
+work out an `if` that names a context, which may still never hold.
+
+The check does not model file writes either. So a step may put another `bash`
+on `PATH`, or rewrite a gate, before a later step runs it. Last, the check
+shows that a gate runs, not that its failure fails the lane, so a gate run
+behind `|| true` counts. The fail-open check
+(`internal/metadatautil/shellfailopen_check.go`) covers `|| true` only after
+`find`, `git`, `gh`, `docker` and `getent`.
 
 A call stops the check when its body may exit with 0 before a `return` that
 always runs. A `return` in a branch or a loop does not count, since the body
 may skip it. In the body itself, an `exit` that a later command follows stops
 the check even after a `return`. A `return` in a subshell, a pipeline, a
 `coproc` or the background returns from nothing, so it does not count. When
-the reader loses track of the nesting, as after a `coproc`, any later `exit`
-stops the check.
+the reader loses track of the nesting, as after a named `coproc` of a subshell,
+any later `exit` stops the check. A command substitution that holds a `case`
+with no `esac` after it stops the check too, since a pattern's `)` may end it
+early.
 
 An `EXIT` trap stops the check when its action, or a function it calls, may
 replace the status the lane ends with. An `exit` whose status may be 0, a bare

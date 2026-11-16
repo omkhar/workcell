@@ -63,9 +63,12 @@ func LaneScripts(rootDir string) ([]string, error) {
 		moved     bool
 		pinned    bool          // ${ROOT_DIR} is the repository root
 		libraries []laneLibrary // the repository libraries a pinned lane sources
+		site      laneSite
+		rel       string // a lane script's path
 	}
 	var runs []laneRun
 	var scripts []string
+	callers := map[string][]laneCaller{} // the arguments of each step's run of a lane script
 	for _, lane := range []struct{ dir, pattern string }{{"scripts", "validate-repo.sh"}, {"scripts/ci", "job-*.sh"}, {".github/workflows", ""}} {
 		matches := mustGlob(filepath.Join(rootDir, lane.dir, lane.pattern))
 		if lane.pattern == "" {
@@ -85,12 +88,16 @@ func LaneScripts(rootDir string) ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				runs, scripts = append(runs, laneRun{body: text, pinned: pinned, libraries: libraries}), append(scripts, rel)
+				runs = append(runs, laneRun{body: text, pinned: pinned, libraries: libraries, site: laneSite{lane: true}, rel: rel})
 				continue
 			}
 			var document workflowDocument
 			if err := yaml.Unmarshal(body, &document); err != nil {
 				return nil, fmt.Errorf("parse %s: %w", rel, err)
+			}
+			events := laneEvents(document.On)
+			if document.On.Kind != 0 && (len(events) == 0 || slices.Equal(events, []string{"workflow_dispatch"})) {
+				continue // a workflow that no event, or only a run by hand, starts runs no gate on its own
 			}
 			for name, job := range document.Jobs {
 				startup := false // a startup file set in this job's GITHUB_ENV holds for its later steps
@@ -102,28 +109,47 @@ func LaneScripts(rootDir string) ([]string, error) {
 					if err != nil {
 						return nil, fmt.Errorf("%s job %s: %w", rel, name, err)
 					}
-					startup = startup || startupFileStep(document, job, step)
-					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: startup})
+					startup = startup || startupFileStep(document, job, step) || laneStartupStep(job, step)
+					if laneConstantIf(job.If) || laneConstantIf(step.If) {
+						continue // the step may never run, so it runs no gate
+					}
+					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: startup, site: laneSite{env: step.Env, events: len(events)}})
 				}
 			}
 		}
 	}
-	for _, run := range runs {
+	slices.SortStableFunc(runs, func(a, b laneRun) int {
+		switch {
+		case a.site.lane == b.site.lane:
+			return 0
+		case b.site.lane:
+			return -1
+		}
+		return 1
+	})
+	for _, run := range runs { // each step before each lane script, which counts only where a step runs it
+		if run.site.callers = callers[run.rel]; run.site.lane && run.rel != "scripts/validate-repo.sh" && len(run.site.callers) == 0 {
+			continue
+		}
 		// A lane that assigns PATH, BASH_ENV or ENV may change the program each
 		// later command runs, a script's own #! interpreter included, so it
 		// wires no script.
-		startup, err := laneReadable(run.body, run.libraries, run.pinned)
+		startup, err := laneReadable(run.body, run.libraries, run.pinned, run.site)
 		if err != nil {
 			return nil, err
 		}
 		if startup {
 			continue
 		}
+		if run.site.lane {
+			scripts = append(scripts, run.rel)
+		}
 		moved := run.moved || strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
+		called := map[string][][]string{} // the commands of this step that run each lane script, after the words its arguments follow
 		for _, words := range laneCommands(run.body)[0] {
-			name, direct := words[0], true
+			name, direct, args := words[0], true, words[1:]
 			if _, _, file := shellProgram(words, "$_"); file != "" {
-				name, direct = file, false // bash scripts/x.sh runs x.sh
+				name, direct, args = file, false, words[slices.Index(words[1:], file)+2:] // bash scripts/x.sh runs x.sh
 			}
 			// A cd or pushd, or a sourced body this reader does not see, may move
 			// the directory, so a later relative path names no known script.
@@ -143,11 +169,131 @@ func LaneScripts(rootDir string) ([]string, error) {
 			}
 			if laneScriptPath.MatchString(name) {
 				scripts = append(scripts, name)
+				if !run.site.lane {
+					called[name] = append(called[name], append(slices.Clone(words[:len(words)-len(args)]), append([]string{"\x00"}, args...)...))
+				}
 			}
+		}
+		for name, commands := range called {
+			callers[name] = append(callers[name], laneCallers(run.body, commands)...)
 		}
 	}
 	slices.Sort(scripts)
 	return slices.Compact(scripts), nil
+}
+
+// laneStartupStep reports a step from which on a step's bash may not be the
+// bash this reader reads, or may not read the text this reader reads: any
+// step of a job in a container, whose image sets the env and the bash itself;
+// a step whose body has a ${{ }} expression, whose value GitHub pastes into
+// the text before bash reads it; a step whose body names GITHUB_PATH, which
+// may put another bash first on a later step's PATH, other than in
+// laneToolPath; and a uses step whose action laneReviewedActions does not
+// list, which may do the same with core.addPath or set SHELLOPTS or BASH_ENV
+// with core.exportVariable.
+func laneStartupStep(job workflowJob, step workflowStep) bool {
+	action, _, _ := strings.Cut(step.Uses, "@")
+	_, reviewed := laneReviewedActions[action]
+	return job.Container.Kind != 0 || step.Uses != "" && !reviewed || strings.Contains(step.Run, "${{") ||
+		strings.Contains(laneToolPath.ReplaceAllString(step.Run, ""), "GITHUB_PATH")
+}
+
+// laneEvents returns the events a workflow's on names, sorted: a scalar's
+// one, a list's items or a map's keys.
+func laneEvents(on yaml.Node) []string {
+	var events []string
+	switch on.Kind {
+	case yaml.ScalarNode:
+		events = append(events, on.Value)
+	case yaml.SequenceNode:
+		for _, each := range on.Content {
+			events = append(events, each.Value)
+		}
+	case yaml.MappingNode:
+		for at := 0; at < len(on.Content); at += 2 {
+			events = append(events, on.Content[at].Value)
+		}
+	}
+	slices.Sort(events)
+	return slices.Compact(slices.DeleteFunc(events, func(event string) bool { return event == "" }))
+}
+
+// laneConstantIf reports an if whose value no run changes: it names no
+// context and calls no status function, as false or ${{ 1 == 2 }} do. The
+// reader does not work out such a value, so the job or step may never run.
+func laneConstantIf(condition yaml.Node) bool {
+	return condition.Kind != 0 && !laneIfContext.MatchString(condition.Value)
+}
+
+// laneIfContext is a context an if reads, or a status function it calls.
+var laneIfContext = regexp.MustCompile(`\b(?:github|env|vars|needs|steps|matrix|inputs|strategy|runner|job|jobs|secrets)\s*\.|\b(?:always|success|failure|cancelled)\s*\(`)
+
+// laneToolPath is the one GITHUB_PATH write a lane may follow: a line that
+// adds the job's own ${RUNNER_TEMP}/bin, where its steps install the tools
+// they download and check.
+var laneToolPath = regexp.MustCompile(`(?m)^[ \t]*echo "\$\{RUNNER_TEMP\}/bin" >> "\$\{GITHUB_PATH\}"[ \t]*$`)
+
+// laneReviewedActions are the actions a uses step may run before a lane with
+// the lane still read, each with why it leaves a later step's bash as it is.
+var laneReviewedActions = map[string]string{
+	"actions/checkout":                  "writes the repository and its git config, and exports no variable",
+	"actions/cache/restore":             "restores files to the paths its inputs name and sets outputs, and exports no variable",
+	"actions/create-github-app-token":   "sets a masked token output, and exports no variable",
+	"actions/download-artifact":         "writes artifact files to its path input and sets outputs, and exports no variable",
+	"actions/upload-artifact":           "reads files and sets outputs, and exports no variable",
+	"anchore/sbom-action/download-syft": "adds only the directory of the syft it downloads to PATH",
+	"docker/login-action":               "writes docker credentials, and exports no variable",
+	"docker/setup-buildx-action":        "creates a buildx builder and sets outputs, and exports no variable bash reads",
+	"sigstore/cosign-installer":         "adds only the directory of the cosign it installs to PATH",
+}
+
+// laneCaller is the arguments one command of a step passes to a lane script,
+// as the step spells them, or none with read false when the reader cannot
+// pair the command with one the step's text spells, as when xargs, find or
+// env runs the script.
+type laneCaller struct {
+	args []word
+	read bool
+}
+
+// laneCallers returns the calls of a step's body that run a lane script, each
+// command given as EveryShellCommand reads it, with a NUL word before its
+// arguments. Each command of the body that spells one, past its assignments
+// and redirections, gives its own words; each command no such command
+// accounts for gives an unread call.
+func laneCallers(body string, commands [][]string) []laneCaller {
+	scanned, _, _ := laneScan(body)
+	var calls []laneCaller
+	for _, command := range commands {
+		count, matched := 0, 0
+		for _, each := range commands {
+			if slices.Equal(each, command) {
+				count++
+			}
+		}
+		start := slices.Index(command, "\x00")
+		for _, each := range scanned {
+			words := laneUnredirectedWords(each.args)
+			if words = words[assignmentPrefix(texts(words)):]; slices.Equal(texts(words), slices.Delete(slices.Clone(command), start, start+1)) {
+				calls = append(calls, laneCaller{args: words[start:], read: true})
+				matched++
+			}
+		}
+		for ; matched < count; matched++ {
+			calls = append(calls, laneCaller{})
+		}
+	}
+	return calls
+}
+
+// laneSite is where a body runs: a step, with its own env and the number of
+// events its workflow runs on, or a lane script, with the arguments each step
+// that runs it passes.
+type laneSite struct {
+	env     map[string]string
+	events  int
+	callers []laneCaller
+	lane    bool
 }
 
 // laneLibraryRoot is the ${ROOT_DIR}/ or $ROOT_DIR/ in front of a library path.
