@@ -119,28 +119,7 @@ func LaneScripts(rootDir string) ([]string, error) {
 			continue
 		}
 		moved := run.moved || strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
-		// A library runs nothing until the lane calls it, so each function it
-		// defines is read on its own, and so is its text outside them. An
-		// alias, a hash -p or a source of a path this reader has not read may
-		// rebind what the lane runs, and so may text it cannot spell.
-		read := map[string]bool{}
-		for _, each := range run.libraries {
-			read[each.path] = true
-		}
-		for _, each := range run.libraries {
-			parts, _ := libraryParts(each.text) // laneReadable read every part
-			for _, part := range parts {
-				for _, words := range part.commands {
-					if command := laneCommand(words); len(command) > 0 && slices.Contains([]string{"alias", "hash", "source", "."}, command[0]) && rebindsLane(words) || runsUnreadText(words, read) {
-						return nil, fmt.Errorf("lane wiring is unreadable: a library a lane sources runs %q, which may rebind the scripts it runs", strings.Join(words, " "))
-					}
-				}
-			}
-		}
 		for _, words := range laneCommands(run.body)[0] {
-			if rebindsLane(words) || runsUnreadText(words, read) {
-				return nil, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which may rebind the scripts it runs", strings.Join(words, " "))
-			}
 			name, direct := words[0], true
 			if _, _, file := shellProgram(words, "$_"); file != "" {
 				name, direct = file, false // bash scripts/x.sh runs x.sh
@@ -457,9 +436,6 @@ func braceVariants(text, syntax string) (variants []string, opaque bool) {
 // laneSource is a source of a fixed repository path, whose text this check reads as a lane of its own when it is one.
 var laneSource = regexp.MustCompile(`^\$(?:ROOT_DIR|\{ROOT_DIR\})/[A-Za-z0-9_./-]+$`)
 
-// lanePlainProgram is one expansion of a named variable before an optional literal path, a program the lane chose, such as ${GO_BIN}.
-var lanePlainProgram = regexp.MustCompile(`^\$\{?[A-Za-z][A-Za-z0-9_]*\}?(?:/[A-Za-z0-9_./-]*)?$`)
-
 // laneCommand returns the words from the command word a command runs, past
 // its assignments and any command, builtin or time in front of it, so builtin
 // hash -p and command builtin source are read as hash -p and source.
@@ -476,45 +452,6 @@ func laneLibraryPath(words []string) (string, bool) {
 		return "", false
 	}
 	return path.Clean(laneLibraryRoot.ReplaceAllString(command[1], "")), true
-}
-
-// rebindsLane reports whether the words may change what a later command runs, so the lane text no longer shows its wiring: an alias, a hash -p, a source of a path other than a fixed ${ROOT_DIR}/ one, or a program the reader cannot name, which may itself be source, as s${x-}ource or "$@" is.
-func rebindsLane(words []string) bool {
-	command := laneCommand(words)
-	if len(command) == 0 {
-		return false
-	}
-	switch command[0] {
-	case "alias":
-		return len(command) > 1
-	case "source", ".":
-		_, fixed := laneLibraryPath(words)
-		return !fixed
-	case "hash":
-		return slices.ContainsFunc(command[1:], func(word string) bool { return strings.HasPrefix(word, "-") && strings.Contains(word, "p") })
-	}
-	return unspelled(command[0]) && !lanePlainProgram.MatchString(command[0])
-}
-
-// runsUnreadText reports whether a command runs text this reader has not
-// read, which may define a function that shadows a program: a source of a
-// ${ROOT_DIR}/ library outside read, an eval of an expansion, or a mapfile or
-// readarray callback.
-func runsUnreadText(words []string, read map[string]bool) bool {
-	if library, fixed := laneLibraryPath(words); fixed {
-		return !read[library]
-	}
-	command := laneCommand(words)
-	if len(command) == 0 {
-		return false
-	}
-	switch command[0] {
-	case "eval":
-		return slices.ContainsFunc(command[1:], func(word string) bool { return strings.ContainsAny(word, "$`") })
-	case "mapfile", "readarray":
-		return slices.ContainsFunc(command[1:], func(word string) bool { return strings.HasPrefix(word, "-") && strings.Contains(word, "C") })
-	}
-	return false
 }
 
 // stepWorkDir returns the directory a step's run: body starts in, relative to

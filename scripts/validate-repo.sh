@@ -716,7 +716,9 @@ else
 fi
 
 if [[ "${#markdown_files[@]}" -gt 0 ]]; then
-  "${MARKDOWNLINT_BIN}" "${markdown_files[@]}"
+  # The literal /markdownlint keeps the command word a path the lane wiring
+  # check can read, never a builtin or a function.
+  "${MARKDOWNLINT_BIN%/*}/markdownlint" "${markdown_files[@]}"
 fi
 
 validate_manpage

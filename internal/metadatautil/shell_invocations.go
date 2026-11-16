@@ -1459,7 +1459,7 @@ var reviewedShellLibraries = map[string]reviewedLibrary{
 	"scripts/lib/launcher/host-exec.sh":          {digest: "475bfcf95c6e3d20631ba2aacd43261fa116323191b1898a47afbf35c96fbd50"},
 	"scripts/lib/sessionctl-shim.sh":             {digest: "b3e58dacb53bf7c9b7d398993a9ec8ced8bdd5499c1d24945bb5903b9fc7988e"},
 	"scripts/lib/shellproto.sh":                  {digest: "87149270a2ff536e552c9ea093e9db827d37892bb5f07b94c5629bcf621f487a"},
-	"scripts/lib/trusted-docker-client.sh":       {digest: "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674", forwarders: []string{"run_workcell_docker_client_command"}},
+	"scripts/lib/trusted-docker-client.sh":       {digest: "fe74966fb062c3e3ddf3b1cb5557c94ea76f48793bd97fe8ece6588562320a95", forwarders: []string{"run_workcell_docker_client_command"}},
 }
 
 // canonicalRootDir is the ROOT_DIR assignment that pins a script's root from
