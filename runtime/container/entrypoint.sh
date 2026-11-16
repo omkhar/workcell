@@ -32,8 +32,12 @@ readonly WORKCELL_COPILOT_HOST_TOKEN_FILE="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONT
 source /usr/local/libexec/workcell/assurance.sh
 # shellcheck source=runtime/container/generated-adapters.sh
 source /usr/local/libexec/workcell/generated-adapters.sh
-# shellcheck source=runtime/container/provider-policy.sh
-source /usr/local/libexec/workcell/provider-policy.sh
+readonly WORKCELL_PROVIDER_POLICY=/usr/local/libexec/workcell/workcell-provider-policy
+
+workcell_die() {
+  echo "$*" >&2
+  exit 2
+}
 # shellcheck source=runtime/container/home-control-plane.sh
 source /usr/local/libexec/workcell/home-control-plane.sh
 # shellcheck source=runtime/container/runtime-user.sh
@@ -251,10 +255,13 @@ elif [[ "${WORKCELL_MODE}" == "development" ]] && [[ $# -gt 0 ]] && [[ "$1" != "
   workcell_verify_control_plane_path "/usr/local/libexec/workcell/development-wrapper.sh"
   set -- /bin/bash /usr/local/libexec/workcell/development-wrapper.sh "$@"
 else
-  validate_command_args "${AGENT_NAME}" "$@"
+  # The provider policy checks the full command. Breakglass applies only
+  # when the policy runs as a direct child of this PID 1 entrypoint.
+  "${WORKCELL_PROVIDER_POLICY}" validate-command --mode="${WORKCELL_MODE}" --agent-ui="${AGENT_UI}" \
+    --wrapper-context="${WORKCELL_WRAPPER_CONTEXT:-0}" "${AGENT_NAME}" "$@" || exit 2
 
-  # validate_command_args passed, so a provider command names AGENT_NAME, a
-  # supported adapter, and runs through its launcher link.
+  # The policy passed, so a provider command names AGENT_NAME, a supported
+  # adapter, and runs through its launcher link.
   if [[ $# -gt 0 ]] && [[ "$1" == "${AGENT_NAME}" ]]; then
     set -- "/usr/local/libexec/workcell/core/${AGENT_NAME}" "${@:2}"
   fi

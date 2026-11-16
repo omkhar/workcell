@@ -13,11 +13,12 @@ const generatedHeader = "// SPDX-License-Identifier: Apache-2.0\n// Copyright 20
 
 // GenTargets maps each `workcell-hostutil adapters gen` target to its renderer.
 var GenTargets = map[string]func([]Manifest) ([]byte, error){
-	"data":           RenderDataGo,
-	"providerid":     RenderProviderIDGo,
-	"launcher-shell": RenderLauncherShell,
-	"runtime-shell":  RenderRuntimeShell,
-	"launcher-rust":  RenderLauncherRust,
+	"data":            RenderDataGo,
+	"providerid":      RenderProviderIDGo,
+	"launcher-shell":  RenderLauncherShell,
+	"runtime-shell":   RenderRuntimeShell,
+	"launcher-rust":   RenderLauncherRust,
+	"provider-policy": RenderProviderPolicyGo,
 }
 
 // RenderDataGo renders internal/adapters/data_gen.go: the providers registry
@@ -75,6 +76,29 @@ func RenderProviderIDGo(manifests []Manifest) ([]byte, error) {
 	b.WriteString("// metadata tables: every manifest that declares credentials. Membership here\n")
 	b.WriteString("// is not a support-tier claim.\n")
 	fmt.Fprintf(&b, "var CredentialMetadataProviders = %s\n", goStringSlice(withCredentials))
+	return format.Source([]byte(b.String()))
+}
+
+// RenderProviderPolicyGo renders internal/providerpolicy/adapters_gen.go: the
+// tier of each supported adapter and the [flags] lists of each uncertified
+// adapter that the runtime provider policy reads.
+func RenderProviderPolicyGo(manifests []Manifest) ([]byte, error) {
+	var b strings.Builder
+	b.WriteString(generatedHeader + "package providerpolicy\n\n")
+	b.WriteString("// Adapters is the policy data of every supported adapter, by id.\n")
+	b.WriteString("var Adapters = map[string]Adapter{\n")
+	for _, m := range manifests {
+		if m.Tier == "planned" {
+			continue
+		}
+		fmt.Fprintf(&b, "%q: {\nTier: %q,\n", m.ID, m.Tier)
+		if m.Tier == "uncertified" {
+			fmt.Fprintf(&b, "Allow: %s,\nDeny: %s,\nOtherCommands: %s,\n",
+				goStringSlice(m.Flags.Allow), goStringSlice(m.Flags.Deny), goStringSlice(m.Flags.OtherCommands))
+		}
+		b.WriteString("},\n")
+	}
+	b.WriteString("}\n")
 	return format.Source([]byte(b.String()))
 }
 

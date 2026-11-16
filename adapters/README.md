@@ -50,7 +50,7 @@ Adapter rules:
 Each adapter directory has an `adapter.toml` manifest (strict schema and
 loader: `internal/adapters/manifest.go`). The manifest is the source of the
 per-provider credential keys, container paths, reserved targets, and egress
-endpoints. Run the five `scripts/generate-adapters-*.sh` generators to
+endpoints. Run the six `scripts/generate-adapters-*.sh` generators to
 generate `internal/adapters/data_gen.go`,
 `internal/providerid/providerid_gen.go`,
 `scripts/lib/launcher/generated-adapters.sh`,
@@ -69,8 +69,7 @@ files with the generator output. The parity test in
 tables, the launcher `--agent` dispatch, and the Rust launcher table.
 
 The `[flags]` table puts each option of the pinned CLI in `allow` or `deny`. The
-values must agree with `reject_unsafe_<id>_args` in
-`runtime/container/provider-policy.sh`. `subcommands` names the allowed
+values must agree with the policy of the provider in `internal/providerpolicy`. `subcommands` names the allowed
 subcommands whose help the inventory also reads. `other_commands` names the
 remaining top-level commands. The inventory fails when the CLI help lists a
 command that is in neither list. Container smoke runs
@@ -82,13 +81,13 @@ option that the help hides, and it does not read commands below a listed
 subcommand. Add a documented hidden option to `deny` by hand. After a provider
 bump, run the script with `--write` and classify each new flag.
 `TestFlagInventoryEntriesMatchProviderPolicy` sends each entry, and the
-attached `--flag=value` form of each denied long option, through the policy
-function.
+attached `--flag=value` form of each denied long option, through the provider
+policy.
 
 An uncertified manifest needs a `[flags]` `allow` list that is not empty. Its
 provider options pass only through that list, a word that names one of
-`[flags]` `other_commands` is refused, and other words pass
-(`reject_manifest_args`). See
+`[flags]` `other_commands` is refused, and other words pass (the manifest
+policy in `internal/providerpolicy/providerpolicy.go`). See
 [`../docs/extending-adapters.md`](../docs/extending-adapters.md).
 
 The file `internal/adapters/adapters.go` contains the public API. Injection,

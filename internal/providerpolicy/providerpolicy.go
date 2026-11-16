@@ -229,7 +229,9 @@ func geminiUnsafeKey(key string) bool {
 		return false
 	}
 	rest := key[2:]
-	if strings.Contains(rest, "dangerously") {
+	// Bash under a UTF-8 locale lowercased U+0130 to i and U+212A to k, so a
+	// long option name with a control or non-ASCII byte is refused.
+	if strings.Contains(rest, "dangerously") || hasUnsafeByte(beforeEqual(rest)) {
 		return true
 	}
 	if i := strings.Index(rest, "bypass"); i >= 0 && strings.Contains(rest[i+len("bypass"):], "permission") {
@@ -268,7 +270,9 @@ func Copilot(args []string, s Session) error {
 			continue
 		}
 		lowerName, _, attached := strings.Cut(asciiLower(arg), "=")
-		if slices.Contains(copilotUnsafeOptions, lowerName) {
+		// A long option name with a control or non-ASCII byte is refused, as
+		// in Gemini.
+		if slices.Contains(copilotUnsafeOptions, lowerName) || (strings.HasPrefix(arg, "--") && hasUnsafeByte(lowerName)) {
 			if attached {
 				return refuse(unsafe + beforeEqual(arg))
 			}
