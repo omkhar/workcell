@@ -453,6 +453,8 @@ func continuesLine(word string) bool {
 type command struct {
 	args        []word
 	conditional bool
+	piped       bool // a pipeline stage or a background job, which runs in a subshell
+	nested      bool // text an eval, a trap or a child shell runs, as the lane reader reads it
 }
 
 // splitCommands cuts one logical line into the separate commands bash runs, at
@@ -480,7 +482,10 @@ func splitCommands(words []word) []command {
 			continue
 		}
 		if !each.quoted && isOperator(each.text) {
-			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||"})
+			piped := each.text == "|" || each.text == "|&"
+			last := &commands[len(commands)-1]
+			last.piped = last.piped || piped || each.text == "&"
+			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", piped: piped})
 			continue
 		}
 		last := &commands[len(commands)-1]
@@ -699,6 +704,22 @@ const openerJoinLimit = 64
 
 // heredocsAsHereStrings moves every heredoc body into the line that opens it, as the here-string heredocWord spells, so the command that reads it keeps it.
 func heredocsAsHereStrings(script string) string {
+	return rewriteHeredocs(script, false)
+}
+
+// rewriteHeredocs is heredocsAsHereStrings, and when expanded is set, it keeps
+// the text of a body bash expands too, as the here-string heredocExpanded
+// spells, so a reader of expansions reads it.
+func rewriteHeredocs(script string, expanded bool) string {
+	text, _ := rewriteHeredocsEnding(script, expanded)
+	return text
+}
+
+// rewriteHeredocsEnding is rewriteHeredocs, and whether every body ends at a
+// line this reader matches. A body that does not, as one whose delimiter is
+// unresolved, runs to the end of script, so whatever bash runs after its
+// real end is missing from the text.
+func rewriteHeredocsEnding(script string, expanded bool) (string, bool) {
 	var out, body strings.Builder
 	var opened, pending []heredoc
 	var bodies []string
@@ -733,9 +754,13 @@ func heredocsAsHereStrings(script string) string {
 			default:
 				// bash expands an unquoted delimiter's body, so one with an
 				// expansion or an escape cannot be spelled.
-				if text := body.String(); !each.quoted && strings.ContainsAny(text, "$`\\") {
+				text := body.String()
+				switch expands := !each.quoted && strings.ContainsAny(text, "$`\\"); {
+				case expands && expanded:
+					bodies = append(bodies, heredocExpanded(text))
+				case expands:
 					bodies = append(bodies, "<<<$_")
-				} else {
+				default:
 					bodies = append(bodies, heredocWord(text))
 				}
 				body.Reset()
@@ -792,10 +817,39 @@ func heredocsAsHereStrings(script string) string {
 		}
 		pending, held = opened, line
 	}
-	if len(pending) > 0 {
+	ended := len(pending) == 0
+	if !ended {
 		release()
 	}
 	out.WriteString(lines)
+	return out.String(), ended
+}
+
+// heredocExpanded is the here-string of a body bash expands, as it expands a
+// double-quoted word: each backslash that stays literal is doubled, each
+// double quote is escaped, a continued line is joined, and each line ends in a
+// space, so the reader reads the body as one word.
+func heredocExpanded(body string) string {
+	var out strings.Builder
+	out.WriteString(`<<<"`)
+	for at := 0; at < len(body); at++ {
+		switch c := body[at]; {
+		case c == '\\' && at+1 < len(body) && body[at+1] == '\n':
+			at++
+		case c == '\\' && at+1 < len(body) && strings.IndexByte("$`\\", body[at+1]) >= 0:
+			out.WriteString(body[at : at+2])
+			at++
+		case c == '\\':
+			out.WriteString(`\\`)
+		case c == '"':
+			out.WriteString(`\"`)
+		case c == '\n' || c == '\r':
+			out.WriteByte(' ')
+		default:
+			out.WriteByte(c)
+		}
+	}
+	out.WriteByte('"')
 	return out.String()
 }
 
@@ -815,6 +869,17 @@ func spelledProgram(program string) (string, bool) {
 
 // flattenSubstitutions moves each $( ... ) and ` ... ` onto lines before its command and leaves $_ in its place; a quoted ) or $( is left alone.
 func flattenSubstitutions(script string) string {
+	return flattenGrouped(script, false)
+}
+
+// flattenGrouped is flattenSubstitutions, and when grouped is set, it sets
+// each substitution it moves between a line of ( and a line of ), so a reader
+// of its writes reads it as the subshell it runs in.
+func flattenGrouped(script string, grouped bool) string {
+	open, closer := "\n", "\n"
+	if grouped {
+		open, closer = "\n(\n", "\n)\n"
+	}
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
 	// boundary, whether that text is inside double quotes, the byte that
@@ -882,7 +947,7 @@ func flattenSubstitutions(script string) string {
 			top.text.WriteByte(c)
 		case c == top.closer && !top.quoted:
 			frames = frames[:len(frames)-1]
-			out.WriteString("\n" + top.text.String() + "\n")
+			out.WriteString(open + top.text.String() + closer)
 		case top.quoted:
 			top.text.WriteByte(markQuotedNewline(c))
 		default:
