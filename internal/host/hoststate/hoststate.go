@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -104,35 +105,151 @@ func PublishSessionCaptureFile(source, destination string) error {
 // changed. The parent and the directory are fsynced, so a crash cannot keep
 // content written under path after this call while it loses the mode.
 func EnsureOwnerOnlyDirectory(path string) error {
-	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	dir, err := openOwnerOnlyDirectory(path)
 	if err != nil {
 		return err
+	}
+	return dir.Close()
+}
+
+// openOwnerOnlyDirectory does the work of EnsureOwnerOnlyDirectory and returns
+// the pinned directory, which the caller closes.
+func openOwnerOnlyDirectory(path string) (*os.File, error) {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
+		return nil, err
 	}
 	defer parent.Close()
 	name := filepath.Base(cleaned)
 	if err := rootio.MkdirAllSyncedAt(parent, name, 0o700); err != nil {
-		return err
+		return nil, err
 	}
 	dir, err := rootio.OpenDirectoryAtNoFollow(parent, name)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer dir.Close()
+	if err := requireOwnerOnlyDirectory(dir, cleaned); err != nil {
+		_ = dir.Close()
+		return nil, err
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
+
+// requireOwnerOnlyDirectory refuses a directory that another user owns or that
+// carries an extended ACL, and sets its mode to 0700.
+func requireOwnerOnlyDirectory(dir *os.File, label string) error {
 	var stat unix.Stat_t
 	if err := unix.Fstat(int(dir.Fd()), &stat); err != nil {
 		return err
 	}
 	if stat.Uid != uint32(os.Geteuid()) {
-		return fmt.Errorf("%s is not owned by the current user", cleaned)
+		return fmt.Errorf("%s is not owned by the current user", label)
 	}
 	// An extended ACL can grant another account access that the mode hides.
 	if err := rootio.RejectExtendedACL(int(dir.Fd())); err != nil {
-		return fmt.Errorf("%s: %w", cleaned, err)
+		return fmt.Errorf("%s: %w", label, err)
 	}
 	if stat.Mode&0o7777 != 0o700 {
 		if err := unix.Fchmod(int(dir.Fd()), 0o700); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// sessionCloneName is the form of a session directory name: one path
+// component that is not . or .., in the characters a session ID uses.
+var sessionCloneName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// SessionCloneRepoName is the clone directory in each session directory.
+const SessionCloneRepoName = "repo"
+
+// swapPoint is nil outside tests. A test sets it to swap the session clone
+// directory at the steps where another process could: "mkdir", before the
+// session directory is made, and "open", before it is opened.
+var swapPoint func(step string)
+
+// CloneSessionWorkspace makes the session directory parent/session and runs
+// clone in it to make parent/session/repo. It pins parent, the session clone
+// directory, on a no-follow descriptor from the owner-only check through the
+// clone: the session directory is made with mkdirat from that descriptor, and
+// clone gets the session directory as a descriptor to use as its working
+// directory. So a symlink that another process swaps in at parent between the
+// check and the clone cannot move the clone. After the clone, the path parent
+// must still lead, with no symlink, to the pinned session directory, and the
+// clone must be a directory in it. On an error, the session directory is
+// removed through the pinned parent.
+func CloneSessionWorkspace(parentPath, session string, clone func(sessionDir *os.File) error) error {
+	if !sessionCloneName.MatchString(session) {
+		return fmt.Errorf("session directory name is not one plain path component: %q", session)
+	}
+	parent, err := openOwnerOnlyDirectory(parentPath)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	if swapPoint != nil {
+		swapPoint("mkdir")
+	}
+	if err := unix.Mkdirat(int(parent.Fd()), session, 0o700); err != nil {
+		if errors.Is(err, unix.EEXIST) {
+			return fmt.Errorf("refusing to reuse an existing isolated session workspace: %s", filepath.Join(parent.Name(), session))
+		}
+		return err
+	}
+	if err := cloneIntoSessionDir(parent, session, clone); err != nil {
+		if removeErr := rootio.RemoveAllAtNoFollow(parent, session); removeErr != nil {
+			return errors.Join(err, removeErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func cloneIntoSessionDir(parent *os.File, session string, clone func(sessionDir *os.File) error) error {
+	if swapPoint != nil {
+		swapPoint("open")
+	}
+	dir, err := rootio.OpenDirectoryAtNoFollow(parent, session)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	label := filepath.Join(parent.Name(), session)
+	if err := requireOwnerOnlyDirectory(dir, label); err != nil {
+		return err
+	}
+	if err := parent.Sync(); err != nil {
+		return err
+	}
+	if err := clone(dir); err != nil {
+		return err
+	}
+	repo, err := rootio.OpenDirectoryAtNoFollow(dir, SessionCloneRepoName)
+	if err != nil {
+		return fmt.Errorf("the session clone is not a directory in %s: %w", label, err)
+	}
+	_ = repo.Close()
+	// The path, opened again with no symlink at any component, must reach the
+	// pinned session directory.
+	again, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(label, SessionCloneRepoName))
+	if err != nil {
+		return fmt.Errorf("the session directory path changed during the clone: %s: %w", label, err)
+	}
+	defer again.Close()
+	var pinned, walked unix.Stat_t
+	if err := unix.Fstat(int(dir.Fd()), &pinned); err != nil {
+		return err
+	}
+	if err := unix.Fstat(int(again.Fd()), &walked); err != nil {
+		return err
+	}
+	if pinned.Dev != walked.Dev || pinned.Ino != walked.Ino {
+		return fmt.Errorf("the session directory path changed during the clone: %s", label)
 	}
 	return dir.Sync()
 }

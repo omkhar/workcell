@@ -1720,8 +1720,20 @@ create_isolated_session_workspace() {
     exit 2
   }
 
-  mkdir -p "$(dirname "${target}")"
-  run_clean_host_command_in_dir "${ROOT_DIR}" "${HOST_GIT_BIN}" clone --quiet --no-hardlinks "${source_workspace}" "${target}"
+  # The Go helper keeps the session clone directory on a no-follow descriptor
+  # from its owner-only check through the clone: it makes the session
+  # directory with mkdirat and runs git clone with that directory, not a path,
+  # as the working directory. A symlink swapped in at workcell-sessions after
+  # the check cannot move the clone. The later git steps below and the Docker
+  # mount still use the path; docs/invariants.md records that residual risk.
+  [[ "${target}" == */"${session_id}/repo" ]] || {
+    echo "Refusing an isolated session workspace path that does not end in ${session_id}/repo: ${target}" >&2
+    exit 2
+  }
+  go_hostutil helper clone-session-workspace "${target%/"${session_id}"/repo}" "${session_id}" "${HOST_GIT_BIN}" "${source_workspace}" || {
+    echo "Refusing to create the isolated session workspace: ${target}" >&2
+    exit 2
+  }
   if [[ -n "${SESSION_FORK_COMMIT}" ]]; then
     # A fork child fetches the signed snapshot commit by object id, never by a
     # store ref, and starts on its parent: the launch commit of the fork parent.
