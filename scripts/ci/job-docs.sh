@@ -7,6 +7,10 @@ workcell_entry_root="$(shopt -s nullglob && f="${BASH_SOURCE[0]}" r=scripts/ci/j
 set -euo pipefail
 
 ROOT_DIR="${workcell_entry_root}"
+# The trusted docker client library runs HOST_DOCKER_BIN; a lane names it, so
+# a value the job inherits cannot choose the program.
+# shellcheck disable=SC2034
+HOST_DOCKER_BIN=docker
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-}"

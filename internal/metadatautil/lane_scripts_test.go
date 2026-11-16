@@ -292,6 +292,9 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		builtin = "a builtin this reader does not model"
 		spelled = "an expansion spells"
 		split   = "a command word bash may split"
+		// inArithmetic is the error for an operand bash evaluates as an
+		// expression, as x='PATH=1'; (( x )) assigns PATH.
+		inArithmetic = "in arithmetic"
 	)
 	forwarder := map[string]string{library: "run() {\n  (\n    cd / &&\n      \"$@\"\n  )\n}\n"}
 	cases := []struct {
@@ -336,7 +339,8 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"library runs a local positional", source + "run hash -p /bin/true bash\n" + gate, map[string]string{library: "run() {\n  local c=\"$1\"\n  shift\n  \"$c\" \"$@\"\n}\n"}, program},
 		{"library forwarder runs alias", source + "run alias bash=true\n" + gate, forwarder, "alias"},
 		{"library forwarder runs a computed name", source + "run \"$1\" x\n" + gate, forwarder, "cannot spell"},
-		{"library forwarder runs a program", source + "run make\nrun \"${HOST_BIN:-docker}\" ps\n" + gate, forwarder, "wired"},
+		{"library forwarder runs a program", source + "HOST_BIN=docker\nrun make\nrun \"${HOST_BIN:-docker}\" ps\n" + gate, forwarder, "wired"},
+		{"library forwarder runs an inherited program", source + "run \"${HOST_BIN:-docker}\" ps\n" + gate, forwarder, "never assigns"},
 		{"library forwards through itself", source + strings.Repeat("run ", 9) + "true\n" + gate, forwarder, through},
 		{"lane forwarder", "run() { \"$@\"; }\nrun hash -p /bin/true bash\n" + gate, nil, "cannot spell"},
 		{"child shell reads the root from a heredoc", "bash <<'EOS'\n\"${ROOT_DIR}/scripts/gate.sh\"\nEOS\n", nil, "child shell"},
@@ -367,6 +371,68 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"history -s", "history -s 'bash() { :; }'\n" + gate, nil, "history"},
 		{"set -n", "set -n\n" + gate, nil, "set -n"},
 		{"set -o noexec", "set -o noexec\n" + gate, nil, "set -n"},
+		{"set -t", "set -t\n:\n" + gate, nil, "set -t"},
+		{"set -o onecmd", "set -o onecmd\n:\n" + gate, nil, "set -t"},
+		{"shopt -so noexec", "shopt -so noexec\n" + gate, nil, "shopt -so"},
+		{"shopt -s -o noexec", "shopt -s -o noexec\n" + gate, nil, "shopt -so"},
+		{"shopt -o -s noexec", "shopt -o -s noexec\n" + gate, nil, "shopt -so"},
+		{"shopt -so onecmd", "shopt -so onecmd\n:\n" + gate, nil, "shopt -so"},
+		{"child shell -o noexec", "bash -o noexec \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell -eo noexec", "bash -eo noexec \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell -ex -o noexec", "bash -ex -o noexec \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell --norc -o noexec", "bash --norc -o noexec \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"exec child shell -o noexec", "exec bash -o noexec \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell -D", "bash -D \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell --dump-strings", "bash --dump-strings \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell --version", "bash --version \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell --help", "bash --help \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"env child shell --version", "env bash --version \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell -O an unknown option", "bash -O extdebug \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "unwired"},
+		{"child shell with options that run it", "bash --norc --noprofile -euo pipefail -O extglob -x \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "wired"},
+		{"read a brace group of names", "read -r P{A,X}TH <<<'/tmp /tmp'\n" + gate, nil, named},
+		{"printf -v a brace group of names", "printf -v P{A,X}TH /tmp\n" + gate, nil, named},
+		{"read a glob name", "read -r P?TH </dev/null\n" + gate, nil, named},
+		{"printf -v a bracket glob name", "printf -v P[A]TH /tmp\n" + gate, nil, named},
+		{"mapfile a brace group of names", "mapfile -t P{A,X}TH </dev/null\n" + gate, nil, named},
+		{"getopts a glob name", "getopts a P?TH\n" + gate, nil, named},
+		{"inherited program variable", "\"${TOOL}\" -p /bin/true bash\n" + gate, nil, "never assigns"},
+		{"inherited program variable with a default", "\"${TOOL:-make}\" -p /bin/true bash\n" + gate, nil, "never assigns"},
+		{"coproc named for a startup variable", "coproc PATH { cat; }\n" + gate, nil, "unwired"},
+		{"prompt expansion assigns a computed name", "a=BASH_; x=\"\\${${a}CMDS[bash]:=/bin/true}\"; : \"${x@P}\"\n" + gate, nil, "@P operator"},
+		{"inert expansion operator", "x=y; echo \"${x@Q}\"\n" + gate, nil, "wired"},
+		{"quoted arithmetic beside a hash rebind", "hash -p /bin/true bash \"$((0))\"\n" + gate, nil, "binds a name to a path"},
+		{"arithmetic evaluates a variable's value", "x='PATH=1'; (( x ))\n" + gate, nil, inArithmetic},
+		{"arithmetic evaluates a computed value", "a=PA; x=\"${a}TH=1\"; (( x ))\n" + gate, nil, inArithmetic},
+		{"arithmetic evaluates a hash table entry", "a=BASH_; x=\"${a}CMDS[bash]=2\"; (( x ))\n" + gate, nil, inArithmetic},
+		{"arithmetic expansion evaluates a variable's value", "x='PATH=1'; : $(( x ))\n" + gate, nil, inArithmetic},
+		{"integer test evaluates a variable's value", "x='PATH=1'; [[ x -eq 1 ]]\n" + gate, nil, inArithmetic},
+		{"integer test after && evaluates a variable's value", "x='PATH=1'; [[ -n y && \"$x\" -eq 1 ]]\n" + gate, nil, inArithmetic},
+		{"subscript evaluates a variable's value", "x='PATH=1'; z[x]=1\n" + gate, nil, inArithmetic},
+		{"substring offset evaluates a variable's value", "x='PATH=1'; y=abc; echo \"${y:x}\"\n" + gate, nil, inArithmetic},
+		{"substring offset assigns", "y=abc; echo ${y:PATH=1}\n" + gate, nil, inArithmetic},
+		{"while(( )) evaluates a variable's value", "x='PATH=1'; while((x)); do break; done\n" + gate, nil, inArithmetic},
+		{"arithmetic evaluates an inherited value", "(( x ))\n" + gate, nil, inArithmetic},
+		{"arithmetic evaluates a value past an expansion", "y='PATH=1'; x=$(( 1 ))+y; (( x ))\n" + gate, nil, inArithmetic},
+		{"library arithmetic evaluates a variable's value", source + gate, map[string]string{library: "x='PATH=1'\n: $((x))\n"}, inArithmetic},
+		{"integer declaration", "declare -i n; n='PATH=1'\n" + gate, nil, "integer variable"},
+		{"arithmetic evaluates a positional parameter", "(( $1 ))\n" + gate, nil, inArithmetic},
+		{"let evaluates a variable's value", "x='PATH=1'; let x\n" + gate, nil, inArithmetic},
+		{"$[ ] evaluates a variable's value", "x='PATH=1'; : $[ x ]\n" + gate, nil, inArithmetic},
+		{"for (( )) evaluates a variable's value", "x='PATH=1'; for (( i = x; i < 1; i++ )); do :; done\n" + gate, nil, inArithmetic},
+		{"unset subscript evaluates a variable's value", "z=(1 2); x='PATH=1'; unset 'z[x]'\n" + gate, nil, inArithmetic},
+		{"test -v subscript evaluates a variable's value", "x='PATH=1'; [[ -v z[x] ]]\n" + gate, nil, inArithmetic},
+		{"substring length evaluates a variable's value", "x='PATH=1'; y=abc; echo \"${y:0:x}\"\n" + gate, nil, inArithmetic},
+		{"local integer declaration", "f() { local -i n; n='PATH=1'; }\nf\n" + gate, nil, "integer variable"},
+		{"arithmetic of numbers", "n=0; n=$((n + 1)); m=\"${n}\"; (( m < 3 )); [[ \"${n}\" -gt 0 ]]; a[n]=1; y=abc\nk=$(( n + 1 ))\necho \"${a[n]} ${y:k} ${#y} $(( ${#y} + $# ))\"\n" + gate, nil, "wired"},
+		{"associative array subscript", "declare -A m=()\nread -r x </dev/null || true\nm[\"${x}\"]=1\necho \"${m[${x}]:-}\"\n" + gate, nil, "wired"},
+		{"associative array declared in a function", "f() {\ndeclare -A m\n}\nx='PATH=1'\nm[x]=1\n" + gate, nil, inArithmetic},
+		{"associative array declared in a loop", "for _ in 1; do\ndeclare -A m\ndone\nx='PATH=1'\nm[x]=1\n" + gate, nil, inArithmetic},
+		{"associative array declared after a use", "x='PATH=1'\nm[x]=1\ndeclare -A m 2>/dev/null || true\n" + gate, nil, inArithmetic},
+		{"associative array used in a library first", source + "declare -A m\n" + gate, map[string]string{library: "x='PATH=1'\nm[x]=1\n"}, inArithmetic},
+		{"arithmetic evaluates a variable only an argument assigns", "echo x=1\n(( x ))\n" + gate, nil, inArithmetic},
+		{"arithmetic evaluates a copy of a value", "y='PATH=1'; x=\"${y}\"; (( x ))\n" + gate, nil, inArithmetic},
+		{"associative array unset", "declare -A m\nunset m\nx='PATH=1'\nm[x]=1\n" + gate, nil, inArithmetic},
+		{"arithmetic past the reader's bound", "echo \"" + strings.Repeat("${a:", 4000) + "0" + strings.Repeat("}", 4000) + "\"\n" + gate, nil, "nests more expansions"},
 		{"shopt -s extdebug", "shopt -s extdebug\ntrap false DEBUG\n" + gate, nil, "extdebug"},
 		{"library sets PATH", source + gate, map[string]string{library: "PATH=/tmp/x:$PATH\n"}, "assigns PATH"},
 		{"library exports BASH_ENV", source + gate, map[string]string{library: "f() { export BASH_ENV=/tmp/e.sh; }\n"}, "assigns BASH_ENV"},
@@ -473,6 +539,13 @@ func TestLaneScriptsWorkGrowsLinearly(t *testing.T) {
 		},
 		"function calls": func(n int) (string, string) { return "f() { g; g; }\ng() { :; }\n" + strings.Repeat("f\n", n), "" },
 		"brace words":    func(n int) (string, string) { return strings.Repeat("echo {a,b}{c,d}{e,f}\n", n), "" },
+		"nested offsets": func(n int) (string, string) {
+			return "echo \"" + strings.Repeat("${a:", n) + "0" + strings.Repeat("}", n) + "\"\n", ""
+		},
+		"nested arithmetic": func(n int) (string, string) {
+			return "echo " + strings.Repeat("$((", n) + "1" + strings.Repeat("))", n) + "\n", ""
+		},
+		"arithmetic words": func(n int) (string, string) { return "(( " + strings.Repeat("1 + ", n) + "1 ))\n", "" },
 	}
 	for name, shape := range shapes {
 		t.Run(name, func(t *testing.T) {
