@@ -532,6 +532,7 @@ type laneNesting struct {
 	scopes []int    // the number of each
 	next   *int     // the last number, shared by every body
 	lost   bool
+	opened int            // the index among the words read last of the case it opened, or -1
 	kinds  map[int]string // the opener of each number, or function for a function body
 	names  map[int]string // the name of each function body
 }
@@ -589,6 +590,7 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 		nesting.open, nesting.scopes = nesting.open[:len(nesting.open)-1], nesting.scopes[:len(nesting.scopes)-1]
 	}
 	words := args
+	nesting.opened = -1
 	for leading := true; leading && len(words) > 0 && !words[0].quoted; {
 		opensBody := header
 		header = false
@@ -606,9 +608,12 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 			push("do")
 		case text == "for" || text == "select" || text == "case":
 			push(map[bool]string{true: "case", false: "do"}[text == "case"])
+			nesting.opened = map[bool]int{true: len(args) - len(words), false: -1}[text == "case"]
 			leading = false // the words after it are not commands
 		case laneNestingClosers[text] != "":
 			pop(text)
+		case strings.HasSuffix(text, "()"):
+			header, name = true, strings.TrimSuffix(text, "()")
 		case innermost() == "case" && strings.HasSuffix(text, ")"):
 			branch() // a case pattern
 		case text == "else" || text == "elif":
@@ -620,8 +625,6 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 			leading = text == "("
 		case text == "function" && len(words) > 1:
 			words = words[1:]
-		case strings.HasSuffix(text, "()"):
-			header, name = true, strings.TrimSuffix(text, "()")
 		case slices.Contains([]string{"then", "do", "!", "time"}, text):
 		default:
 			leading = false

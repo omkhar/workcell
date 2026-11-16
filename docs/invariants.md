@@ -375,15 +375,41 @@ a substitution in an unquoted heredoc runs, so it counts. A workflow path starts
 from the working directory of its step, and a `cd` before it moves that
 directory.
 
+A CI job script counts only when a step runs it by a path the check resolves.
+A step resolves no path when its `env`, at any level, sets `BASH_ENV`, `ENV`,
+`SHELLOPTS` or `BASHOPTS`. The same holds for a `BASH_FUNC_` name or a name
+with `%%`, which bash imports as a function. Each later step of the job
+resolves none either (`internal/metadatautil/workflow_refs.go`). A job script
+that such a step runs inherits that `env`, so the step does not count it.
+
 An `exit` or an `exec` of a program that always runs stops the check when any
 command follows it. So does a call, a `source` or an `eval` whose body or text
 always runs one (`internal/metadatautil/lane_reading.go`). An `exit` whose
 status may be 0 stops the check in a loop, a `case` branch or an `if`
 condition too, since those may run. One in an `if` branch, behind `||` or `&&`,
-or in a subshell still counts, as a lane's failed check does. So does one in a
-`case` branch of literal patterns on one variable, as `-h | --help)` on the
-lane's own `$1` is. A literal subject or a glob such as `*)` matches whenever
-the case runs, and a function's `$1` is its caller's, so neither counts.
+or in a subshell still counts, as a lane's failed check does.
+
+A `case` branch is a condition only when each of its patterns is a literal
+word and no `;&` or `;;&` runs it (`internal/metadatautil/lane_cases.go`). Its
+subject must also be a value that no lane fixes. One such value is a variable
+that a step's own `env` sets from the `github` context. The step must name that
+variable only to expand it. The other is the `$1` of a CI job script, read
+against the arguments that each step passes.
+
+The check reads those arguments as a `case` loop on `$1` reads them. Each
+argument it reaches must be a literal word that a literal branch matches before
+any other branch does. That branch must run one `shift`, which skips the values
+it reads, so `--base "$X"` passes. A branch that an argument selects runs. A
+second `case` on `$1`, a `shift` outside a branch or a `set` of the parameters
+makes every branch run.
+
+Under any other subject every branch counts as running, as under a literal
+word, `$LINENO` or a function's `$1`. So does every branch of a `case` that an
+`eval` or a child shell opens, and every command of a function a branch
+defines. Two residuals remain. A workflow's
+triggers may fix a `github` value, as `on: push` fixes `github.event_name`. The
+check also takes a step's own `env` to win over a value that an earlier step
+writes to `GITHUB_ENV`.
 
 A call stops the check when its body may exit with 0 before a `return` that
 always runs. A `return` in a branch or a loop does not count, since the body

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,7 +62,21 @@ func unreadEnvWrite(run string) bool {
 	})
 }
 
-func setsStartupFile(env map[string]string) bool { return env["BASH_ENV"] != "" || env["ENV"] != "" }
+// setsStartupFile reports an env that changes what a step's bash runs before
+// or instead of its body: a BASH_ENV or ENV file it sources, SHELLOPTS or
+// BASHOPTS options such as noexec, onecmd or lastpipe, or a function it
+// imports from a BASH_FUNC_ name or any name with %%. A lane script the step
+// runs inherits the same env.
+func setsStartupFile(env map[string]string) bool {
+	return env["BASH_ENV"] != "" || env["ENV"] != "" || slices.ContainsFunc(slices.Collect(maps.Keys(env)), startupEnvName)
+}
+
+// startupEnvName reports a name bash reads from its env to set options or to
+// import a function, in any case, which only fails closed.
+func startupEnvName(name string) bool {
+	name = strings.ToUpper(name)
+	return name == "SHELLOPTS" || name == "BASHOPTS" || strings.HasPrefix(name, "BASH_FUNC_") || strings.Contains(name, "%%")
+}
 
 // githubHostedPosix matches the GitHub-hosted labels a shell-less step surely runs bash on.
 var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|26\.04|24\.04|22\.04)|ubuntu-(?:26|24|22)\.04-arm|macos-(?:latest|26|15|14|13)(?:-intel|-large|-xlarge)?)$`)
