@@ -10,7 +10,8 @@
   match(text, "^" fence "+"); size = RLENGTH; print ""; next
 }
 fence {
-  text = $0; sub(/^ ? ? ?/, "", text); sub(/[ \t\r]+$/, "", text)
+  # match, not sub(/^ ? ? ?/): mawk's sub strips only one space there.
+  text = $0; match(text, /^ */); text = substr(text, (RLENGTH > 3 ? 3 : RLENGTH) + 1); sub(/[ \t\r]+$/, "", text)
   long = length(text) >= size; gsub(fence, "", text)
   if (text == "" && long) fence = ""
   print ""; next
