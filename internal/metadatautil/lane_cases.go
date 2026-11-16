@@ -22,6 +22,8 @@ type laneCase struct {
 	depth    int            // the index of its scope among the nesting's scopes
 	function int            // the function body it is in, or 0
 	named    bool           // its subject is a variable laneCaseNamed accepts
+	event    bool           // that variable holds the event's name
+	ran      []string       // the patterns of each branch that runs a command
 	own      bool           // its subject is $1 at the lane's own top level
 	expect   bool           // the next command starts a pattern list
 	piece    bool           // the pattern list goes on in the next command, after a |
@@ -40,8 +42,8 @@ type laneCases struct {
 	blind   bool              // a case is open that this reader does not follow
 	empty   bool              // the command before was empty
 	follows string            // the operator in front of the command before
-	env     map[string]string // a step's own env, or nil in a lane script
-	events  int               // how many events the step's workflow runs on
+	env     map[string]string // the names of a step's env laneSubjects lets a case read, or nil in a lane script
+	events  []string          // the events other than workflow_dispatch and workflow_call that start the step's workflow
 	run     string            // a step's text
 	own     *laneOwnCase      // a lane script's, shared by its libraries
 	top     bool              // the body is the lane script's own text
@@ -112,7 +114,8 @@ func (cases *laneCases) read(each command, nesting *laneNesting) (scopes []int, 
 		if at+2 < len(body) && body[at+2].text == "in" {
 			c.subject = body[at+1].text
 		}
-		c.named = laneCaseNamed(c.subject, cases.env, cases.run, cases.events)
+		value := laneCaseNamed(c.subject, cases.env, cases.run)
+		c.named, c.event = value != "", value == "event_name"
 		if c.own = cases.top && function == 0 && laneOwnSubject.MatchString(c.subject); c.own && cases.own != nil {
 			cases.own.cases++
 			cases.own.changed = cases.own.changed || cases.own.cases > 1
@@ -212,21 +215,33 @@ func (cases *laneCases) innermost() *laneCase {
 	return cases.open[len(cases.open)-1]
 }
 
-// condition returns whether a command in function runs only where a named
-// case branch is selected, and the own branch it is in, if any.
-func (cases *laneCases) condition(function int) (named bool, own *laneOwnBranch) {
+// condition returns the named cases whose selected branch a command in
+// function runs only in, and the own branch it is in, if any. It records the
+// branch's patterns in each case as ones that run a command.
+func (cases *laneCases) condition(function int) (named []*laneCase, own *laneOwnBranch) {
 	if cases.blind {
-		return false, nil
+		return nil, nil
 	}
 	for _, c := range cases.open {
 		if c.function == function {
-			named = named || c.cond
+			if c.cond {
+				named = append(named, c)
+				c.ran = append(c.ran, c.pieces...)
+			}
 			if c.branch != nil {
 				own = c.branch
 			}
 		}
 	}
 	return named, own
+}
+
+// covered reports whether the branches of an event case that run a command
+// name every event that starts the workflow, so on each run the case runs
+// one of them, as if it had no condition. A branch that runs any command
+// counts, which only fails closed.
+func (c *laneCase) covered() bool {
+	return c.event && !slices.ContainsFunc(c.cases.events, func(event string) bool { return !slices.Contains(c.ran, event) })
 }
 
 // shift records a shift or a set of the lane's own parameters, outside a
@@ -323,29 +338,49 @@ func laneOneWord(each word) bool {
 	return !strings.ContainsAny(each.syntax, "$`*?[]{}~") && !strings.Contains(each.raw, "@")
 }
 
-// laneCaseNamed reports whether a case subject is one expansion of a variable
-// whose value no lane can fix: a step's env sets it to a github context value
-// that differs from run to run, bash sets no variable by its name, and the
-// step's text names it only to expand it. A step sources no file, which this
-// reader refuses. The values that differ are the sha and the head_ref, and
-// the event_name of a workflow that more than one event runs. Others, as the
-// repository or the workflow, stay the same from run to run.
-func laneCaseNamed(subject string, env map[string]string, run string, events int) bool {
+// laneCaseNamed returns the github name of the value a case subject reads,
+// when it is one expansion of a variable whose value no lane can fix: env,
+// as laneSubjects gives it, holds it, bash sets no variable by its name, and
+// the step's text names it only to expand it. A step sources no file, which
+// this reader refuses. Otherwise it returns the empty string.
+func laneCaseNamed(subject string, env map[string]string, run string) string {
 	match := laneCaseVariable.FindStringSubmatch(subject)
 	if match == nil {
-		return false
+		return ""
 	}
 	name := match[1] + match[2]
-	value := laneGithubValue.FindStringSubmatch(env[name])
-	if value == nil || value[1] == "event_name" && events < 2 || laneBashNames.MatchString(name) {
-		return false
+	if laneBashNames.MatchString(name) {
+		return ""
 	}
 	read := regexp.MustCompile(`\$(?:` + name + `\b|\{` + name + `\})`)
-	return !regexp.MustCompile(`\b` + name + `\b`).MatchString(read.ReplaceAllString(run, " "))
+	if regexp.MustCompile(`\b` + name + `\b`).MatchString(read.ReplaceAllString(run, " ")) {
+		return ""
+	}
+	return env[name]
+}
+
+// laneSubjects returns the names of a step's env that a case may read as a
+// condition, each with the github value it holds: the sha, which differs from
+// run to run, and the event_name, unless the workflow runs on workflow_call,
+// where it is the caller's event, or the job's or the step's if names it,
+// which may pick the events the step runs on. A step after one that names
+// GITHUB_ENV gets none, since that step may set any of them. A value the
+// branch name sets, as the head_ref, is one the change's author picks.
+func laneSubjects(context laneStepContext, step workflowStep, call bool) map[string]string {
+	subjects := map[string]string{}
+	for name, value := range step.Env {
+		match := laneGithubValue.FindStringSubmatch(value)
+		if match == nil || context.envWrites || match[1] == "event_name" && (call ||
+			strings.Contains(context.job.If.Value, "event_name") || strings.Contains(step.If.Value, "event_name")) {
+			continue
+		}
+		subjects[name] = match[1]
+	}
+	return subjects
 }
 
 var (
 	laneCaseVariable = regexp.MustCompile(`^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$`)
-	laneGithubValue  = regexp.MustCompile(`^\$\{\{ *github\.(event_name|head_ref|sha) *\}\}$`)
+	laneGithubValue  = regexp.MustCompile(`^\$\{\{ *github\.(event_name|sha) *\}\}$`)
 	laneBashNames    = regexp.MustCompile(`^(?:BASH.*|COMP_.*|GITHUB_.*|RUNNER_.*|LINENO|PWD|OLDPWD|UID|EUID|PPID|RANDOM|SRANDOM|SECONDS|SHLVL|HOSTNAME|HOSTTYPE|OSTYPE|MACHTYPE|GROUPS|FUNCNAME|OPTIND|OPTARG|OPTERR|REPLY|PIPESTATUS|EPOCHSECONDS|EPOCHREALTIME|HISTCMD|COLUMNS|LINES|DIRSTACK|SHELLOPTS|IFS|PATH|ENV|PS4)$`)
 )

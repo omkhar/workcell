@@ -38,16 +38,16 @@ func TestLaneScripts(t *testing.T) {
 		"scripts/ci/job-src.sh":    jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/x.sh\"\nscripts/r.sh\n",
 		"scripts/ci/job-bare.sh":   "gate.sh\n",
 		"scripts/ci/job-zz.sh":     "./scripts/zz.sh\n",
-		".github/workflows/jobs.yml": "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          ./scripts/ci/job-x.sh\n          scripts/ci/job-cd.sh x\n" +
+		".github/workflows/jobs.yml": "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          ./scripts/ci/job-x.sh\n          scripts/ci/job-cd.sh x\n" +
 			"          bash ./scripts/ci/job-src.sh\n          ./scripts/ci/job-bare.sh\n",
-		".github/workflows/x.yml": "jobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./scripts/d.sh --flag\n      - run: echo scripts/e.sh\n" +
+		".github/workflows/x.yml": "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./scripts/d.sh --flag\n      - run: echo scripts/e.sh\n" +
 			"      - run: ${ROOT_DIR}/scripts/v.sh\n      - run: w.sh\n        working-directory: scripts\n" +
 			"      - run: scripts/j.sh\n        working-directory: other\n      - run: |\n          cd other\n          scripts/l.sh\n" +
 			"  w:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: other\n    steps:\n      - run: scripts/k.sh\n",
-		".github/workflows/z.yaml": "defaults:\n  run:\n    working-directory: sub\njobs:\n  z:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ../scripts/m.sh\n" +
+		".github/workflows/z.yaml": "on: push\ndefaults:\n  run:\n    working-directory: sub\njobs:\n  z:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ../scripts/m.sh\n" +
 			"      - run: scripts/n.sh\n        working-directory: .\n      - run: /scripts/q.sh\n        working-directory: .\n",
-		".github/workflows/py.yml": "jobs:\n  p:\n    runs-on: ubuntu-latest\n    steps:\n      - run: scripts/s.sh\n        shell: python\n",
-		".github/workflows/env.yml": "jobs:\n  e:\n    runs-on: ubuntu-latest\n    steps:\n      - run: scripts/t.sh\n        env:\n          BASH_ENV: x\n" +
+		".github/workflows/py.yml": "on: push\njobs:\n  p:\n    runs-on: ubuntu-latest\n    steps:\n      - run: scripts/s.sh\n        shell: python\n",
+		".github/workflows/env.yml": "on: push\njobs:\n  e:\n    runs-on: ubuntu-latest\n    steps:\n      - run: scripts/t.sh\n        env:\n          BASH_ENV: x\n" +
 			"      - run: echo BASH_ENV=x >> \"$GITHUB_ENV\"\n      - run: scripts/u.sh\n",
 		".github/workflows/notes.md": "./scripts/f.sh\n",
 	} {
@@ -876,7 +876,7 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 	}
 	gated := func(text, env string) string { return step(text+"\n./scripts/gate.sh", env) }
 	runs := func(args string) string { return step("./scripts/ci/job-a.sh"+args, "") }
-	type row struct{ name, on, top, job, steps, lane, library, validate, want string }
+	type row struct{ name, on, top, job, steps, lane, library, validate, caller, want string }
 	rows := []row{
 		{name: "an env value from the github context", steps: gated("case \"${E}\" in\n  issues)\n    exit 0\n    ;;\n  issue_comment) ;;\n  *)\n    exit 1\n    ;;\nesac", event), want: "wired"},
 		{name: "a literal pattern list", steps: gated("case $E in a | b) exit 0;; esac", event), want: "wired"},
@@ -978,7 +978,7 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "an env value from the repository", steps: gated("case \"$V\" in o/r) exit 0;; esac", "        env:\n          V: ${{ github.repository }}\n"), want: ended},
 		row{name: "an env value from the workflow name", steps: gated("case \"$V\" in w) exit 0;; esac", "        env:\n          V: ${{ github.workflow }}\n"), want: ended},
 		row{name: "an env value from the event of a workflow one event runs", on: "push", steps: gated("case $E in push) exit 0;; esac", event), want: ended},
-		row{name: "an env value from the head ref", steps: gated("case $E in main) exit 0;; esac", "        env:\n          E: ${{ github.head_ref }}\n"), want: "wired"},
+		row{name: "an env value from the head ref", steps: gated("case $E in main) exit 0;; esac", "        env:\n          E: ${{ github.head_ref }}\n"), want: ended},
 		row{name: "a lane script run with a brace", steps: runs(" --profile {x,--help}"), lane: lane, want: ended},
 		row{name: "a lane script run with an unquoted expansion", steps: step("./scripts/ci/job-a.sh --profile $X", "        env:\n          X: x --help\n"), lane: lane, want: ended},
 		row{name: "a lane script run with an unquoted substitution", steps: runs(" --profile $(echo x --help)"), lane: lane, want: ended},
@@ -993,12 +993,12 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a lane script whose selected branch does not shift", steps: runs(" --a --a"), lane: strings.Replace(lane, "    --profile)", "    --a)\n      ;;\n    --profile)", 1), want: ended},
 		row{name: "a step after one that writes GITHUB_PATH", steps: step("echo /tmp/b >> \"$GITHUB_PATH\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a step after one that writes another directory to ${GITHUB_PATH}", steps: step("echo /tmp/b >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
-		row{name: "a step after one that adds its tool directory to GITHUB_PATH", steps: step("echo \"${RUNNER_TEMP}/bin\" >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step after one that adds its tool directory to GITHUB_PATH", steps: step("echo \"${RUNNER_TEMP}/bin\" >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a job env that sets PATH", job: "    env:\n      PATH: /tmp/b:/usr/bin:/bin\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a step env that sets PATH", steps: gated("true", "        env:\n          PATH: /tmp/b:/usr/bin:/bin\n"), want: "unwired"},
 		row{name: "a step after an action no review lists", steps: "      - uses: actions/github-script@v7\n        with:\n          script: x\n" + step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a step after a local action", steps: "      - uses: ./.github/actions/a\n" + step("./scripts/gate.sh", ""), want: "unwired"},
-		row{name: "a step after a reviewed action", steps: "      - uses: actions/checkout@v4\n" + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step after a reviewed action", steps: "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n" + step("./scripts/gate.sh", ""), want: "wired"},
 		row{name: "a step of a job in a container whose env sets SHELLOPTS", job: "    container:\n      image: debian\n      env:\n        SHELLOPTS: noexec\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a step of a job in a container", job: "    container: debian\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a step env name with an expression", steps: gated("true", "        env:\n          ${{ 'SHELLOPTS' }}: noexec\n"), want: "unwired"},
@@ -1016,6 +1016,10 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 	validate := func(text string) string {
 		return "#!/bin/bash\nset -euo pipefail\n" + laneRoot + "\n" + text + "\nexit 0\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n"
 	}
+	checkout := "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
+	download := "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333\n        with:\n          path: "
+	install := "curl -fsSL -o actionlint.tar.gz https://example.invalid/a.tar.gz\necho \"${ACTIONLINT_SHA256}  actionlint.tar.gz\" | sha256sum -c -\nmkdir -p \"${RUNNER_TEMP}/bin\"\n" +
+		"tar -xzf actionlint.tar.gz actionlint\ninstall -m 0755 actionlint \"${RUNNER_TEMP}/bin/actionlint\"\necho \"${RUNNER_TEMP}/bin\" >> \"${GITHUB_PATH}\""
 	rows = append(rows,
 		// A case word after a reserved word in a command substitution opens a case.
 		row{name: "a case after { in a substitution", validate: validate("x=$({ case x in x) echo;; esac; })"), want: ended},
@@ -1076,12 +1080,86 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a gate after a named coproc of a group", steps: step("coproc c { :; }\n./scripts/gate.sh\necho", ""), want: "wired"},
 		row{name: "a gate in a subshell whose first line ends in a quoted )", steps: step("(echo \")\"\n./scripts/gate.sh\n) || true", ""), want: "ungated"},
 		row{name: "a gate in a group that never closes", steps: step("{ ./scripts/gate.sh", ""), want: "ungated"},
+		// A step that may change what a later step runs unwires the later steps.
+		row{name: "a job env that allows unsecure commands", job: "    env:\n      ACTIONS_ALLOW_UNSECURE_COMMANDS: \"true\"\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that runs add-path", steps: step("echo \"::add-path::/tmp/b\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that runs set-env", steps: step("echo \"::set-env name=SHELLOPTS::noexec\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that writes a runner file command", steps: step("echo /tmp/b >> \"$RUNNER_TEMP\"/_runner_file_commands/add_path_*", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that writes a computed path", steps: step("p=$(env | sed -n \"s/^GITHUB_P[A]TH=//p\"); echo /tmp/b >> \"$p\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that assigns RUNNER_TEMP and adds its bin", steps: step("RUNNER_TEMP=/tmp/b\nmkdir -p \"${RUNNER_TEMP}/bin\" && ln -sf /bin/true \"${RUNNER_TEMP}/bin/bash\"\necho \"${RUNNER_TEMP}/bin\" >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that links into its tool directory", steps: step("mkdir -p \"${RUNNER_TEMP}/bin\"\nln -s /bin/true \"${RUNNER_TEMP}/bin/bash\"\necho \"${RUNNER_TEMP}/bin\" >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that installs a checked tool", steps: step(install, "") + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step after one that installs a checked tool where an env sets RUNNER_TEMP", steps: step(install, "        env:\n          RUNNER_TEMP: /tmp/b\n") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that installs a checked tool after a cd", steps: step("cd /tmp\n"+install, "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that names its tool directory otherwise", steps: step(install+"\ncp /bin/true \"${RUNNER_TEMP}\"/bin/bash", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that writes a lane script", steps: step("echo exit > scripts/gate.sh\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that writes a lane script by a path it cannot spell", steps: step("echo exit > \"${GITHUB_WORKSPACE}/scripts/gate.sh\"\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that writes a lane script", steps: step("cp /dev/null scripts/gate.sh", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a checkout of another repository", steps: checkout + "        with:\n          repository: o/r\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a download into the workspace", steps: download + "scripts\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a download up out of the runner's directory", steps: download + "${{ runner.temp }}/a/../../work\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a download into the runner's bin", steps: download + "${{ runner.temp }}/bin\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a download with no path", steps: "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a download into the runner's directory", steps: download + "${{ runner.temp }}/a\n" + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step after a reviewed action at a tag", steps: "      - uses: actions/checkout@v7.0.1\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		// An if under which the step never runs on a run whose steps pass.
+		row{name: "a step whose if is failure()", steps: gated("true", "        if: failure()\n"), want: "unwired"},
+		row{name: "a step whose if is cancelled()", steps: gated("true", "        if: ${{ cancelled() }}\n"), want: "unwired"},
+		row{name: "a step whose if is !failure()", steps: gated("true", "        if: ${{ !failure() }}\n"), want: "wired"},
+		row{name: "a step whose if is always() && false", steps: gated("true", "        if: always() && false\n"), want: "unwired"},
+		row{name: "a step whose if is a string that names github", steps: gated("true", "        if: ${{ 'github.x' == 'y' }}\n"), want: "unwired"},
+		// An event case reads only automatic events, from a step env no if or earlier step can change.
+		row{name: "an event case of a workflow a push or a run by hand starts", on: "[push, workflow_dispatch]", steps: gated("case \"$E\" in\n  push) exit 0 ;;\nesac", event), want: ended},
+		row{name: "an event case under a job if that names the event", on: "[push, pull_request]", job: "    if: github.event_name == 'push'\n", steps: gated("case \"$E\" in\n  push) exit 0 ;;\nesac", event), want: ended},
+		row{name: "an event case under a step if that names the event", on: "[push, pull_request]", steps: gated("case \"$E\" in\n  push) exit 0 ;;\nesac", "        if: github.event_name == 'push'\n"+event), want: ended},
+		row{name: "an event case whose exiting branches cover every event", steps: gated("case $E in issues) exit 0;; issue_comment) exit 0;; esac", event), want: ended},
+		row{name: "an event case whose exiting branches name as many events, not each", steps: gated("case $E in issues) exit 0;; push) exit 0;; esac", event), want: "wired"},
+		row{name: "an event case after a step that writes GITHUB_ENV", steps: step("echo \"E=x\" >> \"$GITHUB_ENV\"", "") + gated("case $E in issues) exit 0;; issue_comment) ;; *) exit 1;; esac", event), want: ended},
+		row{name: "an event case of a workflow another workflow may call", on: "[issues, issue_comment, workflow_call]", steps: gated("case $E in issues) exit 0;; issue_comment) ;; *) exit 1;; esac", event), want: ended},
+		// A workflow that no automatic event starts wires nothing.
+		row{name: "a workflow with no on", on: "-", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a workflow only a call starts and nothing calls", on: "workflow_call", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a workflow only a call starts that a workflow calls", on: "workflow_call", steps: step("./scripts/gate.sh", ""), caller: "on: push\njobs:\n  c:\n    uses: ./.github/workflows/w.yml\n", want: "wired"},
+		row{name: "a workflow only a call starts that only a run by hand calls", on: "workflow_call", steps: step("./scripts/gate.sh", ""), caller: "on: workflow_dispatch\njobs:\n  c:\n    uses: ./.github/workflows/w.yml\n", want: "unwired"},
+		// More writes.
+		row{name: "a step that tees a lane script", steps: step("echo exit | tee scripts/gate.sh\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that edits a lane script in place", steps: step("sed -i 's/^/exit 0;/' scripts/gate.sh\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that sed reads a lane script", steps: step("sed 's/^/exit 0;/' scripts/gate.sh\n./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step that installs into the scripts directory", steps: step("install -m 0755 -t scripts x\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that links a lane script", steps: step("ln -sf /bin/true scripts/gate.sh\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that dd writes a lane script", steps: step("dd if=/dev/null of=scripts/gate.sh\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that downloads a lane script", steps: step("curl -fsSLo scripts/gate.sh https://example.invalid/x\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that wgets a lane script", steps: step("wget --output-document=scripts/gate.sh https://example.invalid/x\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that extracts into the scripts directory", steps: step("tar -xf a.tar -C scripts\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that unzips into the scripts directory", steps: step("unzip -d scripts a.zip\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that writes a file in the runner's directory", steps: step("echo x > \"${RUNNER_TEMP}/x\"\n./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step that writes a set-once file in the runner's directory", steps: step("f=\"${RUNNER_TEMP}/x\"\necho x > \"${f}\"\n./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step that writes a variable it sets twice", steps: step("f=\"${RUNNER_TEMP}/x\"\nf=scripts/gate.sh\necho x > \"${f}\"\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that writes GITHUB_OUTPUT where its env names a lane script", steps: step("echo x >> \"$GITHUB_OUTPUT\"\n./scripts/gate.sh", "        env:\n          GITHUB_OUTPUT: scripts/gate.sh\n"), want: "unwired"},
+		row{name: "a step that writes GITHUB_OUTPUT", steps: step("echo x=y >> \"$GITHUB_OUTPUT\"\n./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step after one that installs an unchecked tool", steps: step(strings.Replace(install, "| sha256sum -c -", "| cat", 1), "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that installs a checked tool where the body sets RUNNER_TEMP", steps: step("RUNNER_TEMP=/tmp/b\n"+install, "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that installs a checked tool where an env sets runner_temp", steps: step(install, "        env:\n          runner_temp: /tmp/b\n") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that installs a checked tool where an earlier step sets RUNNER_TEMP", steps: step("echo RUNNER_TEMP=/tmp/b >> \"$GITHUB_ENV\"", "") + step(install, "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that builds into its tool directory", steps: step(install+"\ngo build -o \"${RUNNER_TEMP}/bin/bash\" ./cmd/x", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that writes a runner file command by a literal path", steps: step("echo /tmp/b >> /home/runner/work/_temp/_runner_file_commands/add_path_x", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that installs a checked tool after a cd past its download", steps: step(strings.Replace(install, "tar -xzf", "cd /tmp\ntar -xzf", 1), "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step that writes a lane script by >&", steps: step("echo exit >& scripts/gate.sh\n./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that writes a relative path after a cd", steps: step("cd scripts\necho exit > gate.sh", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a workflow only a run by hand starts that a workflow calls", on: "workflow_dispatch", steps: step("./scripts/gate.sh", ""), caller: "on: push\njobs:\n  c:\n    uses: ./.github/workflows/w.yml\n", want: "unwired"},
 	)
 	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			files := map[string]string{"scripts/validate-repo.sh": "true\n", "scripts/ci/job-a.sh": tc.lane, ".github/workflows/w.yml": "on: " + cmp.Or(tc.on, "[issues, issue_comment]") + "\n" + tc.top + "jobs:\n  j:\n    runs-on: ubuntu-latest\n" + tc.job + "    steps:\n" + tc.steps}
+			on := "on: " + cmp.Or(tc.on, "[issues, issue_comment]") + "\n"
+			if tc.on == "-" {
+				on = "" // a workflow with no on
+			}
+			files := map[string]string{"scripts/validate-repo.sh": "true\n", "scripts/ci/job-a.sh": tc.lane, ".github/workflows/w.yml": on + tc.top + "jobs:\n  j:\n    runs-on: ubuntu-latest\n" + tc.job + "    steps:\n" + tc.steps}
+			if tc.caller != "" {
+				files[".github/workflows/caller.yml"] = tc.caller
+			}
 			if tc.library != "" {
 				files["scripts/lib/l.sh"] = tc.library
 			}
@@ -1219,7 +1297,7 @@ func writeLaneTree(t *testing.T, root string, files map[string]string) {
 // TestLaneScriptsRejectsEvasions runs the shared corpus against a gate a workflow step runs. A row that turns the command into text must unwire the gate, and a gated row must keep it wired.
 func TestLaneScriptsRejectsEvasions(t *testing.T) {
 	t.Parallel()
-	const head = "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - name: s\n        run: |\n          true\n"
+	const head = "name: w\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - name: s\n        run: |\n          true\n"
 	const anchor = "          ./scripts/gate.sh"
 	classes := func(workflow string, ungated bool) error {
 		root := t.TempDir()
@@ -1249,7 +1327,7 @@ func TestLaneScriptsRejectsEvasions(t *testing.T) {
 	// neither runs the gate. The child bash runs the gate where the reader does
 	// not follow its status, so the gate runs but does not count as gating.
 	for body, wired := range map[string]bool{"x=\\\\": false, "x=\\": false, "x=y": true} {
-		heredoc := "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          bash <<EOF\n          " + body + "\n          scripts/gate.sh\n          EOF\n"
+		heredoc := "name: w\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          bash <<EOF\n          " + body + "\n          scripts/gate.sh\n          EOF\n"
 		if err := classes(heredoc, true); (err == nil) != wired {
 			t.Errorf("LaneScripts() on a heredoc step with %q: %v, want wired %v", body, err, wired)
 		}
