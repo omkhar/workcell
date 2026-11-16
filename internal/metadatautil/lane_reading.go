@@ -441,8 +441,8 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 				if site.lane { // a lane script's command, read as a rerun or a forward only where its words are exactly one
 					top.program, top.script = laneRerunProgram(run)
 					top.forward = len(run) == 2 && run[1].raw == `"$@"`
-					top.guard = alone && top.level && each.follows == "&&" && slices.Equal(command, []string{"return", "0"}) &&
-						laneVersionGuard(scanned[index-1])
+					top.guard = alone && top.level && each.follows == "&&" && slices.Equal(texts(run), []string{"return", "0"}) &&
+						laneVersionGuard(scanned[index-1]) && index+1 < len(scanned) && !scanned[index+1].conditional
 				}
 				if alone && command[0] != "return" { // it may run in this shell, unless the reader proves its branch never runs
 					never, branch := cases.never(function, lost)
@@ -1582,14 +1582,15 @@ type laneEnds struct {
 //     new shell from reading functions, BASH_ENV or SHELLOPTS it inherits;
 //   - the exec stands in a function the lane's body calls, with no branch,
 //     loop, subshell or group around the call, as NAME "$@", and the lane
-//     and its libraries name that function nowhere but in those calls and
-//     its definitions, so no trap, eval or other call runs it;
+//     and its libraries define that function once and name it nowhere but
+//     in that definition and those calls, so no trap, eval, other call or
+//     other definition runs it;
 //   - the function's body runs ((BASH_VERSINFO[0] >= 4)) && return 0 before
-//     the exec, with no branch, loop, subshell or group around it, so the
-//     exec runs only under a bash older than 4, and the new shell, which
-//     reaches the guard again, returns there rather than exec once more. An
-//     exec in the lane's body has no return to guard it, so it ends the
-//     shell;
+//     the exec, spelled so, with no redirection, nothing after it in its
+//     list, and no branch, loop, subshell or group around it, so under a
+//     bash of 4 or newer the function returns there, and the exec runs only
+//     under an older bash. An exec in the lane's body has no return to guard
+//     it, so it ends the shell;
 //   - no command before the call in the lane's body, nor any command of
 //     that function's body but the exec, as settled reads it, may change the
 //     lane's arguments, $0 or directory.
@@ -1624,7 +1625,7 @@ func (ends *laneEnds) rerunning(reading laneReading, bodies []string, rooted boo
 				for _, text := range bodies {
 					mentions, definitions = mentions+laneMentions(text, name), definitions+len(laneDefinition(name).FindAllStringIndex(text, -1))
 				}
-				ends.tops[key][index].reruns = len(calls) > 0 && mentions == definitions+len(calls) &&
+				ends.tops[key][index].reruns = len(calls) > 0 && definitions == 1 && mentions == definitions+len(calls) &&
 					slices.ContainsFunc(ends.tops[key][:index], func(top laneTop) bool { return top.guard }) &&
 					settled(slices.Delete(slices.Clone(ends.tops[key]), index, index+1)) &&
 					!slices.ContainsFunc(calls, func(at int) bool {
@@ -1746,11 +1747,7 @@ var laneBashPath = regexp.MustCompile(`^/(?:usr/(?:local/)?|opt/homebrew/)?bin/b
 // laneVersionGuard reports whether a command is ((BASH_VERSINFO[0] >= 4)),
 // spelled so, which no earlier command on its line decides.
 func laneVersionGuard(each command) bool {
-	raws := []string{}
-	for _, arg := range each.args {
-		raws = append(raws, arg.raw)
-	}
-	return !each.conditional && slices.Equal(raws, []string{"((BASH_VERSINFO[0]", ">=", "4))"})
+	return !each.conditional && slices.Equal(texts(each.args), []string{"((BASH_VERSINFO[0]", ">=", "4))"})
 }
 
 // laneQuotedVariable is one quoted expansion of a variable, as "${name}" or
@@ -1825,7 +1822,7 @@ type laneTop struct {
 	program  string // the program word of a lane script's exec "$P" -p "$0" "$@", as laneRerunProgram reads it
 	script   string // the script word of that exec
 	forward  bool   // a lane script's call NAME "$@", with no other word
-	guard    bool   // a lane script's return 0 behind ((BASH_VERSINFO[0] >= 4)) &&, which no branch, loop, subshell or group holds
+	guard    bool   // a lane script's return 0 behind ((BASH_VERSINFO[0] >= 4)) &&, with no redirection and last in its list, which no branch, loop, subshell or group holds
 	reruns   bool   // it reruns the lane script, as rerunning proves
 }
 
