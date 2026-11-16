@@ -34,9 +34,10 @@ var (
 // to no repository script. A step in a shell this package does not read wires
 // nothing, and a relative path in a step that may first source a BASH_ENV or
 // ENV startup file, or in a later step of its job, resolves to no repository
-// script. EveryShellCommand reads each body, so a
-// comment, a heredoc body, quoted text or an uncalled function wires nothing,
-// while a command behind a guard or after an exit still wires its script.
+// script. EveryShellCommand reads each body, so a comment, a heredoc body
+// past its substitutions, quoted text or an uncalled function wires nothing,
+// while a command behind a guard still wires its script; an exit before a
+// later command makes the lane unreadable.
 //
 // A ${ROOT_DIR}/ path names a repository script only in a lane script whose
 // root is pinned, as laneRootPinned reads it; a workflow step never sets

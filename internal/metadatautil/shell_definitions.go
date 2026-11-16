@@ -31,12 +31,30 @@ var definitionWord = regexp.MustCompile("^([^\\s()<>|&;=$`'\"\\\\]+)\\(\\)")
 // holds every word after it, and a run of continued lines is parsed once, so
 // no text costs more than a fixed multiple of its length.
 func definedFunctionNames(text string) (names []string, complete bool) {
+	return functionNamesFrom(text, 0)
+}
+
+// evalDefinedFunctionNames is definedFunctionNames for only the definitions
+// inside the text an eval or a trap action runs, whose bodies functionBodies
+// never binds.
+func evalDefinedFunctionNames(text string) (names []string, complete bool) {
+	return functionNamesFrom(text, 1)
+}
+
+// functionNamesFrom returns the names definedFunctionNames reads in eval or
+// trap text nested at least least deep.
+func functionNamesFrom(text string, least int) (names []string, complete bool) {
 	budget := 16*len(text) + 1<<16
 	var read func(text string, depth int) bool
 	read = func(text string, depth int) bool {
-		return depth <= 8 && shellLogicalCommands(text, &budget, func(each command) bool {
-			return readCommand(each.args, depth, read, &names)
+		var found []string
+		ok := depth <= 8 && shellLogicalCommands(text, &budget, func(each command) bool {
+			return readCommand(each.args, depth, read, &found)
 		})
+		if depth >= least {
+			names = append(names, found...)
+		}
+		return ok
 	}
 	return names, read(text, 0)
 }
