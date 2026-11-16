@@ -23,6 +23,7 @@ func TestGeneratedFilesMatchGolden(t *testing.T) {
 		"scripts/lib/launcher/generated-adapters.sh":      RenderLauncherShell,
 		"runtime/container/generated-adapters.sh":         RenderRuntimeShell,
 		"runtime/container/rust/src/generated_targets.rs": RenderLauncherRust,
+		"internal/providerpolicy/adapters_gen.go":         RenderProviderPolicyGo,
 	} {
 		got, err := render(manifests)
 		if err != nil {
