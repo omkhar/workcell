@@ -245,13 +245,19 @@ func TestCheckPinnedInputsRejectsAptBrokerBuildContractDrift(t *testing.T) {
 		},
 		{
 			name: "runtime-install-override",
-			old:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /usr/local/libexec/workcell/",
-			new:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /usr/local/libexec/workcell/\nRUN chmod 0777 /usr/local/libexec/workcell/workcell-apt-broker-client",
+			old:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /out/workcell-provider-policy /usr/local/libexec/workcell/",
+			new:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /out/workcell-provider-policy /usr/local/libexec/workcell/\nRUN chmod 0777 /usr/local/libexec/workcell/workcell-apt-broker-client",
 			want: "apt broker runtime install boundary",
 		},
 		{
 			name: "runtime-install-drops-egress-proxy",
-			old:  " /out/workcell-egress-proxy /usr/local/libexec/workcell/",
+			old:  " /out/workcell-egress-proxy /out/workcell-provider-policy /usr/local/libexec/workcell/",
+			new:  " /out/workcell-provider-policy /usr/local/libexec/workcell/",
+			want: "apt broker runtime install boundary",
+		},
+		{
+			name: "runtime-install-drops-provider-policy",
+			old:  " /out/workcell-provider-policy /usr/local/libexec/workcell/",
 			new:  " /usr/local/libexec/workcell/",
 			want: "apt broker runtime install boundary",
 		},
@@ -301,7 +307,7 @@ func TestCheckPinnedInputsAcceptsCommentedAptBrokerBinaryMention(t *testing.T) {
 }
 
 // TestAptBrokerBuilderCopiesEveryInternalDependency derives the internal
-// packages of the three binaries the apt broker builder stage builds from the
+// packages of the four binaries the apt broker builder stage builds from the
 // Go build itself, for each target architecture the stage builds, so a new
 // import cannot pass the hand-kept COPY list and first fail inside the image
 // build. It reads only the lines of that stage.
@@ -334,7 +340,8 @@ func TestAptBrokerBuilderCopiesEveryInternalDependency(t *testing.T) {
 	}
 	for _, arch := range []string{"amd64", "arm64"} {
 		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}",
-			"./cmd/workcell-apt-broker-client", "./cmd/workcell-apt-broker-server", "./cmd/workcell-egress-proxy")
+			"./cmd/workcell-apt-broker-client", "./cmd/workcell-apt-broker-server", "./cmd/workcell-egress-proxy",
+			"./cmd/workcell-provider-policy")
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+arch, "CGO_ENABLED=0")
 		out, err := cmd.Output()
@@ -352,8 +359,8 @@ func TestAptBrokerBuilderCopiesEveryInternalDependency(t *testing.T) {
 				t.Errorf("apt broker builder stage does not copy %s, which the %s build imports", dir, arch)
 			}
 		}
-		if found < 3 {
-			t.Fatalf("go list for %s found %d workcell packages, want at least the three built commands", arch, found)
+		if found < 4 {
+			t.Fatalf("go list for %s found %d workcell packages, want at least the four built commands", arch, found)
 		}
 	}
 }

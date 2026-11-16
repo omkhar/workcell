@@ -70,16 +70,13 @@ adapters/README.md	unwired-script	scripts/check-flag-inventory.sh	operator tool,
 adapters/README.md	unwired-script	scripts/lib/launcher/generated-adapters.sh	sourced library, not a gate; no lane runs it as a command
 adapters/claude/README.md	unanchored-claim	- It also blocks provider install and update commands.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/claude/README.md	unanchored-claim	- The reviewed `PreToolUse` Bash hook blocks common trust-widening shell patterns.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/claude/README.md	unanchored-claim	- `reject_unsafe_claude_args` blocks permission bypass, extra directories, custom tools, MCP, plugins, settings, and prompt overrides.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/.codex/AGENTS.md	unanchored-claim	In non-`breakglass` modes, the lower-assurance exception requires `--allow-repo-mcp` and `--ack-repo-mcp=YYYY-MM-DD` with today's UTC date.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/.codex/AGENTS.md	unanchored-claim	Workcell denies repository MCP by default.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/.codex/AGENTS.md	unanchored-claim	`TestCodexAdapterConfigParity` enforces the config baseline parity.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/.codex/agents/distinguished_security.md	unanchored-claim	- Recommend the narrowest control that blocks the path.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/.codex/agents/openai_codex_platform.md	unanchored-claim	- What must be enforced by the outer container or VM.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/codex/README.md	unanchored-claim	- The wrapper also blocks unsafe autonomy, network, profile, and configuration flags.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/README.md	unanchored-claim	- `reject_unsafe_codex_args` denies unapproved subcommands by default.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/copilot/README.md	unanchored-claim	- The default path blocks plugins, MCP, custom agents, hooks, skills, dynamic retrieval, and remote sessions.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/gemini/README.md	unanchored-claim	- `reject_unsafe_gemini_args` blocks permission bypass, sandbox, extra directory, yolo, and approval-mode flags.	claim predates the rule; cite the enforcing path or drop the claim
 docs/1.0-readiness-review.md	unanchored-claim	Only this preview backend requires macOS 26 (`RequireMacOS26()`); supported launch on Apple Silicon macOS does **not** require macOS 26 — both strict Colima (the default) and docker-desktop compat are supported/allowed with no version floor in `policy/host-support-matrix.tsv`, so docker-desktop compat is a supported launch option for hosts below macOS 26.	plan or review record describes intent or state at the time of writing
 docs/1.0-readiness-review.md	unwired-script	scripts/colima-egress-allowlist.sh	operator tool, or called by another script; no lane runs it directly
 docs/1.0-readiness-review.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
@@ -412,7 +409,6 @@ docs/workcell-system-design.md	unanchored-claim	On the strict path, it blocks di
 docs/workcell-system-design.md	unanchored-claim	On the strict path, the guard refuses a child environment that does not have this exact value.	claim predates the rule; cite the enforcing path or drop the claim
 docs/workcell-system-design.md	unanchored-claim	The [Signed Session Audit Records](signed-session-audit-records.md) page defines the exact guarantees and legacy limits.	claim predates the rule; cite the enforcing path or drop the claim
 docs/workcell-system-design.md	unanchored-claim	The guard refuses a script run directly from `/tmp`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	[`provider-policy.sh`](../runtime/container/provider-policy.sh) rejects prohibited provider flags and configuration changes.	claim predates the rule; cite the enforcing path or drop the claim
 docs/workcell-system-design.md	unanchored-claim	`breakglass` requires operator acknowledgment.	claim predates the rule; cite the enforcing path or drop the claim
 docs/workcell-system-design.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 runtime/README.md	unwired-script	scripts/build-and-test.sh	operator tool, or called by another script; no lane runs it directly

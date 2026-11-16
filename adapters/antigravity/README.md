@@ -32,7 +32,7 @@ One review unit must add all these controls before support:
 - Own Antigravity home and cache state under `/state/agent-home`.
 - Stage Google auth without a host account, browser, keychain, home, or cache
   mount.
-- Reject provider unsafe flags in `runtime/container/provider-policy.sh`.
+- Reject provider unsafe flags in `internal/providerpolicy`.
 - Add deterministic dry-run and scenario tests.
 - Pass live provider certification before a Tier 1 claim.
 
