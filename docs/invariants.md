@@ -324,8 +324,10 @@ always runs. A `return` in a branch or a loop does not count, since the body
 may skip it. In the body itself, an `exit` that a later command follows stops
 the check even after a `return`. A `return` in a subshell, a pipeline, a
 `coproc` or the background returns from nothing, so it does not count. When
-the reader loses track of the nesting, as after a `coproc`, any later `exit`
-stops the check.
+the reader loses track of the nesting, as after a named `coproc` of a subshell,
+any later `exit` stops the check. A command substitution that holds a `case`
+with no `esac` after it stops the check too, since a pattern's `)` may end it
+early.
 
 An `EXIT` trap stops the check when its action, or a function it calls, may
 replace the status the lane ends with. An `exit` whose status may be 0, a bare

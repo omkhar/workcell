@@ -450,7 +450,13 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"unset of a list that holds PATH", "for name in CC PATH; do unset \"${name}\"; done\n" + gate, nil, "names a variable by"},
 		{"indirect expansion of a positional parameter", ": \"${!1-}\"\n" + gate, nil, "whose name a parameter or an expansion computes"},
 		{"unset of a listed name before its loop", "unset \"${name}\"\nfor name in CC; do :; done\n" + gate, nil, "names a variable by"},
-		{"arithmetic after the reader loses track of nesting", "coproc { :; }\nn=0\n(( n ))\n" + gate, nil, inArithmetic},
+		{"arithmetic after the reader loses track of nesting", "coproc C ( :; )\nn=0\n(( n ))\n" + gate, nil, inArithmetic},
+		{"arithmetic after a named coproc of a group", "coproc C { :; }\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after time -p of a group", "time -p { :; }\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a subshell of one word in an if", "if true; then (echo); fi\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a subshell whose first line ends in a quoted )", "(echo \")\"\n)\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a case at the start of a subshell in a substitution", "x=$( (case x in x) :;; esac); echo )\nn=0\n(( n ))\n" + gate, nil, "wired"},
+		{"arithmetic after a subshell of one word in a substitution", "x=$( (echo); echo )\nn=0\n(( n ))\n" + gate, nil, "wired"},
 		{"indirect expansion and unset of a prefix listing", "for name in \"${!GO@}\" CC; do : \"${!name-}\"; unset \"${name}\"; done\n" + gate, nil, "wired"},
 		{"arithmetic before the first assignment", "(( n )) || true; n=0\n" + gate, nil, inArithmetic},
 		{"arithmetic after a conditional assignment", "false && n=0; (( n ))\n" + gate, nil, inArithmetic},
@@ -967,7 +973,7 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a case that closes a process substitution", steps: gated("cat <(case x in x) echo;; esac)\nexit 0", ""), want: ended},
 		row{name: "a case that closes a substitution in a lane script", steps: runs(""), lane: "x=$(case x in x) echo;; esac)\nexit 0\n./scripts/gate.sh\n", want: ended},
 		row{name: "a substitution that runs a word starting with case", steps: gated("x=\"$(caser)\"\nexit 0", ""), want: ended},
-		row{name: "a substitution with case as an argument", steps: gated("x=\"$(echo case)\"\nexit 0", ""), want: ended},
+		row{name: "a substitution with case as an argument", steps: gated("x=\"$(echo case)\"\nexit 0", ""), want: "holds a case with no esac"},
 		row{name: "a case that closes a substitution before the gate", steps: gated("x=$(case x in x) echo;; esac)\ny=1", ""), want: "wired"},
 		row{name: "an env value from the repository", steps: gated("case \"$V\" in o/r) exit 0;; esac", "        env:\n          V: ${{ github.repository }}\n"), want: ended},
 		row{name: "an env value from the workflow name", steps: gated("case \"$V\" in w) exit 0;; esac", "        env:\n          V: ${{ github.workflow }}\n"), want: ended},
@@ -1005,6 +1011,27 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a workflow only a run by hand starts", on: "workflow_dispatch", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a workflow no event starts", on: "{}", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a workflow a push or a run by hand starts", on: "[push, workflow_dispatch]", steps: step("./scripts/gate.sh", ""), want: "wired"},
+	)
+	// Round 15: each row below failed at the layer before it.
+	validate := func(text string) string {
+		return "#!/bin/bash\nset -euo pipefail\n" + laneRoot + "\n" + text + "\nexit 0\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n"
+	}
+	rows = append(rows,
+		// A case word after a reserved word in a command substitution opens a case.
+		row{name: "a case after { in a substitution", validate: validate("x=$({ case x in x) echo;; esac; })"), want: ended},
+		row{name: "a case after if in a substitution", validate: validate("x=$(if case x in x) true;; esac; then echo; fi)"), want: ended},
+		row{name: "a case after while in a substitution", validate: validate("x=$(while case x in x) false;; esac; do :; done)"), want: ended},
+		row{name: "a case after time in a substitution", validate: validate("x=$(time case x in x) echo;; esac)"), want: ended},
+		row{name: "a case after time -p in a substitution", validate: validate("x=$(time -p case x in x) echo;; esac)"), want: ended},
+		row{name: "a case after coproc in a substitution", validate: validate("x=$(until coproc case x in x) false;; esac; do :; done)"), want: ended},
+		row{name: "a case after a function name in a substitution", validate: validate("x=$(until function f case x in x) false;; esac; do :; done)"), want: ended},
+		row{name: "a case at the start of a subshell in a substitution", validate: validate("x=$( (case x in x) echo;; esac) )"), want: ended},
+		row{name: "a case after if in a process substitution", validate: validate("cat <(if case x in x) true;; esac; then echo; fi)"), want: ended},
+		row{name: "a case after { in a quoted substitution", validate: validate("x=\"$({ case x in x) echo;; esac; })\""), want: ended},
+		row{name: "a case after { in a substitution in a step", steps: gated("x=$({ case x in x) echo;; esac; })\nexit 0", ""), want: ended},
+		row{name: "a { after other text in a substitution", validate: validate("x=$(echo { case x in y)"), want: "holds a case with no esac"},
+		row{name: "a case with no esac in a substitution", validate: validate("x=$(echo case)"), want: "holds a case with no esac"},
+		row{name: "a case of two patterns in a substitution", validate: validate("x=$(case x in x) echo;; y) echo;; esac)"), want: ended},
 	)
 	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {

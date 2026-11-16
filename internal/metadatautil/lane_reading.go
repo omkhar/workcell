@@ -286,9 +286,12 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 		if _, ended := rewriteHeredocsEnding(text); !ended {
 			return false, fmt.Errorf("lane wiring is unreadable: a %s opens a heredoc whose end this reader cannot find, so it cannot read what runs after it", where)
 		}
-		scanned, children, complete := laneScan(text)
+		scanned, children, complete, unended := laneScanCases(text)
 		if !complete {
 			return false, fmt.Errorf("lane wiring is unreadable: a %s nests eval, trap or child shell text more than eight deep, or holds more text than this reader parses", where)
+		}
+		if unended {
+			return false, fmt.Errorf("lane wiring is unreadable: a %s has a substitution that holds a case with no esac after it, so the ) of a pattern may end the substitution where bash does not", where)
 		}
 		for _, each := range append([]string{text}, children...) {
 			names, complete := definedFunctionNames(each)
@@ -951,11 +954,21 @@ func braceWords(text string) []string {
 // past a work bound linear in the text's length, or where a heredoc this
 // reader cannot end hides the rest of a text.
 func laneScan(text string) (commands []command, children []string, complete bool) {
+	commands, children, complete, _ = laneScanCases(text)
+	return commands, children, complete
+}
+
+// laneScanCases is laneScan, and also reports whether a substitution in any
+// text it reads closed while a case in it had no esac, as
+// flattenGroupedCases reads it.
+func laneScanCases(text string) (commands []command, children []string, complete, unended bool) {
 	budget := 16*len(text) + 1<<16
 	var scan func(text string, depth int) bool
 	scan = func(text string, depth int) bool {
 		rewritten, ended := rewriteHeredocsEnding(text)
-		return depth <= 8 && ended && shellLines(flattenGrouped(rewritten, true), &budget, func(each command) bool {
+		flat, cased := flattenGroupedCases(rewritten, true)
+		unended = unended || cased
+		return depth <= 8 && ended && shellLines(flat, &budget, func(each command) bool {
 			each.nested = depth > 0
 			commands = append(commands, each)
 			inner, child, found := laneInnerText(texts(each.args))
@@ -977,7 +990,7 @@ func laneScan(text string) (commands []command, children []string, complete bool
 		})
 	}
 	complete = scan(laneProcessesAsCommands(text), 0)
-	return commands, children, complete
+	return commands, children, complete, unended
 }
 
 // laneProcessesAsCommands rewrites each unquoted <( or >( as $(, so the shell
