@@ -119,22 +119,3 @@ func TestLaneEntryBridgeRefusesWritesByName(t *testing.T) {
 		}
 	}
 }
-
-// main's claude-mention.yml leaves its pinned step unread; one changed byte,
-// or the bytes at another path, are read as any workflow is, whose case on
-// the event name this reader reads as an exit 0.
-func TestLaneEntryBridgePinsClaudeMention(t *testing.T) {
-	t.Parallel()
-	text, err := os.ReadFile("../../.github/workflows/claude-mention.yml")
-	if err != nil || laneBridgeDigest(string(text)) != laneClaudeMentionPin || laneStepPinned(".github/workflows/claude-mention.yml", text, "Run Claude") {
-		t.Fatalf(".github/workflows/claude-mention.yml is not at the pinned bytes, or another step is pinned (%v)", err)
-	}
-	for path, workflow := range map[string]string{"claude-mention.yml": string(text), "mention.yml": string(text), "claude-mention.yml#": strings.Replace(string(text), "# The repository owner", "# Tha repository owner", 1)} {
-		files := bridgeFiles(bridgeCanonical+bridgeGate, "")
-		files[".github/workflows/"+strings.TrimSuffix(path, "#")] = workflow
-		wired, err := bridgeRead(t, files)
-		if want := path == "claude-mention.yml"; want != (wired && err == nil) || !want && (err == nil || !strings.Contains(err.Error(), "exit 0") || workflow == string(text) && path != "mention.yml") {
-			t.Errorf("%s: LaneScripts() lists scripts/gate.sh: %v, %v, want it listed: %v, else an error on the exit 0", path, wired, err, want)
-		}
-	}
-}

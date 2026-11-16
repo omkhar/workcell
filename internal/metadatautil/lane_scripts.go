@@ -151,9 +151,6 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 				context := laneStepContext{document: document, job: job}
 				startup := false // a startup file set in this job's GITHUB_ENV holds for its later steps
 				for _, step := range job.Steps {
-					if laneStepPinned(rel, body, step.Name) {
-						continue
-					}
 					if unreadShellStep(document, job, step) {
 						startup = true // a step in another language may do anything a startup step does
 						continue
@@ -164,14 +161,15 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 					}
 					now, later := laneUnwires(context, step)
 					startup = startup || startupFileStep(document, job, step) || laneStartupStep(context, step) || now
-					moved, subjects := startup, laneSubjects(context, step, slices.Contains(events, "workflow_call"))
+					reach, sure := laneReachable(automatic, job.If.Value, step.If.Value)
+					moved, subjects := startup, laneSubjects(context, step, slices.Contains(events, "workflow_call") || !sure)
 					startup, context = startup || later, context.next(step)
 					if laneNeverIf(job.If) || laneNeverIf(step.If) {
 						continue // the step may never run, so it runs no gate
 					}
 					shell := map[string][2]bool{"": {true, false}, "bash": {true, true}, "sh": {true, false}}[stepShell(document, job, step)]
 					fails := laneFails(extra.Jobs[name].ContinueOnError) && laneFails(step.ContinueOnError)
-					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: moved, shell: shell, site: laneSite{env: subjects, events: automatic, gating: fails}})
+					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: moved, shell: shell, site: laneSite{env: subjects, reads: laneEventReads(context, step), events: reach, gating: fails}})
 				}
 			}
 		}
@@ -367,7 +365,8 @@ func laneCallers(body string, commands [][]string, gating laneGating, fails bool
 // each step that runs it passes; and whether a failure of it fails the job.
 type laneSite struct {
 	env     map[string]string // the step's env names whose value laneSubjects lets a case read, with that value's github name
-	events  []string          // the events other than workflow_dispatch and workflow_call that start the step's workflow
+	reads   []string          // the env names whose value names the event name
+	events  []string          // the events laneReachable finds of those other than workflow_dispatch and workflow_call that start the workflow
 	callers []laneCaller
 	lane    bool
 	gating  bool // a failure of the body fails its job
