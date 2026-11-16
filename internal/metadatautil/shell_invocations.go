@@ -857,6 +857,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 	// ROOT_DIR would move it. Together they let a source of a reviewed
 	// library pass.
 	prelude, fixedRoot, rootNamed := true, false, false
+	// entryRoot holds when the entry guard's assignment has set
+	// workcell_entry_root and no other line has named it
+	// since, so ROOT_DIR="${workcell_entry_root}" pins the root the guard
+	// checked.
+	entryRoot := false
 	// rewritten lists the functions whose body rewrites its positional
 	// parameters with set or shift, so what "$@" runs is not what the caller
 	// passed and the forwarder is a barrier instead.
@@ -1020,8 +1025,18 @@ func ShellInvocations(script, commandName string) []Invocation {
 			continue
 		}
 		if namesRoot(logical, commands) {
-			fixedRoot = !rootNamed && control == 0 && depth == 0 && strings.TrimSpace(logical) == canonicalRootDir
+			assignment := strings.TrimSpace(logical)
+			fixedRoot = !rootNamed && control == 0 && depth == 0 && (assignment == canonicalRootDir || assignment == entryRootDir && entryRoot)
 			rootNamed = true
+		}
+		if line := strings.TrimSpace(logical); strings.HasPrefix(line, entryGuardStart) && strings.Contains(line, entryGuardEnd) {
+			// Where it sits needs no check here: an if, a loop or a
+			// function before ROOT_DIR already ends the prelude.
+			entryRoot = true
+		} else if strings.Contains(strings.ReplaceAll(logical, entryRootRead, ""), "workcell_entry_root") {
+			// Any use but a plain expansion may set it: an assignment, read,
+			// printf -v, unset, a nameref or ${workcell_entry_root:=…}.
+			entryRoot = false
 		}
 		nested := control > 0
 		for _, each := range commands {
@@ -1343,23 +1358,48 @@ var reviewedShellLibraries = map[string]reviewedLibrary{
 	"scripts/lib/trusted-docker-client.sh":       {digest: "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674", forwarders: []string{"run_workcell_docker_client_command"}},
 }
 
-// canonicalRootDir is the one ROOT_DIR assignment that pins a script's root.
-const canonicalRootDir = `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"`
+// canonicalRootDir is the ROOT_DIR assignment that pins a script's root from
+// its own path. entryRootDir pins it to the root that the entry guard checked,
+// and holds only after the guard's assignment, entryGuardStart through
+// entryGuardEnd, with no line since naming
+// workcell_entry_root other than as the plain expansion entryRootRead.
+const (
+	canonicalRootDir = `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"`
+	entryRootDir     = `ROOT_DIR="${workcell_entry_root}"`
+	entryRootRead    = `${workcell_entry_root}`
+	entryGuardStart  = `workcell_entry_root="$(shopt -s nullglob && f=`
+	entryGuardEnd    = `)" || workcell_entry_root="" # fail-closed: an empty root stops the script below`
+)
 
 // preludeSafe reports whether a command before a reviewed source leaves
 // ROOT_DIR as the script set it: an assignment, set, a trap on ERR, EXIT or a
 // signal only (a RETURN trap runs when the source returns, and could redefine
-// the anchored command), exec, a test, a closing word, or a declaration
-// that names each variable literally and makes no nameref, as declare -n
-// x=ROOT_DIR would let x=/tmp move the root.
+// the anchored command), exec, exit, an echo to standard error, a test, a
+// closing word, or a declaration that names each variable literally and makes
+// no nameref, as declare -n x=ROOT_DIR would let x=/tmp move the root.
 func preludeSafe(names []string) bool {
 	rest := names[assignmentPrefix(names):]
 	if len(rest) == 0 {
 		return true
 	}
+	// A word with < or > may be a redirection, and one with $( or a backtick
+	// runs a command; either can write the library before the source reads
+	// it. A quoted one counts as well, and so does $_, which a reader may put
+	// in place of a substitution it cannot read.
+	redirects := func(words []string) bool {
+		return slices.ContainsFunc(words, func(word string) bool {
+			return strings.ContainsAny(word, "<>`") || strings.Contains(word, "$(") || strings.Contains(word, "$_")
+		})
+	}
 	switch rest[0] {
 	case "set", "exec", "[[", "[", "test", "fi", "done", "esac", "{", "}":
 		return true
+	case "exit":
+		// It ends the shell, so nothing after it runs, the source included.
+		return !redirects(rest[1:])
+	case "echo":
+		// A message to standard error, as the entry link guard prints.
+		return len(rest) > 1 && rest[len(rest)-1] == ">&2" && !redirects(rest[1:len(rest)-1])
 	case "trap":
 		return len(rest) > 2 && !strings.HasPrefix(rest[1], "-") && !slices.ContainsFunc(rest[2:], func(signal string) bool {
 			return !preludeTrapSignals[strings.TrimPrefix(strings.ToUpper(signal), "SIG")]

@@ -113,6 +113,16 @@ func TestLibraryGateReadsWrappedBuiltins(t *testing.T) {
 
 func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 	const head = "#!/bin/bash\n" + canonicalRootDir + "\nX=1\n"
+	// entryGuard is the check that entry scripts run before they load a
+	// helper: an assignment from a substitution, then a refusal that prints to
+	// standard error and exits, so it cannot move ROOT_DIR or change the
+	// library it then sources.
+	const entryGuard = `workcell_entry_root="$(shopt -s nullglob && f="${BASH_SOURCE[0]}" r=scripts/x.sh && y=/usr/bin/find && { [[ -x "${y}" ]] || y=/bin/find; } && i=/usr/bin/id && { [[ -x "${i}" ]] || i=/bin/id; } && l=/bin/ls && { [[ -x "${l}" ]] || l=/usr/bin/ls; } && e=/usr/bin/getent && { [[ -x "${e}" ]] || e=/bin/getent; } && { [[ "${f}" == /* ]] || f="${PWD}/${f}"; } && cd -P -- "${f%/*}/" && d="${PWD}" && p="${d%/}/${f##*/}" && root="${p%/"${r}"}" && [[ -n "${root}" && "${root}/${r}" == "${p}" ]] && set -- "${p}" && f="${f%/*}" && while ((${#d} >= ${#root})); do cd -L -- "${f}/" && cd -P . && [[ "${PWD}" == "${d}" ]] && set -- "$@" "${d}" && d="${d%/*}" f="${f}/.." || exit 1; done && for h in scripts scripts/ci scripts/ci/lib scripts/lib scripts/lib/launcher runtime/container; do [[ ! -e "${root}/${h}" && ! -L "${root}/${h}" ]] || set -- "$@" "${root}/${h}" "${root}/${h}"/*; done && q="${root%/*}" && a=(/) && while [[ -n "${q}" ]]; do a+=("${q}") && q="${q%/*}"; done && { u="$(LC_ALL=C "${i}")" || u=""; } && g=(-perm -020) && { [[ "${u}" =~ ^uid=[0-9]+\(([^\)]+)\)\ gid=([0-9]+)\( ]] && n="${BASH_REMATCH[1]}" k="${BASH_REMATCH[2]}" && w="$(LC_ALL=C "${e}" group "${k}")" && [[ "${w}" == "${n}:"*":${k}:" ]] && j=$'\n' && o="${j}$(LC_ALL=C "${e}" passwd)" && o="${o//"${j}${n}:"/${j}#:#:#:#:}" && x=$'\n[^:\n]*:[^:\n]*:[^:\n]*:'"${k}:" && [[ ! "${o}" =~ ${x} ]] && g+=(! -gid "${k}") || :; } && { [[ "${OSTYPE}" != darwin* ]] || g+=(! -gid 80); } && bad="$("${y}" "$@" -maxdepth 0 \( ! -type d ! -type f -o ! -uid "${EUID}" ! -uid 0 -o "${g[@]}" -o -perm -002 \) -print)" && [[ -z "${bad}" ]] && bad="$("${y}" "${a[@]}" -maxdepth 0 \( ! -type d -o ! -uid "${EUID}" ! -uid 0 -o \( "${g[@]}" -o -perm -002 \) ! -perm -1000 \) -print)" && [[ -z "${bad}" ]] && if [[ "${OSTYPE}" == darwin* ]]; then z="$(LC_ALL=C "${l}" -lde -- "$@" "${a[@]}")" && x=$' allow ([^\n]*,)?(write|append|add_file|add_subdirectory|delete|delete_child|writeattr|writeextattr|writesecurity|chown)(,|\n|$)' && [[ ! "${z}" =~ ${x} ]]; else z="$(LC_ALL=C "${l}" -ld -- "$@" "${a[@]}")" && [[ $'\n'"${z}" != *$'\n'?????w????+* ]]; fi && printf '%s\n' "${root}")" || workcell_entry_root="" # fail-closed: an empty root stops the script below
+[[ -n "${workcell_entry_root}" ]] || {
+  echo "Run ${BASH_SOURCE[0]} from its own place in a Workcell tree that no other user can write, not through a symlink or a copy: it loads helpers from that tree. A filesystem without Unix permissions, such as WSL /mnt/c or exFAT, cannot hold such a tree." >&2
+  exit 2
+}
+`
 	for name, test := range map[string]struct {
 		script string
 		want   int
@@ -143,6 +153,25 @@ func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 		"a launcher library in another place":  {head + `source "${ROOT_DIR}/scripts/lib/host-exec.sh"` + "\nbuildx_cmd build\n", 0},
 		"a launcher library through a parent":  {head + `source "${ROOT_DIR}/scripts/lib/launcher/../launcher/host-exec.sh"` + "\nbuildx_cmd build\n", 0},
 		"an unpinned launcher library":         {head + `source "${ROOT_DIR}/scripts/lib/launcher/egress-endpoints.sh"` + "\nbuildx_cmd build\n", 0},
+		"the entry link guard first":           {head + entryGuard + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
+		"the guard's root":                     {"#!/bin/bash\n" + entryGuard + entryRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
+		"the guard's root without the guard":   {"#!/bin/bash\n" + entryRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"the guard's root moved after it":      {"#!/bin/bash\n" + entryGuard + "workcell_entry_root=/tmp/evil\n" + entryRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"the guard's root read after it":       {"#!/bin/bash\n" + entryGuard + "read -r workcell_entry_root\n" + entryRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"the guard's root read in between":     {"#!/bin/bash\n" + entryGuard + `echo "${workcell_entry_root}" >&2` + "\n" + entryRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
+		"the guard's root defaulted after it":  {"#!/bin/bash\n" + entryGuard + `echo "${workcell_entry_root:=/tmp/evil}" >&2` + "\n" + entryRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an echo into the library first":       {head + `echo x >"${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an echo to stderr and a file first":   {head + "echo x >&2 >/tmp/f\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an echo that dups another descriptor": {head + "echo x 3>&2\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an echo with a glued redirection":     {head + "echo x>/tmp/f >&2\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an exit with a redirection first":     {head + "[[ -n x ]] || exit 2 >/tmp/f\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an exit in the prelude":               {head + "[[ -n x ]] || exit 2\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
+		"an echo that runs a command first":    {head + "echo $(cp /tmp/evil lib.sh) >&2\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an echo with a backtick first":        {head + "echo `cp /tmp/evil lib.sh` >&2\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an exit that runs a command first":    {head + "[[ -n x ]] || exit $(cp /tmp/evil lib.sh)\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an echo of a stand-in substitution":   {head + "echo \"$_\" >&2\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an echo to stdout first":              {head + "echo x\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a printf first":                       {head + "printf -v ROOT_DIR /tmp/evil >&2\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
 			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
