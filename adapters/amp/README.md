@@ -22,7 +22,7 @@ the control-plane manifest.
 
 ## Adapter behavior
 
-- `reject_manifest_args` in `runtime/container/provider-policy.sh` passes an
+- The manifest policy in `internal/providerpolicy/providerpolicy.go` passes an
   option only when the manifest `[flags]` `allow` list has it.
   `[flags]` `other_commands` names every top-level command and alias except
   `login`, `logout`, and `version`. The policy refuses a word that names one
