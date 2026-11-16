@@ -184,8 +184,8 @@ The runtime uses this control chain:
    the provider home under `/state/agent-home`.
 4. [`provider-wrapper.sh`](../runtime/container/provider-wrapper.sh) scrubs the
    provider environment.
-5. [`provider-policy.sh`](../runtime/container/provider-policy.sh) rejects
-   prohibited provider flags and configuration changes.
+5. `workcell-provider-policy` (`internal/providerpolicy`) rejects prohibited
+   provider flags and configuration changes.
 6. The selected provider binary starts.
 
 Mutable sessions start the entry point as root so that it can prepare runtime
