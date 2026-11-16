@@ -64,18 +64,20 @@ func unreadEnvWrite(run string) bool {
 
 // setsStartupFile reports an env that changes what a step's bash runs before
 // or instead of its body: a BASH_ENV or ENV file it sources, SHELLOPTS or
-// BASHOPTS options such as noexec, onecmd or lastpipe, or a function it
-// imports from a BASH_FUNC_ name or any name with %%. A lane script the step
-// runs inherits the same env.
+// BASHOPTS options such as noexec, onecmd or lastpipe, a function it imports
+// from a BASH_FUNC_ name or any name with %%, or a PATH that picks another
+// bash. A lane script the step runs inherits the same env.
 func setsStartupFile(env map[string]string) bool {
 	return env["BASH_ENV"] != "" || env["ENV"] != "" || slices.ContainsFunc(slices.Collect(maps.Keys(env)), startupEnvName)
 }
 
 // startupEnvName reports a name bash reads from its env to set options or to
-// import a function, in any case, which only fails closed.
+// import a function, or PATH, which picks the bash itself, in any case, which
+// only fails closed. A name with an expression may be any of these.
 func startupEnvName(name string) bool {
 	name = strings.ToUpper(name)
-	return name == "SHELLOPTS" || name == "BASHOPTS" || strings.HasPrefix(name, "BASH_FUNC_") || strings.Contains(name, "%%")
+	return name == "SHELLOPTS" || name == "BASHOPTS" || name == "PATH" || strings.HasPrefix(name, "BASH_FUNC_") ||
+		strings.Contains(name, "%%") || strings.Contains(name, "${{")
 }
 
 // githubHostedPosix matches the GitHub-hosted labels a shell-less step surely runs bash on.

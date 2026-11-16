@@ -877,13 +877,15 @@ func flattenGrouped(script string, grouped bool) string {
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
 	// boundary, whether that text is inside double quotes, the byte that
-	// closes it, and how many unquoted parentheses inside it are open, so the
-	// ) of <(…) or of a subshell does not close a $( ).
+	// closes it, how many unquoted parentheses inside it are open, so the )
+	// of <(…) or of a subshell does not close a $( ), and how many case
+	// commands inside it are open, so the ) that ends a pattern does not.
 	type frame struct {
 		text   strings.Builder
 		quoted bool
 		closer byte
 		parens int
+		cases  int
 	}
 	frames := []*frame{{}}
 	single := false
@@ -939,6 +941,14 @@ func flattenGrouped(script string, grouped bool) string {
 		case top.closer == ')' && !top.quoted && c == ')' && top.parens > 0:
 			top.parens--
 			top.text.WriteByte(c)
+		case top.closer == ')' && !top.quoted && c == ')' && top.cases > 0:
+			top.text.WriteByte(c) // the end of a case pattern list
+		case top.closer == ')' && !top.quoted && substitutionKeyword(script, i, top.text.String(), "case"):
+			top.cases++
+			top.text.WriteByte(c)
+		case top.closer == ')' && !top.quoted && top.cases > 0 && substitutionKeyword(script, i, top.text.String(), "esac"):
+			top.cases--
+			top.text.WriteByte(c)
 		case c == top.closer && !top.quoted:
 			frames = frames[:len(frames)-1]
 			out.WriteString(open + top.text.String() + closer)
@@ -959,6 +969,25 @@ func flattenGrouped(script string, grouped bool) string {
 		out.WriteString("\n" + open.text.String())
 	}
 	return out.String()
+}
+
+// substitutionKeyword reports whether a reserved word starts at script[at]
+// where a command starts, after the text before it in a substitution: at its
+// start, after a newline, ;, &, |, ( or ), or after a reserved word that
+// another command follows.
+func substitutionKeyword(script string, at int, before, keyword string) bool {
+	rest := script[at:]
+	if !strings.HasPrefix(rest, keyword) || len(rest) > len(keyword) && !strings.ContainsRune(" \t\n;&|)", rune(rest[len(keyword)])) {
+		return false
+	}
+	before = strings.TrimRight(before, " \t")
+	if before == "" || strings.ContainsRune("\n;&|()", rune(before[len(before)-1])) {
+		return true
+	}
+	fields := strings.Fields(before)
+	last := fields[len(fields)-1]
+	return len(before) > len(last) && slices.Contains([]string{"then", "do", "else", "elif", "{", "!", "time", "if", "while", "until"}, last) &&
+		strings.ContainsRune(" \t\n;&|()", rune(before[len(before)-len(last)-1]))
 }
 
 // markQuotedNewline turns a quoted newline into quotedNewline, so a word stays on one line; commandWords turns it back, so a shell program keeps its lines.
