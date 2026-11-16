@@ -112,6 +112,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"symlinked parent directory", "See `internal/extdir/outside.txt` here.\n", "", "", "", "escaping-path"},
 		{"an info string closes no fence", "```\n```text\n```\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", "", ""},
+		{"a fence indented three spaces closes", "   ```bash\n   x\n   ```\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"a fence indented two spaces closes", "  ~~~\n  x\n  ~~~\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"a CRLF fence closes", "```\r\nx\r\n```\r\nSee `scripts/nope.sh` here.\r\n", "", "", "", "missing-path"},
 		{"a multiline code span", "See `\nscripts/nope.sh\n` here.\n", "", "", "", "missing-path"},
 		{"a code span does not cross a blank line", "stray `\n\nscripts/nope.sh` here.\n", "", "", "", ""},

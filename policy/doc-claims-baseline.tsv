@@ -51,6 +51,7 @@ CHANGELOG.md	unwired-script	scripts/lib/trusted-entrypoint.sh	sourced library, n
 CONTRIBUTING.md	unanchored-claim	- Node.js and npm (the bootstrap helper enforces the repository-locked markdownlint runtime requirement)	claim predates the rule; cite the enforcing path or drop the claim
 CONTRIBUTING.md	unanchored-claim	A symlink anywhere in the pushed tree fails the push before any check runs.	claim predates the rule; cite the enforcing path or drop the claim
 CONTRIBUTING.md	unanchored-claim	Without it `git verify-commit` cannot verify your own commits and the `pre-push` hook rejects every push:	claim predates the rule; cite the enforcing path or drop the claim
+CONTRIBUTING.md	ungated-script	scripts/update-provider-pins.sh	the upstream-refresh provider step runs it with continue-on-error, so a failed kind drops its candidate and the report job fails the run
 CONTRIBUTING.md	unwired-script	scripts/ci/run-codespell.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
