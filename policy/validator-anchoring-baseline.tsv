@@ -12,7 +12,6 @@ internal/adapters	TestLauncherRefusesUncertifiedOptionMisuse	4ba4808d	a test ass
 internal/adapters	TestManifestsMatchLauncherAgentDispatch	257a40f3,57540d48,57540d48,c71e9e89	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	TestRejectManifestArgsAllowsOnlyTheManifestAllowlist	7e026f3f	a test assertion on the refusal text or rendered output that the test itself produces
 internal/adapters	TestRejectManifestArgsFailsClosed	78d94112,f5fbbae8	a test assertion on the refusal text or rendered output that the test itself produces
-internal/adapters	TestRenderRuntimeShellUncertifiedTables	437be125,dd8c4006	a test assertion on the refusal text or rendered output that the test itself produces
 internal/adapters	TestRenderersFollowManifests	1d06f46e,2e17b808,33369dc3,52136e3f,5aa5ff73,a78322f5,ecdf292f	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	dockerfilePinnedArgs	0726d6e0,7663cdcd	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	endpointRowAbsent	bf67ade5	unreviewed debt in a test: review the subject, then port or justify

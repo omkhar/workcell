@@ -623,7 +623,6 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/git", RuntimePath: "/usr/local/libexec/workcell/git-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/home-control-plane.sh", RuntimePath: "/usr/local/libexec/workcell/home-control-plane.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/node", RuntimePath: "/usr/local/libexec/workcell/node-wrapper.sh"},
-		{Kind: "runtime-control-plane", RepoPath: "runtime/container/provider-policy.sh", RuntimePath: "/usr/local/libexec/workcell/provider-policy.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/provider-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/provider-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/public-node-guard.mjs", RuntimePath: "/usr/local/libexec/workcell/public-node-guard.mjs"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/runtime-user.sh", RuntimePath: "/usr/local/libexec/workcell/runtime-user.sh"},

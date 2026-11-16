@@ -611,7 +611,6 @@ COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
 COPY runtime/container/generated-adapters.sh /usr/local/libexec/workcell/generated-adapters.sh
 COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
 COPY runtime/container/detached-stdin-wrapper.sh /usr/local/libexec/workcell/detached-stdin-wrapper.sh
-COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
 COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
 COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
 COPY runtime/container/runtime-user.sh /usr/local/libexec/workcell/runtime-user.sh
@@ -639,7 +638,6 @@ RUN mkdir -p /etc/claude-code \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/node-wrapper.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
-    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/provider-wrapper.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/libexec/workcell/runtime-user.sh \
@@ -652,7 +650,6 @@ RUN mkdir -p /etc/claude-code \
     /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
-    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/runtime-user.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
@@ -722,7 +719,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
-    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/bin/workcell-entrypoint \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \

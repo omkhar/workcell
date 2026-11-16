@@ -252,7 +252,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/generated-adapters.sh",
       "runtime_path": "/usr/local/libexec/workcell/generated-adapters.sh",
-      "sha256": "06413677e7af848f8139eab630e47191ad7f0c26b6e5323a44c21698f010f939"
+      "sha256": "8385378ff9df010435ab86c474436df1a2e58a6df1f6319d5e2e241a315f43fd"
     },
     {
       "kind": "runtime-control-plane",
@@ -271,12 +271,6 @@
       "repo_path": "runtime/container/bin/node",
       "runtime_path": "/usr/local/libexec/workcell/node-wrapper.sh",
       "sha256": "24676fb4b7d78fc5cc22ee634ef856b12e1d1fe1b6d90da3c39387d2d4d1527a"
-    },
-    {
-      "kind": "runtime-control-plane",
-      "repo_path": "runtime/container/provider-policy.sh",
-      "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "9601abb753b59370f07f428fae899e0bd6fc1047388cdef4209e55a1b0b61e26"
     },
     {
       "kind": "runtime-control-plane",
