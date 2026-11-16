@@ -441,6 +441,8 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 				if site.lane { // a lane script's command, read as a rerun or a forward only where its words are exactly one
 					top.program, top.script = laneRerunProgram(run)
 					top.forward = len(run) == 2 && run[1].raw == `"$@"`
+					top.guard = alone && top.level && each.follows == "&&" && slices.Equal(command, []string{"return", "0"}) &&
+						laneVersionGuard(scanned[index-1])
 				}
 				if alone && command[0] != "return" { // it may run in this shell, unless the reader proves its branch never runs
 					never, branch := cases.never(function, lost)
@@ -1571,21 +1573,26 @@ type laneEnds struct {
 // "$@" reruns it under a newer bash. It marks an exec "$P" -p "$S" "$@" of a
 // program P that is a bash and a script S that is the lane, where:
 //
-//   - P is an absolute path whose last part is bash, or one expansion of a
+//   - P is a laneBashPath, trusted by its name alone, or one expansion of a
 //     variable that bashProgram proves holds such a path or the empty
 //     string, whose exec fails the shell;
 //   - S is $0, or one expansion of a variable that scriptVariable proves
 //     holds $0 or, where rooted, ${ROOT_DIR}/scripts/${0##*/};
 //   - the lane never names BASH_ARGV0, so $0 is the script, and -p keeps the
 //     new shell from reading functions, BASH_ENV or SHELLOPTS it inherits;
-//   - the exec stands in the lane's body with no branch, loop, subshell or
-//     group around it, or in a function the lane's body calls, with no
-//     branch, loop, subshell or group around the call, as NAME "$@", and the
-//     lane and its libraries name that function nowhere but in those calls
-//     and its definitions, so no trap, eval or other call runs it;
-//   - no command before the exec or the call in the lane's body, nor any
-//     command of that function's body but the exec, as settled reads it,
-//     may change the lane's arguments, $0 or directory.
+//   - the exec stands in a function the lane's body calls, with no branch,
+//     loop, subshell or group around the call, as NAME "$@", and the lane
+//     and its libraries name that function nowhere but in those calls and
+//     its definitions, so no trap, eval or other call runs it;
+//   - the function's body runs ((BASH_VERSINFO[0] >= 4)) && return 0 before
+//     the exec, with no branch, loop, subshell or group around it, so the
+//     exec runs only under a bash older than 4, and the new shell, which
+//     reaches the guard again, returns there rather than exec once more. An
+//     exec in the lane's body has no return to guard it, so it ends the
+//     shell;
+//   - no command before the call in the lane's body, nor any command of
+//     that function's body but the exec, as settled reads it, may change the
+//     lane's arguments, $0 or directory.
 //
 // A step's text runs under the options of the step's shell, which a new
 // bash does not take, so only a lane script's exec reruns.
@@ -1606,10 +1613,7 @@ func (ends *laneEnds) rerunning(reading laneReading, bodies []string, rooted boo
 			if top.program == "" || !reading.bashProgram(top.program, caller) || !reading.scriptVariable(top.script, top.program, caller, bodies, rooted) {
 				continue
 			}
-			switch {
-			case key == "0":
-				ends.tops[key][index].reruns = top.level && settled(ends.tops[key][:index])
-			case function:
+			if function {
 				var calls []int
 				for at, call := range ends.tops["0"] {
 					if call.command[0] == name {
@@ -1621,6 +1625,7 @@ func (ends *laneEnds) rerunning(reading laneReading, bodies []string, rooted boo
 					mentions, definitions = mentions+laneMentions(text, name), definitions+len(laneDefinition(name).FindAllStringIndex(text, -1))
 				}
 				ends.tops[key][index].reruns = len(calls) > 0 && mentions == definitions+len(calls) &&
+					slices.ContainsFunc(ends.tops[key][:index], func(top laneTop) bool { return top.guard }) &&
 					settled(slices.Delete(slices.Clone(ends.tops[key]), index, index+1)) &&
 					!slices.ContainsFunc(calls, func(at int) bool {
 						call := ends.tops["0"][at]
@@ -1652,24 +1657,33 @@ func (ends *laneEnds) settled(command []string, seen map[string]bool) bool {
 	case len(words) == 0:
 		return true
 	case words[0] == "set":
-		named := false // the operand after an option that ends in o is the option's name
-		for _, word := range words[1:] {
-			if named {
-				named = false
-				continue
-			}
-			if !laneSetOption.MatchString(word) {
-				return false
-			}
-			named = strings.HasSuffix(word, "o")
-		}
-		return true
+		return !laneSetMoves(words[1:])
 	}
 	return !slices.Contains([]string{"cd", "pushd", "popd", "shift", "eval", "trap", "source", "."}, words[0]) && !ends.functions[words[0]]
 }
 
+// laneSetMoves reports whether set's operands may set the positional
+// parameters. Each operand must set or clear options, as -euo does, and an
+// option that holds o takes the next operand as its name only where that
+// operand spells one, as pipefail does. Any other operand, - and -- among
+// them, sets the parameters: set -o -- reads -- as the end of options.
+func laneSetMoves(operands []string) bool {
+	for at := 0; at < len(operands); at++ {
+		if !laneSetOption.MatchString(operands[at]) {
+			return true
+		}
+		if strings.Contains(operands[at][1:], "o") && at+1 < len(operands) && laneSetName.MatchString(operands[at+1]) {
+			at++
+		}
+	}
+	return false
+}
+
 // laneSetOption is a set operand that sets or clears options, as -euo does.
 var laneSetOption = regexp.MustCompile(`^[-+][A-Za-z]+$`)
+
+// laneSetName is the name of an option set -o reads, as pipefail is.
+var laneSetName = regexp.MustCompile(`^[a-z]+$`)
 
 // laneArgvZero names BASH_ARGV0, whose write sets $0.
 var laneArgvZero = regexp.MustCompile(`BASH_ARGV0`)
@@ -1724,8 +1738,20 @@ func (reading laneReading) scriptVariable(script, program, caller string, bodies
 		!slices.ContainsFunc(writes, func(write laneWrite) bool { return !slices.Contains(laneRerunScript, write.value) })
 }
 
-// laneBashPath is an absolute path whose last part is bash.
-var laneBashPath = regexp.MustCompile(`^/(?:[A-Za-z0-9_.+-]+/)*bash$`)
+// laneBashPath is one of the paths where a system or Homebrew installs
+// bash. The reader trusts each by its name alone: it cannot read what the
+// runner holds there.
+var laneBashPath = regexp.MustCompile(`^/(?:usr/(?:local/)?|opt/homebrew/)?bin/bash$`)
+
+// laneVersionGuard reports whether a command is ((BASH_VERSINFO[0] >= 4)),
+// spelled so, which no earlier command on its line decides.
+func laneVersionGuard(each command) bool {
+	raws := []string{}
+	for _, arg := range each.args {
+		raws = append(raws, arg.raw)
+	}
+	return !each.conditional && slices.Equal(raws, []string{"((BASH_VERSINFO[0]", ">=", "4))"})
+}
 
 // laneQuotedVariable is one quoted expansion of a variable, as "${name}" or
 // "$name", and captures its name.
@@ -1799,6 +1825,7 @@ type laneTop struct {
 	program  string // the program word of a lane script's exec "$P" -p "$0" "$@", as laneRerunProgram reads it
 	script   string // the script word of that exec
 	forward  bool   // a lane script's call NAME "$@", with no other word
+	guard    bool   // a lane script's return 0 behind ((BASH_VERSINFO[0] >= 4)) &&, which no branch, loop, subshell or group holds
 	reruns   bool   // it reruns the lane script, as rerunning proves
 }
 

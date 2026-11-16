@@ -247,11 +247,19 @@ var laneIfName = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 var laneIfCopies = regexp.MustCompile(`^(?:(?:env|matrix|needs|steps|jobs)\b|github(?:$|\[|\.\*))`)
 
 // atom numbers the unknown operand that runs from start to the parser's
-// place. It refuses one that names the event name, since only a test of it
+// place, by its text with each name in lower case and each string as it is
+// spelled: hashFiles('A') and hashFiles('a') may differ, so they are two
+// operands. It refuses one that names the event name, since only a test of it
 // against a string is read, one that may copy it, and one that reads a value,
 // or a value inside one, that another operand reads, which may contradict it.
 func (p *laneIfParser) atom(start int, keys []string) (*laneIf, bool) {
-	text := strings.ToLower(strings.Join(p.tokens[start:p.at], " "))
+	folded := slices.Clone(p.tokens[start:p.at])
+	for at, token := range folded {
+		if token[0] != '\'' {
+			folded[at] = strings.ToLower(token)
+		}
+	}
+	text := strings.Join(folded, " ")
 	if strings.Contains(text, "event_name") || slices.ContainsFunc(keys, laneIfCopies.MatchString) {
 		return nil, false
 	}

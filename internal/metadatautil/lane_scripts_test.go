@@ -32,7 +32,54 @@ const (
 // rerunRooted defines f, which reruns the lane under a newer bash from the
 // root's scripts directory, as canonical-build-env.sh's
 // workcell_require_modern_privileged_bash does.
-const rerunRooted = "f() {\n  local s=\"$0\"\n  s=\"${ROOT_DIR}/scripts/${0##*/}\"\n  if [[ -n \"${OLD:-}\" ]]; then\n    exec /usr/local/bin/bash -p \"${s}\" \"$@\"\n  fi\n}\n"
+const rerunRooted = "f() {\n  local s=\"$0\"\n  s=\"${ROOT_DIR}/scripts/${0##*/}\"\n  ((BASH_VERSINFO[0] >= 4)) && return 0\n  if [[ -n \"${OLD:-}\" ]]; then\n    exec /usr/local/bin/bash -p \"${s}\" \"$@\"\n  fi\n}\n"
+
+// canonicalReruns are the texts of canonical-build-env.sh's
+// workcell_require_modern_privileged_bash that the reader is shown to read
+// as a rerun: one that reruns $0, and one that reruns the script of $0's name
+// in the root the entry guard checked.
+var canonicalReruns = []string{`workcell_require_modern_privileged_bash() {
+  local candidate=""
+
+  if [[ "$-" != *p* ]]; then
+    echo "Canonical entrypoint requires privileged Bash mode; execute the script directly." >&2
+    return 2
+  fi
+  ((BASH_VERSINFO[0] >= 4)) && return 0
+  for candidate in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+    [[ -x "${candidate}" ]] || continue
+    if "${candidate}" -p -c '((BASH_VERSINFO[0] >= 4))' </dev/null; then
+      exec "${candidate}" -p "$0" "$@"
+    fi
+  done
+  echo "Canonical entrypoint requires Bash 4 or newer at a trusted absolute path." >&2
+  return 2
+}
+`, `workcell_require_modern_privileged_bash() {
+  local candidate=""
+  local self="$0"
+
+  if [[ "$-" != *p* ]]; then
+    echo "Canonical entrypoint requires privileged Bash mode; execute the script directly." >&2
+    return 2
+  fi
+  ((BASH_VERSINFO[0] >= 4)) && return 0
+  # Re-run the caller from the physical root that its entry guard checked, not
+  # from $0, whose directories a symlink could have moved since. Every caller
+  # sits directly in scripts/.
+  if [[ -n "${workcell_entry_root:-}" ]]; then
+    self="${workcell_entry_root}/scripts/${0##*/}"
+  fi
+  for candidate in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+    [[ -x "${candidate}" ]] || continue
+    if "${candidate}" -p -c '((BASH_VERSINFO[0] >= 4))' </dev/null; then
+      exec "${candidate}" -p "${self}" "$@"
+    fi
+  done
+  echo "Canonical entrypoint requires Bash 4 or newer at a trusted absolute path." >&2
+  return 2
+}
+`}
 
 // laneEntry returns the entry guard of the script at rel, with its stop.
 func laneEntry(rel string) string {
@@ -196,6 +243,9 @@ func TestLaneScriptsReadsTheRootAndShadowingFunctions(t *testing.T) {
 		// A rerun from the root's scripts directory is the lane where the lane stands there.
 		{"rerun of the script of $0's name under the root", laneRoot + "\n" + rerunRooted + "f \"$@\"\n" + gate, "", "wired"},
 		{"rerun of the script of $0's name under the root spelled by a quoted root", laneRoot + "\n" + strings.Replace(rerunRooted, `s="${ROOT_DIR}`, `s='${ROOT_DIR}'"`, 1) + "f \"$@\"\n" + gate, "", "unwired"},
+		// The canonical rerun reads as one.
+		{"canonical rerun of $0", entry + laneEntryRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nworkcell_require_modern_privileged_bash \"$@\"\n" + gate, canonicalReruns[0], "wired"},
+		{"canonical rerun under the root", entry + laneEntryRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nworkcell_require_modern_privileged_bash \"$@\"\n" + gate, canonicalReruns[1], "wired"},
 		{"rerun of the script of $0's name under the root after a write of another value", laneRoot + "\n" + strings.Replace(rerunRooted, "  if", "  s=/tmp/x.sh\n  if", 1) + "f \"$@\"\n" + gate, "", "unwired"},
 	}
 	for _, tc := range cases {
@@ -986,7 +1036,15 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a lane script that shifts before its case", steps: runs(" --profile x"), lane: "shift\n" + lane, want: ended},
 		row{name: "a lane script that sets its parameters", steps: runs(" --profile x"), lane: "set -- --help\n" + lane, want: ended},
 		row{name: "a lane script that sets its parameters after set -", steps: runs(" --profile x"), lane: "set - --help\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters after set -o", steps: runs(" --profile x"), lane: "set -o -- --help\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters after set -eo", steps: runs(" --profile x"), lane: "set -eo -- --help\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters after set +o", steps: runs(" --profile x"), lane: "set +o -- --help\n" + lane, want: ended},
+		row{name: "a lane script that clears its parameters after set -o", steps: runs(" --profile x"), lane: "set -o --\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters after an option with no o", steps: runs(" --profile x"), lane: "set -e x\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters to an option after set -", steps: runs(" --profile x"), lane: "set - -h\n" + lane, want: ended},
+		row{name: "a lane script that sets its parameters after an option's name", steps: runs(" --profile x"), lane: "set -o pipefail -- --help\n" + lane, want: ended},
 		row{name: "a lane script that sets options", steps: runs(" --profile x"), lane: "set -euo pipefail\n" + lane, want: "wired"},
+		row{name: "a lane script that sets options with o first", steps: runs(" --profile x"), lane: "set -oe pipefail\n" + lane, want: "wired"},
 		row{name: "a lane script with a second case on $1", steps: runs(" --profile x"), lane: lane + "case \"$1\" in -h) exit 0;; esac\n./scripts/gate.sh\n", want: ended},
 		row{name: "a lane script whose branch shifts twice", steps: runs(" --profile x --help"), lane: strings.Replace(lane, "shift 2", "shift\n      shift", 1), want: ended},
 		row{name: "a lane script whose glob branch comes first", steps: runs(" -x"), lane: strings.Replace(lane, "    --profile)", "    -*)\n      shift\n      ;;\n    --profile)", 1), want: ended},
@@ -1233,11 +1291,15 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 	other := "  first:\n    runs-on: ubuntu-latest\n    if: github.event_name == 'push'\n    steps:\n      - run: true\n"
 	maybe := "f() { [[ -z \"${X:-}\" ]] || exit 0; }\n"
 	sha := event + "          S: ${{ github.sha }}\n"
-	rerun := "f() {\n  local b=\"\"\n  for b in /opt/homebrew/bin/bash /usr/local/bin/bash; do\n    [[ -x \"${b}\" ]] || continue\n    if [[ -n \"${OLD:-}\" ]]; then\n      exec \"${b}\" -p \"$0\" \"$@\"\n    fi\n  done\n}\n"
+	canonical := jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nworkcell_require_modern_privileged_bash \"$@\"\n\"${ROOT_DIR}/scripts/gate.sh\"\n"
+	rerun := "f() {\n  local b=\"\"\n  ((BASH_VERSINFO[0] >= 4)) && return 0\n  for b in /opt/homebrew/bin/bash /usr/local/bin/bash; do\n    [[ -x \"${b}\" ]] || continue\n    if [[ -n \"${OLD:-}\" ]]; then\n      exec \"${b}\" -p \"$0\" \"$@\"\n    fi\n  done\n}\n"
 	rows = append(rows,
 		row{name: "an event case under a step if that ors in a context value", on: "[push, pull_request]", steps: iffed("github.event_name == 'pull_request' || github.base_ref != ''", "case \"$E\" in pull_request) exit 0;; esac"), want: "ungated"},
 		row{name: "an event case under a step if that ors in a payload value", on: "[push, pull_request]", steps: iffed("github.event_name == 'pull_request' || github.event.pull_request", "case \"$E\" in pull_request) exit 0;; esac"), want: "ungated"},
 		row{name: "an event case under a step if whose && binds first", on: "[push, pull_request]", steps: iffed("github.event_name == 'push' || github.event_name == 'pull_request' && github.event.pull_request.number < 0", "case \"$E\" in push) exit 0;; esac"), want: "ungated"},
+		row{name: "an event case under a step if on two files whose names differ in case", on: "[push, pull_request]", steps: iffed("github.event_name == 'push' || (hashFiles('A') != '' && !(hashFiles('a') != ''))", "case \"$E\" in pull_request) exit 0;; esac"), want: ended},
+		row{name: "an event case under a step if on one file twice", on: "[push, pull_request]", steps: iffed("github.event_name == 'push' || (hashFiles('a') != '' && !(hashFiles('a') != ''))", "case \"$E\" in pull_request) exit 0;; esac"), want: "wired"},
+		row{name: "an event case under a step if on one value named in two cases", on: "[push, pull_request]", steps: iffed("github.event_name == 'push' || (github.HEAD_REF != '' && !(github.head_ref != ''))", "case \"$E\" in pull_request) exit 0;; esac"), want: "wired"},
 		row{name: "an event case under a job if on the head ref", on: "[push, pull_request]", job: "    if: github.head_ref != '' && github.event_name != 'merge_group'\n", steps: gated("case \"$E\" in pull_request) exit 0;; esac", event), want: "ungated"},
 		row{name: "an event case whose env a merge key brings", on: "[push, pull_request]", steps: "      - env: &e\n          E: ${{ github.event_name }}\n        run: echo hi\n      - if: github.event_name == 'push' || github.event.pull_request.number < 0\n        env:\n          <<: *e\n        run: |\n          case \"$E\" in push) exit 0;; esac\n          ./scripts/gate.sh\n", want: "ungated"},
 		row{name: "an event case on an event that reaches the step", on: "[push, pull_request]", steps: gated("case \"$E\" in push) exit 0;; esac", event), want: "ungated"},
@@ -1257,7 +1319,24 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "an exit in an elif heading", on: "push", steps: gated("if false; then :; elif exit 0; then :; fi", event), want: ended},
 		// A lane script that reruns itself under another bash runs every later command in the new shell.
 		row{name: "a lane script that reruns itself under a newer bash", steps: runs(""), lane: rerun + "f \"$@\"\n./scripts/gate.sh\n", want: "wired"},
-		row{name: "a lane script that reruns itself by a literal bash", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script that reruns itself in its own body, where no return guards the exec", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself by a literal bash", steps: runs(""), lane: strings.Replace(rerun, `"${b}" -p`, "/bin/bash -p", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script that reruns itself by the system's bash", steps: runs(""), lane: strings.Replace(rerun, "/opt/homebrew/bin/bash /usr/local/bin/bash", "/usr/bin/bash", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script that reruns itself by a bash under /proc", steps: runs(""), lane: strings.Replace(rerun, `"${b}" -p`, "/proc/self/cwd/usr/bin/bash -p", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself by a bash path with more after its name", steps: runs(""), lane: strings.Replace(rerun, `"${b}" -p`, "/usr/local/bin/bash-5 -p", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself by a bash path that climbs", steps: runs(""), lane: strings.Replace(rerun, "/usr/local/bin/bash;", "/usr/bin/../../proc/self/cwd/fake/bash;", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself by the canonical rerun", steps: runs(""), lane: canonical, library: canonicalReruns[0], want: "wired"},
+		row{name: "a lane script that reruns itself by the canonical rerun after a bash under /proc", steps: runs(""), lane: canonical, library: strings.Replace(canonicalReruns[0], "in /opt", "in /proc/self/cwd/fake/bash /opt", 1), want: "ungated"},
+		row{name: "a lane script whose rerun function has no version guard", steps: runs(""), lane: strings.Replace(rerun, "  ((BASH_VERSINFO[0] >= 4)) && return 0\n", "", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function guards the version after the exec", steps: runs(""), lane: strings.Replace(strings.Replace(rerun, "  ((BASH_VERSINFO[0] >= 4)) && return 0\n", "", 1), "  done\n", "  done\n  ((BASH_VERSINFO[0] >= 4)) && return 0\n", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function guards the version in a branch", steps: runs(""), lane: strings.Replace(rerun, "  ((BASH_VERSINFO[0] >= 4)) && return 0\n", "  if [[ -n \"${NEW:-}\" ]]; then\n    ((BASH_VERSINFO[0] >= 4)) && return 0\n  fi\n", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function returns only on an old bash", steps: runs(""), lane: strings.Replace(rerun, "4)) && return", "4)) || return", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function tests the version only after another test", steps: runs(""), lane: strings.Replace(rerun, "  ((BASH_VERSINFO", "  [[ -n \"${NEW:-}\" ]] && ((BASH_VERSINFO", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function tests another version", steps: runs(""), lane: strings.Replace(rerun, ">= 4))", ">= 3))", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function returns failure on a new bash", steps: runs(""), lane: strings.Replace(rerun, "&& return 0", "&& return 1", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function returns from a pipeline", steps: runs(""), lane: strings.Replace(rerun, "&& return 0", "&& return 0 | cat", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after set -o --", steps: runs(""), lane: "set -o --\n" + rerun + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after set -o pipefail", steps: runs(""), lane: "set -o pipefail\n" + rerun + "f \"$@\"\n./scripts/gate.sh\n", want: "wired"},
 		row{name: "a lane script that runs another shell on itself", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /bin/sh -p \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
 		row{name: "a lane script that reruns itself without -p", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
 		row{name: "a lane script that runs bash on another script", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p ./scripts/x.sh \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
@@ -1506,4 +1585,17 @@ func TestLaneScriptsRejectsEvasions(t *testing.T) {
 	}
 	// An exit or an exec before the gate ends the lane, so the reader refuses it.
 	RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "wiring", validate, "exit before the command", "exec before the command")
+}
+
+// The canonical rerun the lanes run is one that canonicalReruns pins, so the
+// reader is shown to read it.
+func TestLaneScriptsPinTheCanonicalRerun(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "lib", "canonical-build-env.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(canonicalReruns, func(text string) bool { return strings.Contains(string(data), "\n"+text) }) {
+		t.Fatal("canonical-build-env.sh's workcell_require_modern_privileged_bash is no text canonicalReruns pins; pin the new text once the reader reads it as a rerun")
+	}
 }

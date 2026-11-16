@@ -329,14 +329,22 @@ and an `exit` in a subshell ends nothing.
 A lane script that runs itself again under another bash ends nothing either.
 It does so by an `exec` of a `bash` with `-p "$0" "$@"`, as the canonical
 build library does for `scripts/validate-repo.sh` under an old bash. The
-`bash` is an absolute path, or a variable whose every value is one. The new
-shell runs the script from its first line, so each later command still runs.
+`bash` is `/bin/bash`, `/usr/bin/bash`, `/usr/local/bin/bash` or
+`/opt/homebrew/bin/bash`, or a variable whose every value is one of them. The
+check trusts that path by its name alone, since it cannot read what the
+runner holds there. The new shell runs the script from its first line, so
+each later command still runs.
+
+The `exec` must stand in a function that first runs
+`((BASH_VERSINFO[0] >= 4)) && return 0` outside any branch or loop. So the
+`exec` runs only under an old bash, and the new shell returns at that line.
+An `exec` in the script's own body has no `return` to guard it, so it ends
+the lane.
 
 This counts only where `$0`, the arguments and the directory stay as they
 were. No `cd`, `shift`, `set` of the parameters, `eval`, `trap`, call of a
-function or `BASH_ARGV0` may come first. A function that runs it counts only
-when the script calls it as `f "$@"` at its top level and names it nowhere
-else. The script word may also be a variable whose every write is `"$0"`, or
+function or `BASH_ARGV0` may come first. The script must call the function
+as `f "$@"` at its top level and name it nowhere else. The script word may also be a variable whose every write is `"$0"`, or
 `"${ROOT_DIR}/scripts/${0##*/}"` for a script in `scripts/`. A step's text
 never runs itself again this way, since a new bash does not take the options
 of the step's shell.
@@ -379,6 +387,13 @@ event name, as the whole `github` context or a value of `env`, `matrix`,
 value inside the other, since they may contradict. So does a `!` in front of a
 comparison with no parentheses round it.
 
+The check names each operand by its text, with each name in any case but each
+string as spelled. So `hashFiles('A')` and `hashFiles('a')` are two operands,
+since the files they read may differ. Dropping an event assumes that the
+events the check keeps over-count those that reach the step. Two operands
+read as one could hide an event, and an exit on it could then end the lane
+with 0 before its gates.
+
 An `if` with more than 12 operands voids the subject too, since the check
 tries every value of each. A job that `needs` another keeps no event either.
 It runs only on the events that reach the job it needs, and the check does not
@@ -406,7 +421,9 @@ it holds no unquoted expansion, brace or pattern, and no `@`. A branch that an
 argument selects runs.
 
 A second `case` on `$1`, a `shift` outside a branch or a `set` of the
-parameters makes every branch run. So does a step that runs the script through
+parameters makes every branch run. A `set` sets them with any operand but an
+option, as `-` and `--` are, even right after `-o`: `set -o -- x` does. Only
+a lower-case word after `-o` reads as the option's name. So does a step that runs the script through
 `xargs`, `find` or `env`, since the check cannot pair those arguments with the
 step's text.
 
