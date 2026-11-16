@@ -65,31 +65,17 @@ func laneEntryBridged(text, rel string) (string, error) {
 	return laneBridgeRead(text, `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/`+ups+`" && pwd)"`+"\nreadonly ROOT_DIR\n"+laneBridgeMark), nil
 }
 
-// laneGoRunEnvPin is the sha256 of main's scripts/lib/go-run-env.sh, whose
-// cache lock this reader cannot read, and laneBridgePins holds it only at
-// that path. A guarded lane reads it as an empty library, since reading it as
-// lint-ratchets-3a does is too large to bring back. That widens nothing:
-// each tree this pin is in calls its functions from the same lines, and for
-// the trees of the merges of lint-ratchets-1f and 1g, the reader of
-// lint-ratchets-3i lists the same scripts in the same classes with these
-// bytes as with empty text; it reads no earlier tree's validate-repo.sh either
-// way. The merge of lint-ratchets-3a removes this pin.
-const laneGoRunEnvPin = "6d8fac16daf282c210e3283e590f344c0800dc2383861d1a2b54d5948815a27c"
-
 // laneEntryLibrary returns the text this reader reads for a repository
 // library that the lane text lane sources. The library of a lane that
 // laneEntryBridged did not read, which holds no laneBridgeMark line, is read
 // as written. Any other library is unreadable unless laneBridgePins holds its
-// bytes, which are read by laneBridgeRead, and main's go-run-env.sh as empty text.
+// bytes, which are read by laneBridgeRead.
 func laneEntryLibrary(text, library, lane string) (string, error) {
 	if !strings.Contains(lane, "\n"+laneBridgeMark+"\n") {
 		return text, nil
 	}
 	if !laneBridgePins[library+" "+laneBridgeDigest(text)] {
 		return "", fmt.Errorf("lane wiring is unreadable: a guarded lane sources %s, which this reader reads only at the bytes the publish bridge pins", library)
-	}
-	if laneBridgeDigest(text) == laneGoRunEnvPin {
-		return "", nil
 	}
 	return laneBridgeRead(text, laneBridgeRoot), nil
 }

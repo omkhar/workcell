@@ -119,19 +119,3 @@ func TestLaneEntryBridgeRefusesWritesByName(t *testing.T) {
 		}
 	}
 }
-
-// main's go-run-env.sh reads as empty text, and only at its own path.
-func TestLaneEntryBridgePinsGoRunEnv(t *testing.T) {
-	t.Parallel()
-	text, err := os.ReadFile("../../scripts/lib/go-run-env.sh")
-	lane := "\n" + laneBridgeMark + "\n"
-	if read, err2 := laneEntryLibrary(string(text), "scripts/lib/go-run-env.sh", lane); err != nil || err2 != nil || read != "" {
-		t.Fatalf("laneEntryLibrary() = %d bytes, %v (%v), want main's go-run-env.sh read as empty text", len(read), err2, err)
-	}
-	if _, err := laneEntryLibrary(string(text)+"#\n", "scripts/lib/go-run-env.sh", lane); err == nil {
-		t.Error("laneEntryLibrary() reads go-run-env.sh at other bytes, want it unreadable")
-	}
-	if _, err := laneEntryLibrary(string(text), "scripts/lib/other.sh", lane); err == nil {
-		t.Error("laneEntryLibrary() reads main's go-run-env.sh at another path, want it unreadable")
-	}
-}

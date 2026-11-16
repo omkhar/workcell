@@ -56,8 +56,25 @@ func (reader *laneArithmetic) closing(text string, start int, open, closing byte
 // as arithmetic unless the array is associative, which this reader does not
 // track.
 type laneExpression struct {
-	text  string
-	named bool
+	text    string
+	named   bool
+	context *laneContext // where the command that holds it runs, or nil for text an eval, a trap or a child shell runs
+}
+
+// laneContext is where a command of a lane or a library runs, as the reader
+// reads a number there: its innermost function body, the names that body has
+// declared local so far, and the names a guard has proven hold digits.
+type laneContext struct {
+	function int
+	locals   map[string]int // the order in which the body declares each name local
+	declared int            // how many it has declared so far
+	guarded  []string
+}
+
+// local reports whether the function body has declared a name local here.
+func (context *laneContext) local(name string) bool {
+	order, declared := context.locals[name]
+	return declared && order < context.declared
 }
 
 // laneCommandArithmetic is an unquoted (( that no $ opens, which starts an
@@ -275,7 +292,7 @@ var laneArithmeticOperand = regexp.MustCompile("^(?:" +
 // arithmeticReason returns why this reader cannot show that an expression
 // assigns nothing it does not spell: an operand that is not a number nor a
 // variable in numbers, or "".
-func arithmeticReason(expression string, numbers map[string]bool) string {
+func arithmeticReason(expression string, numbers func(string) bool) string {
 	for at := 0; at < len(expression); at++ {
 		match := laneArithmeticOperand.FindStringSubmatch(expression[at:])
 		if match == nil {
@@ -285,7 +302,7 @@ func arithmeticReason(expression string, numbers map[string]bool) string {
 		switch {
 		case match[laneArithmeticOperand.SubexpIndex("other")] != "":
 			return fmt.Sprintf("evaluates %q in arithmetic, an expansion this reader cannot show holds a number", strings.TrimSpace(expression))
-		case name != "" && (name == "_" || !numbers[name]):
+		case name != "" && (name == "_" || !numbers(name)):
 			return fmt.Sprintf("evaluates %q in arithmetic, where bash reads the value of %s as an expression this reader cannot show is a number", strings.TrimSpace(expression), name)
 		}
 		at += len(match[0]) - 1
@@ -364,9 +381,9 @@ func laneOperatorReason(text string) string {
 // unreadable, or "": only one expansion of a variable that holds a number or
 // a plain name, as laneListed reads it, is readable, since any other value may
 // name an array element, whose subscript bash evaluates.
-func laneNamedReason(text string, numbers, listed map[string]bool) string {
+func laneNamedReason(text string, numbers func(string) bool, listed map[string]bool) string {
 	if match := laneProgramVariable.FindStringSubmatch(text); match != nil && match[3] == "" {
-		if name := match[1] + match[2]; numbers[name] || listed[name] {
+		if name := match[1] + match[2]; numbers(name) || listed[name] {
 			return ""
 		}
 	}
@@ -515,6 +532,26 @@ type laneNesting struct {
 	scopes []int    // the number of each
 	next   *int     // the last number, shared by every body
 	lost   bool
+	kinds  map[int]string // the opener of each number, or function for a function body
+	names  map[int]string // the name of each function body
+}
+
+// kind records the opener of a scope number.
+func (nesting *laneNesting) kind(number int, opener string) {
+	if nesting.kinds == nil {
+		nesting.kinds = map[int]string{}
+	}
+	nesting.kinds[number] = opener
+}
+
+// function returns the innermost function body of scopes, or 0.
+func (nesting *laneNesting) function(scopes []int) int {
+	for _, scope := range slices.Backward(scopes) {
+		if nesting.kinds[scope] == "function" {
+			return scope
+		}
+	}
+	return 0
 }
 
 // laneNestingClosers maps each closer to the opener it closes.
@@ -529,7 +566,9 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 	}
 	push := func(opener string) {
 		nesting.open, nesting.scopes = append(nesting.open, opener), append(nesting.scopes, number())
+		nesting.kind(*nesting.next, opener)
 	}
+	header, name := false, "" // the word before was a function's name()
 	innermost := func() string {
 		if len(nesting.open) == 0 {
 			return ""
@@ -539,6 +578,7 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 	branch := func() { // a new branch of the innermost compound command
 		if len(nesting.scopes) > 0 {
 			nesting.scopes[len(nesting.scopes)-1] = number()
+			nesting.kind(*nesting.next, innermost())
 		}
 	}
 	pop := func(closer string) {
@@ -550,7 +590,16 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 	}
 	words := args
 	for leading := true; leading && len(words) > 0 && !words[0].quoted; {
+		opensBody := header
+		header = false
 		switch text := words[0].text; {
+		case text == "{" && opensBody, strings.HasSuffix(text, "(){"):
+			push("{")
+			nesting.kind(*nesting.next, "function")
+			if nesting.names == nil {
+				nesting.names = map[int]string{}
+			}
+			nesting.names[*nesting.next] = map[bool]string{true: name, false: strings.TrimSuffix(text, "(){")}[opensBody]
 		case text == "{" || text == "if":
 			push(text)
 		case text == "while" || text == "until":
@@ -569,11 +618,11 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 		case strings.HasPrefix(text, "("):
 			push("(")
 			leading = text == "("
-		case strings.HasSuffix(text, "(){"):
-			push("{")
 		case text == "function" && len(words) > 1:
 			words = words[1:]
-		case strings.HasSuffix(text, "()") || slices.Contains([]string{"then", "do", "!", "time"}, text):
+		case strings.HasSuffix(text, "()"):
+			header, name = true, strings.TrimSuffix(text, "()")
+		case slices.Contains([]string{"then", "do", "!", "time"}, text):
 		default:
 			leading = false
 			continue
