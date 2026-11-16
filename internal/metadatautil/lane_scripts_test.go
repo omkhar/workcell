@@ -988,7 +988,7 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a lane script run after an assignment and before a redirection", steps: step("X=1 ./scripts/ci/job-a.sh --profile x 2>&1", ""), lane: lane, want: "wired"},
 		row{name: "a lane script run with a quoted option value", steps: runs(" --profile 'x y'"), lane: lane, want: "wired"},
 		row{name: "a lane script run with a matrix value", job: "    strategy:\n      matrix:\n        p: ['x --help']\n", steps: runs(" --profile ${{matrix.p}}"), lane: lane, want: "unwired"},
-		row{name: "a lane script xargs runs", steps: step("echo --help | xargs ./scripts/ci/job-a.sh", ""), lane: lane, want: ended},
+		row{name: "a lane script xargs runs", steps: step("echo --help | xargs ./scripts/ci/job-a.sh", ""), lane: lane, want: "unwired"},
 		row{name: "a lane script run as itself and by xargs", steps: step("./scripts/ci/job-a.sh\necho --help | xargs ./scripts/ci/job-a.sh", ""), lane: lane, want: ended},
 		row{name: "a lane script whose selected branch does not shift", steps: runs(" --a --a"), lane: strings.Replace(lane, "    --profile)", "    --a)\n      ;;\n    --profile)", 1), want: ended},
 		row{name: "a step after one that writes GITHUB_PATH", steps: step("echo /tmp/b >> \"$GITHUB_PATH\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
@@ -1032,6 +1032,50 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a { after other text in a substitution", validate: validate("x=$(echo { case x in y)"), want: "holds a case with no esac"},
 		row{name: "a case with no esac in a substitution", validate: validate("x=$(echo case)"), want: "holds a case with no esac"},
 		row{name: "a case of two patterns in a substitution", validate: validate("x=$(case x in x) echo;; y) echo;; esac)"), want: ended},
+		// A gate the step runs where its failure does not fail the step runs but does not gate.
+		row{name: "a gate under || true", steps: step("./scripts/gate.sh || true", ""), want: "ungated"},
+		row{name: "a gate in an if condition", steps: step("if ./scripts/gate.sh; then :; fi", ""), want: "ungated"},
+		row{name: "a gate under !", steps: step("! ./scripts/gate.sh", ""), want: "ungated"},
+		row{name: "a gate in the background", steps: step("./scripts/gate.sh &\nwait", ""), want: "ungated"},
+		row{name: "a gate piped under the default shell", steps: step("./scripts/gate.sh | tee /dev/null", ""), want: "ungated"},
+		row{name: "a gate piped under bash", steps: step("./scripts/gate.sh | tee /dev/null", "        shell: bash\n"), want: "wired"},
+		row{name: "a gate in a while condition", steps: step("while ! ./scripts/gate.sh; do break; done", ""), want: "ungated"},
+		row{name: "a gate in a local substitution", steps: step("f() { local x=$(./scripts/gate.sh); }\nf", ""), want: "ungated"},
+		row{name: "a gate in an assigned substitution", steps: step("x=$(./scripts/gate.sh)\necho \"${x}\"", ""), want: "wired"},
+		row{name: "a gate in a function a || runs", steps: step("f() { ./scripts/gate.sh; echo after; }\nf || true", ""), want: "ungated"},
+		row{name: "a gate in a function a step runs", steps: step("f() { ./scripts/gate.sh; echo after; }\nf", ""), want: "wired"},
+		row{name: "a gate before && and a later command", steps: step("./scripts/gate.sh && true\necho more", ""), want: "ungated"},
+		row{name: "a gate after set +e", steps: step("set +e\n./scripts/gate.sh\nset -e\necho more", ""), want: "ungated"},
+		row{name: "a gate in a step that continues on error", steps: step("./scripts/gate.sh", "        continue-on-error: true\n"), want: "ungated"},
+		row{name: "a gate in a job that continues on error", job: "    continue-on-error: true\n", steps: step("./scripts/gate.sh", ""), want: "ungated"},
+		row{name: "a gate in a lane a step runs under || true", steps: step("./scripts/ci/job-a.sh || true", ""), lane: "./scripts/gate.sh\n", want: "ungated"},
+		// More gating positions.
+		row{name: "a gate in a substitution under || true", steps: step("x=$(./scripts/gate.sh) || true\necho \"${x}\"", ""), want: "ungated"},
+		row{name: "a last gate after set +e", steps: step("set +e\necho x\n./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a gate in a loop after set +e", steps: step("set +e\nfor i in 1 2; do ./scripts/gate.sh; done", ""), want: "ungated"},
+		row{name: "a gate last in a function a last call runs after set +e", steps: step("set +e\nf() { ./scripts/gate.sh; }\nf", ""), want: "wired"},
+		row{name: "a gate before more in a function a call runs after set +e", steps: step("set +e\nf() { ./scripts/gate.sh; echo; }\nf", ""), want: "ungated"},
+		row{name: "a gate after a set -e that may not run", steps: step("set +e\nfalse && set -e\n./scripts/gate.sh\necho", ""), want: "ungated"},
+		row{name: "a gate in a function before a function that turns errexit off", steps: step("f() { ./scripts/gate.sh; echo; }\nh() { set +e; }\nh\nf", ""), want: "ungated"},
+		row{name: "a gate after time -p of a group", steps: step("time -p { :; }\n./scripts/gate.sh\necho", ""), want: "wired"},
+		row{name: "a gate after a subshell that ends in a redirection", steps: step("(umask 077 && printf x >\"${RUNNER_TEMP}/t\")\n./scripts/gate.sh\necho", ""), want: "wired"},
+		// A false && in front of a lane script means the step need not run it.
+		row{name: "a lane script after false &&", steps: step("false && ./scripts/ci/job-a.sh --help", ""), lane: lane, want: "unwired"},
+		row{name: "a case at the start of a subshell in a substitution before a gate in it", steps: step("x=$( (case x in x) echo;; esac); ./scripts/gate.sh )\necho \"${x}\"", ""), want: "wired"},
+		row{name: "a gate after a subshell of one word", steps: step("(echo)\n./scripts/gate.sh\necho", ""), want: "wired"},
+		row{name: "a gate after a subshell of one word in a substitution", steps: step("x=$( (echo); ./scripts/gate.sh)\necho \"${x}\"", ""), want: "wired"},
+		row{name: "a gate after a case of two patterns in a substitution", steps: step("x=$(case x in x) echo;; y) echo;; esac; ./scripts/gate.sh)\necho \"${x}\"", ""), want: "wired"},
+		row{name: "a gate a coproc runs", steps: step("coproc ./scripts/gate.sh\necho", ""), want: "ungated"},
+		row{name: "a gate in a group under || true", steps: step("{ ./scripts/gate.sh; } || true", ""), want: "ungated"},
+		row{name: "a gate in a subshell piped under the default shell", steps: step("( ./scripts/gate.sh ) | cat", ""), want: "ungated"},
+		row{name: "a gate in a substitution in an assigned substitution", steps: step("x=$(y=$(./scripts/gate.sh))\necho \"${x}\"", ""), want: "wired"},
+		row{name: "a gate in a substitution before more in a substitution", steps: step("x=$(y=$(./scripts/gate.sh); echo)\necho \"${x}\"", ""), want: "ungated"},
+		row{name: "a gate after a library that turns errexit off", validate: "#!/bin/bash\nset -euo pipefail\n" + laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nbash \"${ROOT_DIR}/scripts/gate.sh\"\necho done\n", library: "set +e\n", want: "ungated"},
+		row{name: "a gate in a function another function calls after a function that turns errexit off", steps: step("f() { ./scripts/gate.sh; echo; }\ng() { f; }\nh() { set +e; }\nh\ng", ""), want: "ungated"},
+		row{name: "a gate exec runs in a loop after set +e", steps: step("set +e\nfor i in 1; do exec ./scripts/gate.sh; done", ""), want: "wired"},
+		row{name: "a gate after a named coproc of a group", steps: step("coproc c { :; }\n./scripts/gate.sh\necho", ""), want: "wired"},
+		row{name: "a gate in a subshell whose first line ends in a quoted )", steps: step("(echo \")\"\n./scripts/gate.sh\n) || true", ""), want: "ungated"},
+		row{name: "a gate in a group that never closes", steps: step("{ ./scripts/gate.sh", ""), want: "ungated"},
 	)
 	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1045,14 +1089,17 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 				files["scripts/validate-repo.sh"] = tc.validate
 			}
 			writeLaneTree(t, root, files)
-			got, err := metadatautil.LaneScripts(root)
+			got, ungated, err := metadatautil.LaneScriptClasses(root)
 			switch tc.want {
-			case "wired", "unwired":
+			case "wired", "unwired", "ungated":
 				if err != nil {
 					t.Fatal(err)
 				}
 				if wired := slices.Contains(got, "scripts/gate.sh"); wired != (tc.want == "wired") {
 					t.Fatalf("LaneScripts() = %q, want scripts/gate.sh %s", got, tc.want)
+				}
+				if runs := slices.Contains(ungated, "scripts/gate.sh"); runs != (tc.want == "ungated") {
+					t.Fatalf("LaneScriptClasses() ungated = %q, want scripts/gate.sh %s", ungated, tc.want)
 				}
 			default:
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -1174,7 +1221,7 @@ func TestLaneScriptsRejectsEvasions(t *testing.T) {
 	t.Parallel()
 	const head = "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - name: s\n        run: |\n          true\n"
 	const anchor = "          ./scripts/gate.sh"
-	validate := func(workflow string) error {
+	classes := func(workflow string, ungated bool) error {
 		root := t.TempDir()
 		for rel, body := range map[string]string{"scripts/validate-repo.sh": "true\n", "scripts/ci/job-x.sh": "true\n", ".github/workflows/w.yml": workflow} {
 			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {
@@ -1184,24 +1231,26 @@ func TestLaneScriptsRejectsEvasions(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		got, err := metadatautil.LaneScripts(root)
+		gates, rest, err := metadatautil.LaneScriptClasses(root)
 		if err != nil {
 			return err
 		}
-		if !slices.Contains(got, "scripts/gate.sh") {
+		if !slices.Contains(gates, "scripts/gate.sh") && (!ungated || !slices.Contains(rest, "scripts/gate.sh")) {
 			return errors.New("scripts/gate.sh has no lane wiring")
 		}
 		return nil
 	}
+	validate := func(workflow string) error { return classes(workflow, false) }
 	if err := validate(head + anchor + "\n"); err != nil {
 		t.Fatalf("LaneScripts() on the wired step: %v", err)
 	}
 	// An unquoted heredoc joins a line that ends in \ to the next, and turns \\
 	// into one backslash that the child bash then joins the same way, so
-	// neither runs the gate.
+	// neither runs the gate. The child bash runs the gate where the reader does
+	// not follow its status, so the gate runs but does not count as gating.
 	for body, wired := range map[string]bool{"x=\\\\": false, "x=\\": false, "x=y": true} {
 		heredoc := "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          bash <<EOF\n          " + body + "\n          scripts/gate.sh\n          EOF\n"
-		if err := validate(heredoc); (err == nil) != wired {
+		if err := classes(heredoc, true); (err == nil) != wired {
 			t.Errorf("LaneScripts() on a heredoc step with %q: %v, want wired %v", body, err, wired)
 		}
 	}

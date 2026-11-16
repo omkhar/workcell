@@ -69,7 +69,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 	cutKey := longClaim[:100]
 	cutKey = cutKey[:strings.LastIndex(cutKey, " ")]
 	// The comment lines of a baseline name the rules it governs.
-	rules := "# Rules: missing-path escaping-path unwired-script unanchored-claim\n"
+	rules := "# Rules: missing-path escaping-path unwired-script ungated-script unanchored-claim\n"
 	cases := []struct {
 		name     string
 		doc      string
@@ -86,7 +86,10 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"unwired script", "See `scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
 		{"unwired dot-slash script", "See `./scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
 		{"wired by root variable", "See `scripts/orphan.sh` here.\n", laneRoot + "\n\"${ROOT_DIR}/scripts/orphan.sh\" --flag\n", "", "", ""},
-		{"wired after keyword", "See `scripts/orphan.sh` here.\n", "if ! ./scripts/orphan.sh; then exit 1; fi\n", "", "", ""},
+		{"wired after keyword", "See `scripts/orphan.sh` here.\n", "! ./scripts/orphan.sh\nscripts/gate.sh\n", "", "", "ungated-script"},
+		{"a condition runs but does not gate", "See `scripts/orphan.sh` here.\n", "if ! ./scripts/orphan.sh; then exit 1; fi\n", "", "", "ungated-script"},
+		{"a script under || true runs but does not gate", "See `scripts/orphan.sh` here.\n", "scripts/orphan.sh || true\n", "", "", "ungated-script"},
+		{"a last command gates", "See `scripts/orphan.sh` here.\n", "scripts/gate.sh\nscripts/orphan.sh\n", "", "", ""},
 		{"comment is not wiring", "See `scripts/orphan.sh` here.\n", "# scripts/orphan.sh is intentionally not run\n", "", "", "unwired-script"},
 		{"echo is not wiring", "See `scripts/orphan.sh` here.\n", "echo \"scripts/orphan.sh\"\n", "", "", "unwired-script"},
 		{"longer name is not wiring", "See `scripts/orphan.sh` here.\n", "scripts/orphan.sh.bak\n", "", "", "unwired-script"},
@@ -109,6 +112,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"symlinked parent directory", "See `internal/extdir/outside.txt` here.\n", "", "", "", "escaping-path"},
 		{"an info string closes no fence", "```\n```text\n```\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", "", ""},
+		{"a fence indented three spaces closes", "   ```bash\n   x\n   ```\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"a fence indented two spaces closes", "  ~~~\n  x\n  ~~~\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"a CRLF fence closes", "```\r\nx\r\n```\r\nSee `scripts/nope.sh` here.\r\n", "", "", "", "missing-path"},
 		{"a multiline code span", "See `\nscripts/nope.sh\n` here.\n", "", "", "", "missing-path"},
 		{"a code span does not cross a blank line", "stray `\n\nscripts/nope.sh` here.\n", "", "", "", ""},

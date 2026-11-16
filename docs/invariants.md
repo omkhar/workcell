@@ -369,13 +369,15 @@ descriptors.
 
 `validate-repo.sh`, a CI job script or a workflow must run a cited
 `scripts/*.sh` path as a command. Thus a doc cannot cite a gate that nothing
-runs. The check reads every command that a lane can run, so a command after
-`false &&` counts. A comment, a heredoc or an array member does not count, but
+runs. The check reads every command that a lane can run, so a script after
+`false &&` counts as run. A comment, a heredoc or an array member does not count, but
 a substitution in an unquoted heredoc runs, so it counts. A workflow path starts
 from the working directory of its step, and a `cd` before it moves that
 directory.
 
 A CI job script counts only when a step runs it by a path the check resolves.
+The step must run it whenever the step runs, so not behind `&&` or `||`.
+
 A step resolves no path when its `env`, at any level, sets `BASH_ENV`, `ENV`,
 `SHELLOPTS`, `BASHOPTS` or `PATH`, which picks the bash itself. The same holds
 for a `BASH_FUNC_` name or a name with `%%`, which bash imports as a function.
@@ -397,6 +399,19 @@ its value into the text before bash reads it. No step of a job with a
 A step or job whose `if` names no context and calls no status function, as
 `if: false` does, may never run, so it resolves no path. A workflow whose `on`
 lists no event, or only `workflow_dispatch`, resolves none either.
+
+A gate counts only where its failure fails the lane
+(`internal/metadatautil/lane_gates.go`). It must run under errexit, be the
+lane's last command, or run under `exec`. It must not run under `!`, in a
+condition, before `&&`, `||` or `&`, or in a pipe without pipefail. A call of a
+function must gate in the same way. A substitution gates only through a plain
+assignment that gates.
+
+A `set` or `shopt` that may turn errexit or pipefail off turns it off from
+there on. So does a `source` of a file other than the libraries. A step or job
+with `continue-on-error` gates nothing. A script that a lane runs only
+elsewhere is listed as run but not gating. A doc that cites it hits
+`ungated-script`.
 
 An `exit` or an `exec` of a program that always runs stops the check when any
 command follows it. So does a call, a `source` or an `eval` whose body or text
@@ -439,11 +454,10 @@ to win over a value that an earlier step writes to `GITHUB_ENV`. It does not
 work out an `if` that names a context, which may still never hold.
 
 The check does not model file writes either. So a step may put another `bash`
-on `PATH`, or rewrite a gate, before a later step runs it. Last, the check
-shows that a gate runs, not that its failure fails the lane, so a gate run
-behind `|| true` counts. The fail-open check
-(`internal/metadatautil/shellfailopen_check.go`) covers `|| true` only after
-`find`, `git`, `gh`, `docker` and `getent`.
+on `PATH`, or rewrite a gate, before a later step runs it. It does not follow a
+status that a lane saves and returns later, as through `PIPESTATUS` or `$?`, and
+it reads `if ! X; then exit 1; fi` as a condition. So a gate that either guards
+counts as run but not gating.
 
 A call stops the check when its body may exit with 0 before a `return` that
 always runs. A `return` in a branch or a loop does not count, since the body
