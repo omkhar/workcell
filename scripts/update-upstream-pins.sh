@@ -703,6 +703,27 @@ target_buildkit_image="${buildkit_track}@$(docker_image_digest "${buildkit_track
 target_qemu_tag="$(latest_qemu_tag)"
 target_qemu_image="tonistiigi/binfmt:${target_qemu_tag}@$(docker_image_digest "tonistiigi/binfmt:${target_qemu_tag}")"
 
+# Each image pin names its one reviewed repository on Docker Hub, with no
+# registry host or other prefix, a tag and a digest. check-pinned-inputs and
+# the toolchain scope guard hold the same rule, and this check runs before the
+# updater writes any file, so a moved track or an odd digest stops the refresh.
+require_image_pin() {
+  local LC_ALL=C
+  local value="$1"
+  local repository="$2"
+  local label="$3"
+  local rest="${value#"${repository}":}"
+  if [[ "${rest}" == "${value}" || ! "${rest}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}$ ]]; then
+    echo "${label} must be ${repository}:<tag>@sha256:<digest>, found ${value}" >&2
+    exit 1
+  fi
+}
+require_image_pin "${target_runtime_base}" node "runtime base image"
+require_image_pin "${target_validator_base}" node "validator base image"
+require_image_pin "${target_runtime_rust_toolchain_image}" rust "Rust toolchain image"
+require_image_pin "${target_buildkit_image}" moby/buildkit "BuildKit image"
+require_image_pin "${target_qemu_image}" tonistiigi/binfmt "QEMU binfmt image"
+
 provider_summary="$("${ROOT_DIR}/scripts/update-provider-pins.sh")"
 provider_plan_status=0
 provider_plan_json="$("${ROOT_DIR}/scripts/update-provider-pins.sh" --json)" || provider_plan_status=$?
