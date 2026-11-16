@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
 )
@@ -43,9 +44,10 @@ func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
 		"git fetch && printf x || true\n":                1, // the handler covers the whole && list
 		"( exec 1>/dev/null; ); git -C /missing fetch 2>&1\n(\nexec 1>/dev/null\ngit fetch 2>&1\n)\ngit gc 2>&1\nexec 1>/dev/null | cat; git gc 2>&1\n{ exec 1>/dev/null; }; git gc 2>&1\n":                             6, // a subshell or a left pipeline stage keeps its exec redirect to itself; a { } group does not
 		"builtin exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\nexec 3>/dev/null; exec 1>&3; git -C /missing fetch 2>&1\nexec 03>/dev/null; exec 01>&03; git -C /missing fetch 02>&01\ngit gc 02>/dev/null\n": 5, // builtin exec keeps no redirect; exec 1>&3 may reach a saved null
-		"while read -r f; do :; done < <(false) && cat <(true); wait \"$!\"\n": 2, // a later <( sets $!, so the wait no longer covers the loop
-		"out=$(printf '%s' \"$(git ls-files)\")\n":                             1, // the nested substitution owns the call
-		"x=$(y=$(git rev-parse HEAD); git ls-files)\n":                         2, // each substitution runs its own tool
+		"while read -r f; do :; done < <(false) && cat <(true); wait \"$!\"\n":                                                  2, // a later <( sets $!, so the wait no longer covers the loop
+		"out=$(printf '%s' \"$(git ls-files)\")\n":                                                                              1, // the nested substitution owns the call
+		"x=$(y=$(git rev-parse HEAD); git ls-files)\n":                                                                          2, // each substitution runs its own tool
+		"set -o pipefail\nyes | { cat | grep -q y; } || exit 1\nyes | while read -r l; do\n  cat | grep -q y\ndone || exit 1\n": 2, // a grep after a pipe inside a compound stage is counted once, at its own pipe
 		"exec 3>&1; exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\ngit gc 2>&1; echo done\ncommand -- exec 1>/dev/null; git gc 2>&1\n\\exec 2>/dev/null\nexec -- 1>/dev/null; git -C /missing fetch 2>&1; echo done\nFOO=bar exec -a x 2>/dev/null\nexec -afoo 2>/dev/null\nexec -cla x 2>/dev/null\n! exec 2>/dev/null\nif exec 2>/dev/null; then :; fi\ntime -p exec 2>/dev/null\n2>/dev/null exec\n1>/dev/null exec; git gc 2>&1\n": 17, // exec >/dev/null, after an adjacent exec, makes each later 2>&1 a dev-null use; command -- exec and \exec are exec too, and exec options or assignments keep the redirect
 	} {
 		findings, err = metadatautil.ShellFailOpenFindings(script)
@@ -208,12 +210,27 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"later command after eval in a substitution", "out=$(eval \"$cmd\"; true) || exit 1\n", "command-substitution"},
 		{"tool behind command --", "command -- git fetch || true\n", "or-true"},
 		{"tool behind command -p --", "command -p -- git fetch || true\n", "or-true"},
+		{"tool behind a long wrapper chain", "command -p " + strings.Repeat("-p ", 12) + "-- git fetch || true\n", "or-true"},
 		{"marker on a later command", "git fetch || true; printf '%s\\n' ok # fail-closed: output is harmless\n", "or-true"},
 		{"|| true behind a quote nested in a substitution", "x=\"$(getent passwd \"${uid}\" | cut -d: -f1 || true)\"\n", "or-true"},
 		{"pipefail set after the pipeline", "out=$(git ls-files | sort) || exit 1\nset -o pipefail\n", "command-substitution"},
 		{"pipefail cleared before the pipeline", "set -o pipefail\nset +o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
 		{"pipefail set in an untaken branch", "if false; then set -o pipefail; fi\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
-		{"pipefail set right of &&", "true && set -o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail set right of &&", "test -n \"$x\" && set -o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail set right of ||", "true || set -o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail set in a pipeline stage", "set -o pipefail | cat\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail set in a background job", "set -o pipefail &\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail a sourced library may clear", "set -o pipefail\nsource ./lib.sh\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail an eval of an expansion may clear", "set -o pipefail\neval \"$x\"\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail set again after a sourced library", "source ./lib.sh\nset -o pipefail\nout=$(git ls-files | sort) || exit 1\n", ""},
+		{"pipefail a computed command word may clear", "set -o pipefail\nc=set; \"$c\" +o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail a set of expanded words may clear", "set -o pipefail\nset -- +o pipefail; set \"$@\"\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail an expansion a [[ test negates is no command", "set -o pipefail\n[[ -n x && ! \"$y\" =~ z ]] || true\nout=$(git ls-files | sort) || exit 1\n", ""},
+		{"pipefail an expansion in an array assignment is no command", "set -o pipefail\na+=(-c \"$x\" -c \"$y=\")\nout=$(git ls-files | sort) || exit 1\n", ""},
+		{"pipefail a set of an expanded option may clear", "set -o pipefail\nset +o \"$o\"\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail set in a subshell after another command", "( :; set -o pipefail )\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail named after set --", "set -- -o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail named as an argument of echo", "echo set -o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
 		{"pipefail set in a function body", "f() {\n  set -o pipefail\n}\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
 		{"substitution opened after a quoted fragment", "out='a'$(\n  git ls-files; true\n) || exit 1\n", "command-substitution"},
 		{"substitution opened after an empty quote", "out=a\"\"$(\ngit ls-files\ntrue) || exit 1\n", "command-substitution"},
@@ -328,6 +345,23 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a loop that calls a wrapped function", "launch() { : & }\nwhile read -r f; do command launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"a script that sources a file may define the function", "source ./lib.sh\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"a loop that calls no function keeps the wait", "f() { :; }\nwhile read -r line; do printf '%s\\n' \"$line\"; done < <(find . -type f)\nwait \"$!\"\n", ""},
+		{"grep called by its path", "set -o pipefail\nyes | /usr/bin/grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"quoted or escaped grep", "set -o pipefail\nyes | 'grep' -q y || exit 1\nyes | \\grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"grep after an assignment or a redirection", "set -o pipefail\nyes | LC_ALL=C grep -q y || exit 1\nyes | 2>/dev/null grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"grep in a group stage", "set -o pipefail\nyes | { grep -q y; } || exit 1\n", "quiet-grep-pipe"},
+		{"quoted quiet option", "set -o pipefail\nyes | grep \"-q\" y || exit 1\n", "quiet-grep-pipe"},
+		{"quiet option after a 2>&1", "set -o pipefail\nyes | grep 2>&1 -q y || exit 1\n", "quiet-grep-pipe"},
+		{"abbreviated long quiet option", "set -o pipefail\nyes | grep --qui y || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep in a substitution", "set -o pipefail\nx=$(yes | grep -q y) || exit 1\n", "quiet-grep-pipe"},
+		{"grep after time", "set -o pipefail\nyes | time -p grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"grep in a subshell stage", "set -o pipefail\nyes | ( grep -q y ) || exit 1\n", "quiet-grep-pipe"},
+		{"grep in an attached subshell stage", "set -o pipefail\nyes | (grep -q y) || exit 1\n", "quiet-grep-pipe"},
+		{"grep in nested subshell stages", "set -o pipefail\nyes | ( (grep -q y) ) || exit 1\n", "quiet-grep-pipe"},
+		{"an arithmetic command is no grep stage", "set -o pipefail\nyes | ((grep -q y)) || exit 1\n", ""},
+		{"quiet grep after a quoted substitution", "set -o pipefail\nprintf '%s\\n' \"$(git status)\" | grep -q . || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep after a quoted backtick substitution", "set -o pipefail\nprintf '%s\\n' \"`git status`\" | grep -q . || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep with a quoted substitution pattern", "set -o pipefail\ndocker ps | grep -q \"$(hostname)\" || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep inside a quoted substitution", "set -o pipefail\nx=\"$(yes | grep -q y)\" || exit 1\n", "quiet-grep-pipe"},
 		{"a loop that calls a function with a quoted substitution", "launch() { : & }\nwhile read -r f; do launch \"$(basename \"$f\")\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"a loop that evals a quoted substitution", "while read -r f; do eval \"$(printf '%s' \"$f\")\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"a script that sources a quoted substitution path", "source \"$(dirname \"$0\")/lib.sh\"\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
@@ -345,10 +379,88 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a BASH_ALIASES element is an alias", "shopt -s expand_aliases\nBASH_ALIASES[l]='sleep 1 &'\nwhile read -r f; do l; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"a mapfile callback runs text as eval does", "while read -r f; do mapfile -C 'sleep 1 &' -c1 a <<<x; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"a lowercase exit trap keeps the wait", "trap 'rm -f x' exit\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", ""},
+		{"quiet grep as an if test stage", "set -o pipefail\nyes | if grep -q y; then :; fi || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set after a leading redirection", "2>/dev/null set -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set after a redirection and its target", "2> /dev/null set -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"set of an option an expansion spells", "set -o $o\nyes | grep y >/dev/null || exit 1\n", "quiet-grep-pipe"},
+		{"set of an option cluster an expansion spells", "set -$x\n", "quiet-grep-pipe"},
+		{"shopt of an option an expansion spells", "shopt -so $o\n", "quiet-grep-pipe"},
+		{"set of a first operand an expansion spells", "set \"$x\"\n", "quiet-grep-pipe"},
+		{"set of parameters after --", "set -- \"$x\" \"$@\"\n", ""},
+		{"set of an expansion after an option", "set -e \"$x\"\n", "quiet-grep-pipe"},
+		{"pipefail set eight evals deep", strings.Repeat("eval ", 8) + "set -o pipefail\n", ""},
+		{"pipefail set nine evals deep", strings.Repeat("eval ", 9) + "set -o pipefail\n", "quiet-grep-pipe"},
+		{"eval text past the reader's budget", "eval \"" + strings.Repeat("a\n", 20000) + "b\"\n", "quiet-grep-pipe"},
+		// pipefail makes a quiet grep stage unsafe, so a set that may turn it
+		// on counts wherever it may run, and only one certain to run turns it
+		// off: the quiet grep after a set that never runs is still counted.
+		{"pipefail cleared in an untaken branch", "set -o pipefail\nif false; then set +o pipefail; fi\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a called function", "f() { set -o pipefail; }\nf\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set on a function body's line", "f() {\n  set -o pipefail\n}\nf\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a group", "{ set -o pipefail; }\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set before a quiet grep in one group", "{ set -o pipefail; yes | grep -q y || exit 1; }\n", "quiet-grep-pipe"},
+		{"pipefail set in an if", "if true; then set -o pipefail; fi\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a case arm", "case x in x) set -o pipefail;; esac\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a for body", "for _ in 1; do set -o pipefail; done\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set in a subshell", "(\n  set -o pipefail\n  yes | grep -q y || exit 1\n)\n", "quiet-grep-pipe"},
+		{"pipefail set by a DEBUG trap", "trap 'set -o pipefail' DEBUG\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by a mapfile callback", "mapfile -C 'set -o pipefail #' -c 1 a </dev/null\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by an eval of a substitution", "eval \"$(echo set -o pipefail)\"\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by an eval of an expansion", "x='; set -o pipefail'\neval echo $x\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by a computed command word", "s=set\n$s -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set by a sourced library", "source ./lib.sh\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set through an alias", "shopt -s expand_aliases\nalias s=set\ns -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail an alias may clear", "set -o pipefail\nalias s=set\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"pipefail set and cleared at the top level", "if true; then set -o pipefail; fi\nset +o pipefail\nyes | grep -q y || exit 1\n", ""},
+		{"quiet grep in a function stage", "set -o pipefail\ng() { grep -q y; }\nyes | g || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep in a function a stage calls", "set -o pipefail\ng() { grep -q y; }\nh() {\n  g\n}\nyes | h || exit 1\n", "quiet-grep-pipe"},
+		{"function bodies past the quiet grep reader's budget", "set -o pipefail\n" + strings.Repeat("f() {\n", 2000) + strings.Repeat("}\n", 2000) + "yes | g || exit 1\n", "quiet-grep-pipe"},
+		{"function stage with no quiet grep", "set -o pipefail\ng() { grep y >/dev/null; }\nyes | g || exit 1\n", ""},
+		{"quiet grep as a while test stage", "set -o pipefail\nyes | while grep -q y; do break; done || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep after a named descriptor redirection", "set -o pipefail\nyes | {fd}>/dev/null grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"xargs reads the pipe, not grep", "set -o pipefail\nyes | head -1 | xargs grep -q y || exit 1\n", ""},
+		{"pipefail after another set -o option", "set -o errexit -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail by shopt -so", "shopt -so pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail by shopt -s -o", "shopt -s -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail turned off by shopt -uo", "set -o pipefail\nshopt -uo pipefail\nyes | grep -q y || exit 1\n", ""},
+		{"grep in a middle stage", "set -o pipefail\nyes | grep -q y | cat || exit 1\n", "quiet-grep-pipe"},
+		{"-q as the operand of a separate -A", "set -o pipefail\nyes | grep -A -q y >/dev/null || exit 1\n", ""},
 		{"a loop that runs a command a variable names", "while read -r f; do \"$f\"; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"a DEBUG trap may start a job in the loop", "trap 'sleep 1 &' DEBUG\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
 		{"an EXIT trap keeps the wait", "trap 'rm -f x' EXIT\nwhile read -r f; do :; done < <(find . -type f)\nwait \"$!\"\n", ""},
+		{"-q as the operand of a separate -e", "set -o pipefail\nyes | grep -e -q >/dev/null || exit 1\n", ""},
+		{"-q as the operand of --regexp", "set -o pipefail\nyes | grep --regexp -q >/dev/null || exit 1\n", ""},
+		{"-q as the operand of an abbreviated --regexp", "set -o pipefail\nyes | grep --reg -q >/dev/null || exit 1\n", ""},
+		{"-q as the operand of a cluster that ends in -e", "set -o pipefail\nyes | grep -ie -q >/dev/null || exit 1\n", ""},
+		{"-q as the operand of --file and -m", "set -o pipefail\nyes | grep --file -q -m -q y >/dev/null || exit 1\n", ""},
+		{"a substitution that closes before -q", "set -o pipefail\nx=\"$(yes | grep y)\" -q || exit 1\n", ""},
+		{"pipefail by builtin set", "builtin set -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail by command set", "command set -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail by an escaped set", "\\set -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set right of true &&", "true && set -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail by shopt -sqo", "shopt -sqo pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail by set -euo", "set -euo pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail set after another command on its line", "cd /; set -o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"set +o pipefail as an argument of :", "set -o pipefail\n: set +o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"shopt -uo pipefail as an argument of echo", "set -o pipefail\necho shopt -uo pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail turned off by builtin set", "set -o pipefail\nbuiltin set +o pipefail\nyes | grep -q y || exit 1\n", ""},
+		{"pipefail turned off right of a command", "set -o pipefail\ntest -n \"$x\" && set +o pipefail\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"pipefail turned off by eval", "set -o pipefail\neval 'set +o pipefail'\nyes | grep -q y || exit 1\n", ""},
+		{"pipefail turned off on a group's later line", "set -o pipefail\n{\n  echo x\n  set +o pipefail\n}\nyes | grep -q y || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep in a case stage", "set -o pipefail\nyes | case y in y) grep -q y;; esac || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep in a later case arm", "set -o pipefail\nyes | case $x in n) true;; *) grep -q y;; esac || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep in a for stage", "set -o pipefail\nyes | for i in 1; do grep -q y; done || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep later in a group stage", "set -o pipefail\nyes | { true; grep -q y; } || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep later in a subshell stage", "set -o pipefail\nyes | (true; grep -q y) || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep on a loop stage's later line", "set -o pipefail\nyes | while read -r l; do\n  grep -q y\ndone || exit 1\n", "quiet-grep-pipe"},
+		{"quiet grep after a compound stage closes", "set -o pipefail\nyes | { true; }; grep -q y f || exit 1\n", ""},
+		{"quiet grep after a case stage closes", "set -o pipefail\nyes | case y in y) true;; esac; grep -q y f || exit 1\n", ""},
+		{"quiet grep after a loop stage closes", "set -o pipefail\nyes | while read -r l; do\n  true\ndone\ngrep -q y f || exit 1\n", ""},
+		{"quiet grep after a spaced named descriptor redirection", "set -o pipefail\nyes | {fd}> /dev/null grep -q y || exit 1\n", "quiet-grep-pipe"},
 		{"a function defined past the definition reader's bound", "x=\"" + strings.Repeat("a \\\n", 20000) + "\"\nlaunch() { : & }\nwhile read -r f; do launch; done < <(find . -type f)\nwait \"$!\"\n", "process-substitution"},
+		{"substitutions nested past the reader's bound", "x=\"" + strings.Repeat("$(printf %s \"", 9) + strings.Repeat("\")", 9) + "\"\n", "command-substitution"},
+		{"substitutions nested to the reader's bound", "x=\"" + strings.Repeat("$(printf %s \"", 8) + strings.Repeat("\")", 8) + "\"\n", ""},
+		{"substitutions past the reader's bound", "x=\"" + strings.Repeat("$(printf %s) ", 400) + "\"\n", "command-substitution"},
 		{"marked quiet grep", "set -o pipefail\n# fail-closed: find stops after one line\nfind . -print -quit | grep -q . || exit 1\n", ""},
 	}
 	for _, testCase := range cases {
@@ -368,6 +480,23 @@ func TestShellFailOpenFindings(t *testing.T) {
 				t.Fatalf("findings = %v, want rule %s", findings, testCase.rule)
 			}
 		})
+	}
+}
+
+// A quote that opens inside a substitution which runs past its line, as an
+// awk program inside "$(awk '...')" does, keeps the next line inside the
+// quote, so a " in that program text neither closes the substitution's quote
+// nor merges the commands after it into one statement.
+func TestShellFailOpenFindingsCarriesAQuoteOpenedInASubstitution(t *testing.T) {
+	t.Parallel()
+	script := "x=\"$(awk '\n  { sub(/}\"$/, \"\", v) }\n' f)\"\ny=\"$(\"$R\"/s.sh)\"\n"
+	findings, err := metadatautil.ShellFailOpenFindings(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []metadatautil.ShellFailOpenFinding{{Rule: "command-substitution", Line: 4}}
+	if !slices.Equal(findings, want) {
+		t.Fatalf("findings = %v, want %v", findings, want)
 	}
 }
 
@@ -589,5 +718,51 @@ func TestCheckShellFailOpenReadsTheShebangInterpreter(t *testing.T) {
 		if err := metadatautil.CheckShellFailOpen(root); (err != nil) != shell {
 			t.Errorf("CheckShellFailOpen with %q = %v, want a hit: %v", first, err, shell)
 		}
+	}
+}
+
+// The pipefail reader shares one budget linear in a command's length across
+// every eval it reads, at most eight deep, so a chain of evals costs no more
+// than a fixed multiple of its text. Each shape's time for four times the text
+// may not exceed eight times its time, in three attempts in a row.
+func TestShellFailOpenFindingsWorkGrowsLinearly(t *testing.T) {
+	shapes := map[string]func(n int) string{
+		"command eval": func(n int) string { return strings.Repeat("command eval ", n) + "true\n" },
+		"then eval":    func(n int) string { return strings.Repeat("if true; then eval ", n) + "true\n" },
+		"nested substitutions": func(n int) string {
+			return "x=" + strings.Repeat("$(git ", n) + strings.Repeat(")", n) + " || exit 1\n"
+		},
+		"quoted nested substitutions": func(n int) string {
+			return "x=\"" + strings.Repeat("$(a \"", n) + strings.Repeat("\")", n) + "\"\n"
+		},
+		"substitutions": func(n int) string { return "x=" + strings.Repeat("$(git a) ", n) + "|| exit 1\n" },
+		"substitutions eight deep": func(n int) string {
+			return "x=" + strings.Repeat("$(git $(a $(a $(a $(a $(a $(a $(a )))))))) ", n) + "|| exit 1\n"
+		},
+	}
+	for name, shape := range shapes {
+		t.Run(name, func(t *testing.T) {
+			measure := func(n int) time.Duration {
+				script := "#!/bin/bash\n" + shape(n)
+				best := time.Duration(1 << 62)
+				for range 3 {
+					start := time.Now()
+					_, _ = metadatautil.ShellFailOpenFindings(script)
+					best = min(best, time.Since(start))
+				}
+				return best
+			}
+			n := 64
+			for ; measure(n) < 20*time.Millisecond && len(shape(4*n)) < 1<<19; n *= 2 {
+			}
+			for range 3 {
+				small, large := measure(n), measure(4*n)
+				if large <= 8*small {
+					return
+				}
+				t.Logf("ShellFailOpenFindings() took %v at %d and %v at %d", small, n, large, 4*n)
+			}
+			t.Fatalf("ShellFailOpenFindings() took more than eight times as long for four times the text in three attempts")
+		})
 	}
 }
