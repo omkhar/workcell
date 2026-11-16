@@ -100,8 +100,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"wired in a case branch", "See `scripts/orphan.sh` here.\n", "case x in\n  y) scripts/orphan.sh ;;\nesac\n", "", "", ""},
 		{"four-space tilde is not a fence", "    ~~~\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"tab-indented backticks are not a fence", "\t```\nSee [x](missing.md).\n", "", "", "", "broken link"},
-		{"symlink to outside file", "See `scripts/ext.sh` here.\n", "", "", "", "escaping-path"},
-		{"symlinked parent directory", "See `scripts/extdir/outside.txt` here.\n", "", "", "", "escaping-path"},
+		{"symlink to outside file", "See `internal/ext.sh` here.\n", "", "", "", "escaping-path"},
+		{"symlinked parent directory", "See `internal/extdir/outside.txt` here.\n", "", "", "", "escaping-path"},
 		{"an info string closes no fence", "```\n```text\n```\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", "", ""},
 		{"a CRLF fence closes", "```\r\nx\r\n```\r\nSee `scripts/nope.sh` here.\r\n", "", "", "", "missing-path"},
@@ -142,7 +142,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"baseline growth", "See `scripts/nope.sh` here.\nSee `scripts/nope2.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tmissing-path\tscripts/nope2.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "not at the merge base"},
 		{"baseline replacement", "See `scripts/nope2.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope2.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "not at the merge base"},
 		{"undeclared rule", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "", "rule missing-path is not named"},
-		{"new rule rows need no base", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tescaping-path\tscripts/ext.sh\tx\n", ""},
+		{"new rule rows need no base", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tescaping-path\tinternal/ext.sh\tx\n", ""},
 		{"baseline shrink", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tmissing-path\tscripts/nope2.sh\tx\n", ""},
 	}
 	for _, tc := range cases {
@@ -164,8 +164,12 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 			// A real file outside the fixture repository, which a traversal
 			// span such as scripts/../../outside.txt reaches.
 			writeFixtureFile(t, filepath.Dir(dir), "outside.txt", "x\n")
-			// Symlinks that lead out of the fixture with no .. component.
-			for link, target := range map[string]string{"scripts/ext.sh": "outside.txt", "scripts/extdir": ""} {
+			// Symlinks that lead out of the fixture with no .. component,
+			// kept out of scripts/, where the entry guard refuses them.
+			if err := os.MkdirAll(filepath.Join(dir, "internal"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for link, target := range map[string]string{"internal/ext.sh": "outside.txt", "internal/extdir": ""} {
 				if err := os.Symlink(filepath.Join(filepath.Dir(dir), target), filepath.Join(dir, link)); err != nil {
 					t.Fatal(err)
 				}
