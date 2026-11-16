@@ -243,9 +243,11 @@ COPY --chmod=0555 internal/injectionpolicy ./internal/injectionpolicy
 COPY --chmod=0555 internal/rootio ./internal/rootio
 COPY --chmod=0555 internal/tomlsubset ./internal/tomlsubset
 COPY --chmod=0555 cmd/workcell-egress-proxy ./cmd/workcell-egress-proxy
+COPY --chmod=0555 internal/providerpolicy ./internal/providerpolicy
+COPY --chmod=0555 cmd/workcell-provider-policy ./cmd/workcell-provider-policy
 
-RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server ./cmd/workcell-egress-proxy \
-  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy
+RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server ./cmd/workcell-egress-proxy ./cmd/workcell-provider-policy \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /out/workcell-provider-policy
 
 FROM runtime-base AS provider-builder
 
@@ -609,7 +611,6 @@ COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
 COPY runtime/container/generated-adapters.sh /usr/local/libexec/workcell/generated-adapters.sh
 COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
 COPY runtime/container/detached-stdin-wrapper.sh /usr/local/libexec/workcell/detached-stdin-wrapper.sh
-COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
 COPY runtime/container/home-control-plane.sh /usr/local/libexec/workcell/home-control-plane.sh
 COPY runtime/container/provider-wrapper.sh /usr/local/libexec/workcell/provider-wrapper.sh
 COPY runtime/container/runtime-user.sh /usr/local/libexec/workcell/runtime-user.sh
@@ -637,7 +638,6 @@ RUN mkdir -p /etc/claude-code \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/node-wrapper.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
-    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/provider-wrapper.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/libexec/workcell/runtime-user.sh \
@@ -650,7 +650,6 @@ RUN mkdir -p /etc/claude-code \
     /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
-    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/runtime-user.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
@@ -720,7 +719,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
-    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/bin/workcell-entrypoint \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
@@ -739,7 +737,7 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
       /usr/bin/sudo \
       -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
-COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /usr/local/libexec/workcell/
+COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /out/workcell-provider-policy /usr/local/libexec/workcell/
 
 WORKDIR /workspace
 

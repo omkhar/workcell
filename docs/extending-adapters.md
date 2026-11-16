@@ -13,9 +13,11 @@ from it, and `scripts/generate-adapters-providerid.sh` generates
 `scripts/generate-adapters-runtime-shell.sh` generates
 `runtime/container/generated-adapters.sh`. The fifth generator writes
 `runtime/container/rust/src/generated_targets.rs`, the provider rows of the
-Rust launcher table.
+Rust launcher table. The sixth generator writes
+`internal/providerpolicy/adapters_gen.go`, the tiers and the uncertified
+`[flags]` lists that the runtime provider policy reads.
 
-Run all five generators after a manifest change. A registry change is only one
+Run all six generators after a manifest change. A registry change is only one
 part of an adapter change. Runtime dispatch, policy, seed logic, validation,
 and documents must change together.
 
@@ -28,7 +30,7 @@ In `adapters/<provider>/adapter.toml`:
 1. Add a `[credentials.<key>]` table.
 2. Set its `container_path` under `/opt/workcell/host-inputs/credentials/`.
 3. Add its provider-home destination to `[home] reserved_targets`.
-4. Run the five `scripts/generate-adapters-*.sh` generators, and commit the
+4. Run the six `scripts/generate-adapters-*.sh` generators, and commit the
    generated files. The generated-artifact check fails when a committed file
    is stale.
 
@@ -114,7 +116,7 @@ For a new provider:
    outside `AllProviders`.
 3. When the adapter is ready, change the tier. Add the binary, install method,
    credential keys, paths, reserved targets, and egress endpoints to the
-   manifest. Then run the five `scripts/generate-adapters-*.sh` generators. Do
+   manifest. Then run the six `scripts/generate-adapters-*.sh` generators. Do
    not edit `CredentialMetadataProviders`, `AllProviders`, the registry rows,
    `provider_endpoints`, `workcell_supported_agent`, or
    `PROVIDER_LAUNCH_TARGETS` by hand.
@@ -142,8 +144,7 @@ closed.
 
 ### 3. Reject unsafe provider options
 
-Add or extend the provider checks in
-`runtime/container/provider-policy.sh`. Reject flags and subcommands that can
+Add or extend the provider checks in `internal/providerpolicy`. Reject flags and subcommands that can
 change instructions, tools, MCP configuration, or permissions. Also reject
 options that change sandbox posture or remote control outside Workcell policy.
 
@@ -156,10 +157,9 @@ list (see `adapters/README.md`). Put each other top-level command in
 `other_commands`. Run `scripts/check-flag-inventory.sh --write` to create
 `tests/fixtures/flags/<provider>.txt`.
 
-An uncertified adapter (`tier = "uncertified"`) has no reviewed
-`reject_unsafe_<provider>_args` function. For this adapter,
-`reject_manifest_args` in `runtime/container/provider-policy.sh` is the
-argument policy:
+An uncertified adapter (`tier = "uncertified"`) has no reviewed policy
+function. For this adapter, `ManifestArgs` in
+`internal/providerpolicy/providerpolicy.go` is the argument policy:
 
 - The manifest must have a `[flags]` `allow` list that is not empty.
 - An option passes only when `allow` contains it. The policy compares the text
@@ -170,9 +170,8 @@ argument policy:
 - A provider without a reviewed function and without the uncertified tier
   fails closed (`internal/adapters/uncertified_test.go`).
 
-The generator writes the `[flags]` lists of each uncertified adapter to
-`runtime/container/generated-adapters.sh` (`workcell_manifest_flags`), with the
-tier of each adapter (`workcell_adapter_tier`).
+The sixth generator writes the `[flags]` lists of each uncertified adapter,
+with the tier of each adapter, to `internal/providerpolicy/adapters_gen.go`.
 
 ### 4. Build the managed control plane
 
