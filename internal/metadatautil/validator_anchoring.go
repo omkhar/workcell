@@ -157,7 +157,7 @@ func matchIdentity(function string, call ast.Node) string {
 }
 
 // TextMatchingFunctions returns the function, as Name or Type.Name, and the
-// identity of each strings or bytes Contains, Count, HasPrefix or Index call, or regexp
+// identity of each strings or bytes Contains, Count, Cut, HasPrefix, HasSuffix or Index call, or regexp
 // call, in one package's sources keyed by file name. An import alias, a dot
 // import or a function value such as contains := strings.Contains hides none;
 // the value itself also counts where it is assigned, passed or returned.
@@ -346,8 +346,8 @@ func calleeName(callee ast.Expr) (string, string) {
 func matchesText(pkg, name string) bool {
 	switch pkg {
 	case "strings", "bytes":
-		return strings.HasPrefix(name, "Contains") || name == "Count" || name == "HasPrefix" ||
-			strings.HasPrefix(name, "Index") || strings.HasPrefix(name, "LastIndex")
+		return strings.HasPrefix(name, "Contains") || name == "Count" || name == "HasPrefix" || name == "HasSuffix" ||
+			strings.HasPrefix(name, "Cut") || strings.HasPrefix(name, "Index") || strings.HasPrefix(name, "LastIndex")
 	case "regexp":
 		return true
 	case "filepath", "path", "slices", "maps":
