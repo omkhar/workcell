@@ -335,16 +335,19 @@ check trusts that path by its name alone, since it cannot read what the
 runner holds there. The new shell runs the script from its first line, so
 each later command still runs.
 
-The `exec` must stand in a function that first runs
-`((BASH_VERSINFO[0] >= 4)) && return 0` outside any branch or loop. So the
-`exec` runs only under an old bash, and the new shell returns at that line.
-An `exec` in the script's own body has no `return` to guard it, so it ends
-the lane.
+The `exec` must stand in a function that the script and its libraries
+define once. That function must first run
+`((BASH_VERSINFO[0] >= 4)) && return 0` as a list of its own. The line takes
+no redirection and stands outside any branch or loop. Under bash 4 or newer
+the function returns there, so the `exec` runs only under an older bash. An
+`exec` in the script's own body has no `return` to guard it, so it ends the
+lane.
 
 This counts only where `$0`, the arguments and the directory stay as they
 were. No `cd`, `shift`, `set` of the parameters, `eval`, `trap`, call of a
 function or `BASH_ARGV0` may come first. The script must call the function
-as `f "$@"` at its top level and name it nowhere else. The script word may also be a variable whose every write is `"$0"`, or
+as `f "$@"` at its top level and name it nowhere else. The script word may
+also be a variable whose every write is `"$0"`, or
 `"${ROOT_DIR}/scripts/${0##*/}"` for a script in `scripts/`. A step's text
 never runs itself again this way, since a new bash does not take the options
 of the step's shell.
@@ -421,11 +424,13 @@ it holds no unquoted expansion, brace or pattern, and no `@`. A branch that an
 argument selects runs.
 
 A second `case` on `$1`, a `shift` outside a branch or a `set` of the
-parameters makes every branch run. A `set` sets them with any operand but an
-option, as `-` and `--` are, even right after `-o`: `set -o -- x` does. Only
-a lower-case word after `-o` reads as the option's name. So does a step that runs the script through
-`xargs`, `find` or `env`, since the check cannot pair those arguments with the
-step's text.
+parameters makes every branch run. So does a step that runs the script
+through `xargs`, `find` or `env`, since the check cannot pair those arguments
+with the step's text.
+
+A `set` sets the parameters with any operand but an option, as `-` and `--`
+are, even right after `-o`: `set -o -- x` does. Only a lower-case word after
+`-o` reads as the option's name.
 
 Under any other subject every branch counts as running, as under a literal
 word, `$LINENO` or a function's `$1`. So does every branch of a `case` that an
