@@ -150,7 +150,9 @@ internal/metadatautil	commandName	86476538	unreviewed debt: review the subject, 
 internal/metadatautil	commandWords	89820ff5,a3f98e42,f129b634	the match drops the leading control keywords and a case pattern from the parsed argv words of one command
 internal/metadatautil	countCalls	8a596b86,ca8a38dc	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe11386	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	definedFunctionNames	145c8632,5bf52d3c	the checks read shellWords words of one command for a definition header, a reserved word or a case pattern; they parse words, not free text
+internal/metadatautil	readCommand	80d7a496,eda3ff46	the checks read shellWords words of one command for the function keyword, an eval or a trap; they parse words, not free text
+internal/metadatautil	leadsCommand	a4b7742c,022f87b2,f2b3a754	the checks read shellWords words before one word for a redirection, a reserved word, a prefix word, an assignment or an option; they parse words, not free text
+internal/metadatautil	shellRedirectionWord	733a776c	the check reads the unquoted syntax of one shellWords word for a redirection operator; it parses a word, not free text
 internal/metadatautil	definedName	0f1edc2e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	docClaimRule	3ac775b1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	dockerPinnedInputValidator.aptBrokerBuilderStage	174cd5ff	unreviewed debt: review the subject, then port or justify
@@ -172,7 +174,7 @@ internal/metadatautil	fileExemptsPortability	6c6641e7	unreviewed debt: review th
 internal/metadatautil	filterVerificationPaths	3c90a3bd	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	flagFixtureStampRE	1eb67864	the pattern reads the one version stamp line of a reviewed flag fixture
 internal/metadatautil	flattenSubstitutions	06747006,0931674b,4c46065b,7a000647,7ba95feb,be0aacca	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	flattenedCommands	0639a974,1643c766,22efc51f,3fa18951,571812cf,69ddf134,7da37412,93987f5c,c000ee9c,c246b162,e72fa7b5,e72fa7b5	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	readCommands	01ff8cc7,0980b463,1cac75d1,76463688,76463688,8432ac3d,9989ea1a,a7fe05a6,b107ac7f,ca694816,d9729561,fcf39dce	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	forwards	b157cc56	the pattern tests whether one parsed command word is a positional parameter or an array expansion
 internal/metadatautil	functionDefinition	3504f8e9,f3e2f47e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	functionScopedMatches	063efee0,2282fb4d,8151ca87,cb6c1dce	unreviewed debt: review the subject, then port or justify

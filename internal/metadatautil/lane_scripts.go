@@ -113,7 +113,11 @@ func LaneScripts(rootDir string) ([]string, error) {
 			texts, read[library.path] = append(texts, library.text), true
 		}
 		for _, text := range texts {
-			if name := shadowingFunction(text); name != "" {
+			name, complete := shadowingFunction(text)
+			if !complete {
+				return nil, fmt.Errorf("lane wiring is unreadable: a lane nests eval or trap text more than eight deep, or holds more text than this reader parses")
+			}
+			if name != "" {
 				return nil, fmt.Errorf("lane wiring is unreadable: a lane defines a function named %q, which bash calls instead of the program", name)
 			}
 			if namesShellVariable(text, laneHashTables.MatchString) {
@@ -427,15 +431,17 @@ func braceVariants(text, syntax string) (variants []string, opaque bool) {
 // slash, which bash calls in place of the file the name spells. The shared
 // definedFunctionNames reads the names, so a nested definition, one in an if
 // or case arm, one spelled name ( ), one with a ( ) body and one in the
-// literal text of an eval all count.
-func shadowingFunction(text string) string {
-	for _, defined := range definedFunctionNames(text) {
+// literal text of an eval or a trap all count. complete is false when the
+// reader stopped short of the whole text.
+func shadowingFunction(text string) (shadows string, complete bool) {
+	names, complete := definedFunctionNames(text)
+	for _, defined := range names {
 		name := commandName(defined)
 		if _, wrapper := commandWrappers[name]; wrapper || strings.Contains(defined, "/") || slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh", "trap", "eval"}, name) {
-			return defined
+			return defined, complete
 		}
 	}
-	return ""
+	return "", complete
 }
 
 // laneSource is a source of a fixed repository path, whose text this check reads as a lane of its own when it is one.
