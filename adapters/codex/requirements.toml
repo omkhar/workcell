@@ -20,7 +20,7 @@ code_mode_host = true
 # Kept in lockstep with .codex/config.toml and managed_config.toml: pin the
 # 0.143+ plugin/marketplace feature flags off so the managed baseline cannot
 # fetch/install remote plugins or share them (defense in depth for the plugin
-# subcommand fence in runtime/container/provider-policy.sh).
+# subcommand fence in internal/providerpolicy/codex.go).
 plugins = false
 plugin_sharing = false
 remote_plugin = false

@@ -6,15 +6,22 @@ package adapters
 import (
 	"bytes"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omkhar/workcell/internal/providerpolicy"
 )
 
 // loadUncertifiedFixture returns the repository manifests plus the
@@ -31,34 +38,43 @@ func loadUncertifiedFixture(t *testing.T) []Manifest {
 	return append(loadRepoManifests(t), fixture...)
 }
 
-// runRuntimePolicy sources the runtime shell rendered from manifests and
-// runtime/container/provider-policy.sh, then runs fn with args. It returns the
-// exit code and stderr.
-func runRuntimePolicy(t *testing.T, manifests []Manifest, fn string, args ...string) (int, string) {
+// runRuntimePolicy runs the runtime provider policy over the policy data that
+// the provider-policy gen target renders from manifests. Kind "manifest" runs
+// providerpolicy.ManifestArgs with args[0] as the adapter id, and kind
+// "validate" runs providerpolicy.ValidateCommand, the entrypoint check, with
+// args[0] as the expected command. It returns the exit code and stderr that
+// workcell-provider-policy gives for the call. The session is empty, so
+// CallerIsPID1 is false: that field is the binary's os.Getppid() == 1, the
+// exec'd-binary equivalent of the shell policy's $$ == 1 check, and
+// breakglass never applies here.
+func runRuntimePolicy(t *testing.T, manifests []Manifest, kind string, args ...string) (int, string) {
 	t.Helper()
-	rendered, err := RenderRuntimeShell(manifests)
+	data := map[string]providerpolicy.Adapter{}
+	for _, m := range manifests {
+		switch m.Tier {
+		case "certified":
+			data[m.ID] = providerpolicy.Adapter{Tier: m.Tier}
+		case "uncertified":
+			data[m.ID] = providerpolicy.Adapter{Tier: m.Tier, Allow: m.Flags.Allow, Deny: m.Flags.Deny, OtherCommands: m.Flags.OtherCommands}
+		}
+	}
+	var err error
+	switch kind {
+	case "manifest":
+		err = providerpolicy.ManifestArgs(args[0], args[1:], data)
+	case "validate":
+		err = providerpolicy.ValidateCommand(args[0], args[1:], providerpolicy.Session{}, data)
+	default:
+		t.Fatalf("unknown policy kind %q", kind)
+	}
 	if err != nil {
-		t.Fatal(err)
+		return 2, err.Error() + "\n"
 	}
-	generated := filepath.Join(t.TempDir(), "generated-adapters.sh")
-	if err := os.WriteFile(generated, rendered, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	const script = `source "$1"; source "$2"; fn="$3"; shift 3; "${fn}" "$@"`
-	cmd := exec.Command("bash", append([]string{"--noprofile", "--norc", "-c", script, "bash", generated, filepath.Join(repoRoot, "runtime", "container", "provider-policy.sh"), fn}, args...)...)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) {
-		t.Fatal(err)
-	}
-	return cmd.ProcessState.ExitCode(), stderr.String()
+	return 0, ""
 }
 
 // TestRejectManifestArgsAllowsOnlyTheManifestAllowlist runs provider args of
-// the uncertified fixture through reject_manifest_args: an option passes only
+// the uncertified fixture through the manifest policy: an option passes only
 // when [flags].allow names it, and a word that names other_commands fails.
 func TestRejectManifestArgsAllowsOnlyTheManifestAllowlist(t *testing.T) {
 	manifests := loadUncertifiedFixture(t)
@@ -85,13 +101,13 @@ func TestRejectManifestArgsAllowsOnlyTheManifestAllowlist(t *testing.T) {
 		{[]string{"serve"}, "Workcell blocked a zz-fixture command that its manifest does not allow: serve"},
 		{[]string{"--model", "mcp"}, "command that its manifest does not allow: mcp"},
 	} {
-		code, stderr := runRuntimePolicy(t, manifests, "reject_manifest_args", append([]string{"zz-fixture"}, tc.args...)...)
+		code, stderr := runRuntimePolicy(t, manifests, "manifest", append([]string{"zz-fixture"}, tc.args...)...)
 		if tc.want == "" {
 			if code != 0 {
-				t.Errorf("reject_manifest_args %q exited %d, want 0: %s", tc.args, code, stderr)
+				t.Errorf("manifest policy %q exited %d, want 0: %s", tc.args, code, stderr)
 			}
 		} else if code != 2 || !strings.Contains(stderr, tc.want) {
-			t.Errorf("reject_manifest_args %q exited %d with %q, want exit 2 with %q", tc.args, code, stderr, tc.want)
+			t.Errorf("manifest policy %q exited %d with %q, want exit 2 with %q", tc.args, code, stderr, tc.want)
 		}
 	}
 }
@@ -106,65 +122,123 @@ func TestRejectManifestArgsFailsClosed(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"reject_manifest_args", []string{"codex"}, "Workcell has no manifest [flags] allow list for adapter: codex"},
-		{"reject_manifest_args", []string{"no-such-agent", "--help"}, "no manifest [flags] allow list for adapter: no-such-agent"},
-		{"validate_command_args", []string{"no-such-agent", "no-such-agent", "--help"}, "Workcell has no provider policy for: no-such-agent"},
-		{"validate_command_args", []string{"zz-fixture", "zz-fixture", "--yolo"}, "denied zz-fixture option: --yolo"},
-		{"validate_command_args", []string{"zz-fixture", "zz-fixture", "serve"}, "zz-fixture command that its manifest does not allow: serve"},
+		{"manifest", []string{"codex"}, "Workcell has no manifest [flags] allow list for adapter: codex"},
+		{"manifest", []string{"no-such-agent", "--help"}, "no manifest [flags] allow list for adapter: no-such-agent"},
+		{"validate", []string{"no-such-agent", "no-such-agent", "--help"}, "Workcell has no provider policy for: no-such-agent"},
+		{"validate", []string{"zz-fixture", "zz-fixture", "--yolo"}, "denied zz-fixture option: --yolo"},
+		{"validate", []string{"zz-fixture", "zz-fixture", "serve"}, "zz-fixture command that its manifest does not allow: serve"},
 	} {
 		if code, stderr := runRuntimePolicy(t, manifests, tc.fn, tc.args...); code != 2 || !strings.Contains(stderr, tc.want) {
 			t.Errorf("%s %q exited %d with %q, want exit 2 with %q", tc.fn, tc.args, code, stderr, tc.want)
 		}
 	}
-	if code, stderr := runRuntimePolicy(t, manifests, "validate_command_args", "zz-fixture", "zz-fixture", "run", "--model", "x"); code != 0 {
-		t.Errorf("validate_command_args refused allowed uncertified args (exit %d): %s", code, stderr)
+	if code, stderr := runRuntimePolicy(t, manifests, "validate", "zz-fixture", "zz-fixture", "run", "--model", "x"); code != 0 {
+		t.Errorf("the entrypoint check refused allowed uncertified args (exit %d): %s", code, stderr)
 	}
 	// A manifest list that the generated data lacks stops the launch.
 	broken := loadRepoManifests(t)
-	if code, stderr := runRuntimePolicy(t, broken, "reject_manifest_args", "zz-fixture", "--help"); code != 2 || !strings.Contains(stderr, "no manifest [flags] allow list for adapter: zz-fixture") {
-		t.Errorf("reject_manifest_args without generated data exited %d with %q", code, stderr)
+	if code, stderr := runRuntimePolicy(t, broken, "manifest", "zz-fixture", "--help"); code != 2 || !strings.Contains(stderr, "no manifest [flags] allow list for adapter: zz-fixture") {
+		t.Errorf("manifest policy without generated data exited %d with %q", code, stderr)
 	}
 }
 
-// TestRenderRuntimeShellUncertifiedTables pins the tier and [flags] tables of
-// the runtime shell for an uncertified manifest, and their absence for a
-// certified one.
-func TestRenderRuntimeShellUncertifiedTables(t *testing.T) {
-	rendered, err := RenderRuntimeShell(loadUncertifiedFixture(t))
+// TestRenderProviderPolicyUncertifiedTables parses the rendered provider
+// policy data and pins the tier and [flags] lists of an uncertified manifest,
+// and the tier alone for a certified one.
+func TestRenderProviderPolicyUncertifiedTables(t *testing.T) {
+	rendered, err := RenderProviderPolicyGo(loadUncertifiedFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"    claude | codex | copilot | gemini)\n      echo certified\n",
-		"    amp | goose | opencode | zz-fixture)\n      echo uncertified\n",
-		"    zz-fixture:allow)\n      printf '%s\\n' '-h' '--help' '-m' '--model'\n",
-		"    zz-fixture:deny)\n      printf '%s\\n' '-y' '--yolo'\n",
-		"    zz-fixture:other_commands)\n      printf '%s\\n' 'serve' 'mcp'\n",
-	} {
-		if !strings.Contains(string(rendered), want) {
-			t.Errorf("runtime shell lacks %q:\n%s", want, rendered)
-		}
+	got := parseProviderPolicyAdapters(t, rendered)
+	want := map[string]map[string][]string{
+		"codex": {"Tier": {"certified"}},
+		"zz-fixture": {
+			"Tier":          {"uncertified"},
+			"Allow":         {"-h", "--help", "-m", "--model"},
+			"Deny":          {"-y", "--yolo"},
+			"OtherCommands": {"serve", "mcp"},
+		},
 	}
-	if strings.Contains(string(rendered), "codex:allow") {
-		t.Error("runtime shell must not render [flags] lists of a certified adapter")
+	for id, fields := range want {
+		if !reflect.DeepEqual(got[id], fields) {
+			t.Errorf("provider policy data for %s = %v, want %v", id, got[id], fields)
+		}
 	}
 }
 
-// TestCommittedRuntimeShellAdapterTier asks each committed generated shell for
+// parseProviderPolicyAdapters decodes the Adapters map literal of a rendered
+// internal/providerpolicy/adapters_gen.go: adapter id to field name to the
+// string values of that field.
+func parseProviderPolicyAdapters(t *testing.T, src []byte) map[string]map[string][]string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "adapters_gen.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unquote := func(e ast.Expr) string {
+		lit, ok := e.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			t.Fatalf("want a string literal, got %T", e)
+		}
+		v, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	out := map[string]map[string][]string{}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs := spec.(*ast.ValueSpec)
+			if len(vs.Names) != 1 || vs.Names[0].Name != "Adapters" || len(vs.Values) != 1 {
+				continue
+			}
+			table := vs.Values[0].(*ast.CompositeLit)
+			for _, elt := range table.Elts {
+				entry := elt.(*ast.KeyValueExpr)
+				fields := map[string][]string{}
+				for _, f := range entry.Value.(*ast.CompositeLit).Elts {
+					field := f.(*ast.KeyValueExpr)
+					name := field.Key.(*ast.Ident).Name
+					if list, ok := field.Value.(*ast.CompositeLit); ok {
+						values := []string{}
+						for _, v := range list.Elts {
+							values = append(values, unquote(v))
+						}
+						fields[name] = values
+					} else {
+						fields[name] = []string{unquote(field.Value)}
+					}
+				}
+				out[unquote(entry.Key)] = fields
+			}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("rendered provider policy data has no Adapters entries")
+	}
+	return out
+}
+
+// TestCommittedLauncherShellAdapterTier asks the committed launcher shell for
 // the tier of every manifest id: a planned or unknown id has none.
-func TestCommittedRuntimeShellAdapterTier(t *testing.T) {
-	for _, script := range []string{"runtime/container/generated-adapters.sh", "scripts/lib/launcher/generated-adapters.sh"} {
-		for _, m := range append(loadRepoManifests(t), Manifest{ID: "no-such-agent", Tier: "planned"}) {
-			cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && workcell_adapter_tier "$2"`, "bash", filepath.Join(repoRoot, script), m.ID)
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-			out, err := cmd.Output()
-			want := m.Tier + "\n"
-			if m.Tier == "planned" {
-				want = ""
-			}
-			if string(out) != want || (err == nil) != (m.Tier != "planned") {
-				t.Errorf("%s: workcell_adapter_tier %s = %q (%v), want %q", script, m.ID, out, err, want)
-			}
+func TestCommittedLauncherShellAdapterTier(t *testing.T) {
+	script := "scripts/lib/launcher/generated-adapters.sh"
+	for _, m := range append(loadRepoManifests(t), Manifest{ID: "no-such-agent", Tier: "planned"}) {
+		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && workcell_adapter_tier "$2"`, "bash", filepath.Join(repoRoot, script), m.ID)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+		out, err := cmd.Output()
+		want := m.Tier + "\n"
+		if m.Tier == "planned" {
+			want = ""
+		}
+		if string(out) != want || (err == nil) != (m.Tier != "planned") {
+			t.Errorf("%s: workcell_adapter_tier %s = %q (%v), want %q", script, m.ID, out, err, want)
 		}
 	}
 }
@@ -369,7 +443,7 @@ func TestLauncherRefusesUncertifiedOptionMisuse(t *testing.T) {
 }
 
 // TestOpencodeManifestPolicy runs the shipped opencode manifest through
-// validate_command_args, the entrypoint check: every allow entry passes, every
+// the entrypoint check of internal/providerpolicy: every allow entry passes, every
 // deny and other_commands entry fails, and the yargs spellings of a refused
 // option (an attached value, --no- negation, camel case) fail too.
 func TestOpencodeManifestPolicy(t *testing.T) {
@@ -385,7 +459,7 @@ func TestOpencodeManifestPolicy(t *testing.T) {
 }
 
 // TestAmpManifestPolicy runs the shipped amp manifest through
-// validate_command_args. A hidden command that the help does not list (review,
+// the entrypoint check. A hidden command that the help does not list (review,
 // sync) and a command alias (t, up) fail like a listed command.
 func TestAmpManifestPolicy(t *testing.T) {
 	checkShippedManifestPolicy(t, "amp", "--mode", "high", [][]string{
@@ -400,7 +474,7 @@ func TestAmpManifestPolicy(t *testing.T) {
 }
 
 // TestGooseManifestPolicy runs the shipped goose manifest through
-// validate_command_args. A hidden command that the help does not list
+// the entrypoint check. A hidden command that the help does not list
 // (mcp-probe) and a command alias (gw, sched) fail like a listed command.
 func TestGooseManifestPolicy(t *testing.T) {
 	checkShippedManifestPolicy(t, "goose", "--model", "claude-demo", [][]string{
@@ -415,7 +489,7 @@ func TestGooseManifestPolicy(t *testing.T) {
 }
 
 // checkShippedManifestPolicy runs the shipped uncertified manifest id through
-// validate_command_args: each accepted argv passes, every allow entry passes,
+// the entrypoint check: each accepted argv passes, every allow entry passes,
 // and each refused word, every deny entry (also with an attached value) and
 // every other_commands entry fails, alone and after the allowed option
 // allowedFlag allowedValue.
@@ -428,7 +502,7 @@ func checkShippedManifestPolicy(t *testing.T, id, allowedFlag, allowedValue stri
 	}
 	flags := manifests[i].Flags
 	run := func(args ...string) (int, string) {
-		return runRuntimePolicy(t, manifests, "validate_command_args", append([]string{id, id}, args...)...)
+		return runRuntimePolicy(t, manifests, "validate", append([]string{id, id}, args...)...)
 	}
 	for _, args := range accepted {
 		if code, stderr := run(args...); code != 0 {
