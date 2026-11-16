@@ -59,7 +59,12 @@ func LaneScripts(rootDir string) ([]string, error) {
 // step's nor its job's continue-on-error lets fail, in scripts/validate-repo.sh,
 // or in a lane script that such a step runs as a gate. A lane script runs
 // where a step runs it whenever the step runs, at its top level, not after
-// && or ||.
+// && or ||. A run after a command that may end its body's shell with 0, which
+// laneReadable cannot prove never runs, gates nothing, since the shell may
+// have ended first. A step runs nothing where laneReachable finds that no
+// event that starts the workflow on its own reaches it. A job that needs
+// another runs only on the events that reach the one it needs, which may be
+// fewer, so a case in it reads no event name.
 func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(rootDir)
 	if err != nil {
@@ -132,7 +137,7 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 				if err != nil {
 					return nil, nil, err
 				}
-				runs = append(runs, laneRun{body: text, pinned: pinned, libraries: libraries, site: laneSite{lane: true, gating: rel == "scripts/validate-repo.sh"}, rel: rel})
+				runs = append(runs, laneRun{body: text, pinned: pinned, libraries: libraries, site: laneSite{lane: true, gating: rel == "scripts/validate-repo.sh", script: rel}, rel: rel})
 				continue
 			}
 			document, extra := workflows[rel].document, workflows[rel].extra
@@ -158,10 +163,11 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 					now, later := laneUnwires(context, step)
 					startup = startup || startupFileStep(document, job, step) || laneStartupStep(context, step) || now
 					reach, sure := laneReachable(automatic, job.If.Value, step.If.Value)
-					moved, subjects := startup, laneSubjects(context, step, slices.Contains(events, "workflow_call") || !sure)
+					needs := job.Needs.Kind != 0 // a job that needs another runs only on the events that reach that one too
+					moved, subjects := startup, laneSubjects(context, step, slices.Contains(events, "workflow_call") || !sure || needs)
 					startup, context = startup || later, context.next(step)
-					if laneNeverIf(job.If) || laneNeverIf(step.If) {
-						continue // the step may never run, so it runs no gate
+					if laneNeverIf(job.If) || laneNeverIf(step.If) || len(reach) == 0 && !slices.Contains(events, "workflow_call") {
+						continue // the step may never run, or no event that starts the workflow on its own reaches it, so it runs no gate
 					}
 					shell := map[string][2]bool{"": {true, false}, "bash": {true, true}, "sh": {true, false}}[stepShell(document, job, step)]
 					fails := laneFails(extra.Jobs[name].ContinueOnError) && laneFails(step.ContinueOnError)
@@ -190,7 +196,8 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 		// A lane that assigns PATH, BASH_ENV or ENV may change the program each
 		// later command runs, a script's own #! interpreter included, so it
 		// wires no script.
-		startup, err := laneReadable(run.body, run.libraries, run.pinned, run.site)
+		cut := 0 // the place of the first command of the body that may end its shell with 0
+		startup, err := laneReadable(run.body, run.libraries, run.pinned, run.site, &cut)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -201,7 +208,7 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 			scripts = append(scripts, run.rel)
 			gated[run.rel] = gated[run.rel] || run.site.gating
 		}
-		gating := laneGates(run.body, run.shell[0], run.shell[1], run.libraries)
+		gating := laneGates(run.body, run.shell[0], run.shell[1], run.libraries, cut)
 		moved := run.moved || strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
 		called := map[string][][]string{} // the commands of this step that run each lane script, after the words its arguments follow
 		for _, words := range laneCommands(run.body)[0] {
@@ -365,7 +372,8 @@ type laneSite struct {
 	events  []string          // the events laneReachable finds of those other than workflow_dispatch and workflow_call that start the workflow
 	callers []laneCaller
 	lane    bool
-	gating  bool // a failure of the body fails its job
+	gating  bool   // a failure of the body fails its job
+	script  string // a lane script's path
 }
 
 // laneLibraryRoot is the ${ROOT_DIR}/ or $ROOT_DIR/ in front of a library path.

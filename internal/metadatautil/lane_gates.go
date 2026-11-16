@@ -72,13 +72,13 @@ type laneGateState struct {
 // function or a library makes it, and a source of a file other than the
 // libraries turns both off, since the file may. Only a set at the top level
 // that runs whenever the body does turns one on.
-func laneGates(body string, errexit, pipefail bool, libraries []laneLibrary) laneGating {
+func laneGates(body string, errexit, pipefail bool, libraries []laneLibrary, cut int) laneGating {
 	scanned, _, complete := laneScan(body)
 	gating := laneGating{norms: make([][]string, len(scanned)), gates: make([]bool, len(scanned)), certain: make([]bool, len(scanned))}
 	if !complete {
 		return gating
 	}
-	read := laneGateReader{scanned: scanned, states: make([]laneGateState, len(scanned)), off: map[string]bool{}, calls: map[int][2]int{}}
+	read := laneGateReader{scanned: scanned, states: make([]laneGateState, len(scanned)), off: map[string]bool{}, calls: map[int][2]int{}, cut: cut}
 	numbered := 0
 	nesting := laneNesting{next: &numbered}
 	cases := laneCases{}
@@ -149,7 +149,7 @@ func laneGates(body string, errexit, pipefail bool, libraries []laneLibrary) lan
 	for at, each := range scanned {
 		state := read.states[at]
 		gating.gates[at] = read.gates(at)
-		gating.certain[at] = !state.lost && len(state.held) == 0 && !each.conditional
+		gating.certain[at] = !state.lost && len(state.held) == 0 && !each.conditional && at < cut
 	}
 	return gating
 }
@@ -273,6 +273,7 @@ type laneGateReader struct {
 	off          map[string]bool  // the options a function or a library may turn off
 	calls        map[int][2]int   // for each function: whether a call of it gates, with errexit on and at all, as 1 for no and 2 for yes
 	kinds, names map[int]string
+	cut          int // the place of the first command of the body that may end its shell with 0, as laneReadable finds it, or past the last
 }
 
 // placed reports whether nothing at the command's place masks its status:
@@ -410,7 +411,7 @@ func (read laneGateReader) gates(at int) bool {
 	ends := firstOf(state.plain[assignmentPrefix(state.plain):]) == "exec" // exec ends the shell with the command's status
 	errexit := state.errexit && !read.off["errexit"]
 	if state.function == 0 {
-		return errexit || ends || read.final(at, -1)
+		return (at < read.cut || at == read.cut && ends) && (errexit || ends || read.final(at, -1)) // an exec at the cut runs its program in place of the shell
 	}
 	function := state.function
 	if read.calls[function] == [2]int{} {
