@@ -215,6 +215,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	var current logical
 	var lines []string
 	var heredocs []heredoc
+	var joined string // the heredoc body line a backslash-newline continues
 	var stack []byte
 	var openQuote byte
 	depth, number, backtick, stdoutNull, kept := 0, 0, false, false, []bool(nil) // stdoutNull: an exec sent stdout to the null device, so a later 2>&1 hides stderr; kept: its value outside each open ( )
@@ -225,7 +226,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		if openQuote != 0 {
 			reopen = quoteOpener(openQuote)
 		} else if len(heredocs) > 0 {
-			if heredocs[0].endsAt(text) {
+			if heredocs[0].endsAt(line, &joined) {
 				heredocs = heredocs[1:]
 			}
 			continue

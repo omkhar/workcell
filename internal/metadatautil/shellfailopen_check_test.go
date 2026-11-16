@@ -280,6 +280,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"message names the idiom", "echo 'git fetch || true'\n", ""},
 		{"quoted span across lines", "msg='\ngit fetch || true\n'\n", ""},
 		{"heredoc body", "cat <<'EOF'\ngit fetch || true\nEOF\n", ""},
+		{"a continued heredoc body line joins the delimiter line after it", "cat <<EOF\nfoo\\\nEOF\ngit fetch || true\nEOF\n", ""},
+		{"a carriage return keeps a heredoc body open", "cat <<EOF\nEOF\r\ngit fetch || true\nEOF\n", ""},
+		{"a continued heredoc body line can spell the delimiter", "cat <<EOF\nEO\\\nF\ngit fetch || true\nEOF\n", "or-true"},
 		{"escaped apostrophe in an ANSI-C span", ": $'x\\'; git fetch || true'\n", ""},
 		{"noclobber redirection target", ": >| git fetch origin || true\n", ""},
 		{"not a tool call", "grep -q x file || true\n", ""},
@@ -401,6 +404,8 @@ func TestShellFailOpenFindingsRejectsUnendedHeredocs(t *testing.T) {
 		"ANSI-C delimiter":          ": <<$'\\x50LAN'\nx\nPLAN\ngit fetch || true\n",
 		"locale delimiter":          ": <<$\"PLAN\"\nx\nPLAN\ngit fetch || true\n",
 		"heredoc that never closes": "cat <<EOF\ngit fetch || true\n",
+		"continued delimiter":       ": <<EO\\\nF\nEO\ngit fetch || true\nEOF\n",
+		"continued operator":        ": <<\\\nEOF\nx\nEOF\ngit fetch || true\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
