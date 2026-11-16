@@ -250,13 +250,6 @@ const runtimeUserRelPath = "runtime/container/runtime-user.sh"
 // ${ROOT_DIR}/runtime/container/rust/src/lib.rs.
 const rustLibRelPath = "runtime/container/rust/src/lib.rs"
 
-// providerPolicyRelPath is the repo-relative path to the runtime provider
-// policy helper.  The Copilot-policy-wrapper block reads this file (via the
-// per-check targetFile field) for its native-lifecycle-command and
-// prompt/short-option gating invariants, mirroring the shell probes that ran
-// against ${ROOT_DIR}/runtime/container/provider-policy.sh.
-const providerPolicyRelPath = "runtime/container/provider-policy.sh"
-
 // verifyUpstreamCopilotReleaseRelPath is the repo-relative path to the Copilot
 // upstream-release verifier.  The Copilot-release-verify block reads this file
 // (via the per-check targetFile field) for its help-mode / checksum-path /
@@ -2237,17 +2230,21 @@ func CheckProviderLauncherAuthority(rootDir string) error {
 	return evaluate(rootDir, providerLauncherAuthorityChecks())
 }
 
-// copilotPolicyWrapperChecks lists the twenty-two Copilot-policy-wrapper
+// copilotPolicyWrapperChecks lists the fourteen Copilot-policy-wrapper
 // invariants in the same order as the former inline block in
 // scripts/verify-invariants.sh (the block between the pinned-native-Claude-exec
 // `rm -f -- "${token_file}"` guard's successor `unset
 // WORKCELL_COPILOT_GITHUB_TOKEN` probe and the `for unsafe_copilot_flag` loop),
 // so a reviewer can diff the two one-to-one.
 //
-// The block reads three files via the per-check targetFile field: the runtime
-// provider wrapper (runtime/container/provider-wrapper.sh), the runtime provider
-// policy helper (runtime/container/provider-policy.sh), and the container smoke
-// harness (scripts/container-smoke.sh).  Every probe is a whole-file `grep -Fq`
+// The block reads two files via the per-check targetFile field: the runtime
+// provider wrapper (runtime/container/provider-wrapper.sh) and the container
+// smoke harness (scripts/container-smoke.sh).  The block also held eight text
+// probes of the shell provider policy that the Go package internal/providerpolicy
+// replaced, and the table tests of that package own those rules: the
+// Claude and Copilot lifecycle refusals, -p and --prompt as the only prompt
+// options, attached dash-prefixed prompt values, and bundled short options.
+// Every probe is a whole-file `grep -Fq`
 // fixed-string containment except one negated `grep -Eq` (kindRegexAbsent), so
 // each is kindPresent for the affirmative probes and kindAbsent for the two
 // negated fixed-string guards.
@@ -2266,17 +2263,14 @@ func CheckProviderLauncherAuthority(rootDir string) error {
 //     shell short-circuits `grep A || grep B` to A-then-B, which the ordered
 //     checks reproduce.
 //
-// Two former shell `if ! grep A || ! grep B || ...` guards each joined multiple
-// affirmative probes across provider-policy.sh and container-smoke.sh under a
-// single message; they are expressed here as ordered kindPresent checks sharing
-// that message (the attached-prompt guard's four probes and the bundled
-// short-option guard's three probes), which is behaviourally identical (the
-// first missing probe yields the same stderr and exit 1).
+// The smoke-coverage probes of the attached-prompt guard (two) and of the
+// bundled short-option guard (one) keep the message of their former shell
+// guard, which also probed the shell provider policy.
 //
 // The double-quoted shell needles reproduce their literals byte-exact after
 // unescaping (`\"`→`"`, `\$`→`$`, `\\`→ a single trailing `\`), so the pinned
-// Copilot exec line keeps its trailing backslash and the `${arg}` /
-// `${copilot_github_token}` needles keep their literal parameter-expansion text.
+// Copilot exec line keeps its trailing backslash and the
+// `${copilot_github_token}` needle keeps its literal parameter-expansion text.
 var copilotPolicyWrapperChecks = []check{
 	{
 		kind:       kindPresent,
@@ -2350,85 +2344,30 @@ var copilotPolicyWrapperChecks = []check{
 		message:    "Expected provider wrapper to launch the pinned native Copilot binary",
 		targetFile: providerWrapperRelPath,
 	},
-	{
-		kind:       kindPresent,
-		pattern:    `Workcell blocked Claude lifecycle command: ${arg}`,
-		message:    "Expected provider policy to reject native Claude lifecycle commands that bypass the pinned image",
-		targetFile: providerPolicyRelPath,
-	},
-	{
-		kind:       kindPresent,
-		pattern:    `Workcell blocked Copilot lifecycle/control-plane command: ${arg}`,
-		message:    "Expected provider policy to reject native Copilot lifecycle/control-plane commands",
-		targetFile: providerPolicyRelPath,
-	},
-	{
-		kind:       kindPresent,
-		pattern:    "-p | --prompt)",
-		message:    "Expected provider policy to treat only Copilot -p/--prompt as value-taking prompt flags",
-		targetFile: providerPolicyRelPath,
-	},
-	// Attached-prompt guard (first probe): shares the group's message.
-	{
-		kind:       kindPresent,
-		pattern:    `attached_prompt_value="${arg:2}"`,
-		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
-		targetFile: providerPolicyRelPath,
-	},
-	// Attached-prompt guard (second probe): shares the group's message.
-	{
-		kind:       kindPresent,
-		pattern:    `attached_prompt_value="${arg#--prompt=}"`,
-		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
-		targetFile: providerPolicyRelPath,
-	},
-	// Attached-prompt guard (third probe, container-smoke.sh): shares the message.
+	// Attached-prompt smoke coverage (first probe): shares the message.
 	{
 		kind:       kindPresent,
 		pattern:    "workcell-copilot-policy-attached-short-prompt-allow-tool.out",
 		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
 		targetFile: containerSmokeRelPath,
 	},
-	// Attached-prompt guard (fourth probe, container-smoke.sh): shares the message.
+	// Attached-prompt smoke coverage (second probe): shares the message.
 	{
 		kind:       kindPresent,
 		pattern:    "workcell-copilot-policy-attached-long-prompt-allow-tool.out",
 		message:    "Expected provider policy and smoke coverage to reject attached dash-prefixed Copilot prompt values",
 		targetFile: containerSmokeRelPath,
 	},
-	// Bundled-short-option guard (first probe): shares the group's message.
-	{
-		kind:       kindPresent,
-		pattern:    "-[!-]?*)",
-		message:    "Expected provider policy and smoke coverage to reject bundled Copilot short options",
-		targetFile: providerPolicyRelPath,
-	},
-	// Bundled-short-option guard (second probe): shares the group's message.
-	{
-		kind:       kindPresent,
-		pattern:    `Workcell blocked bundled Copilot short options: ${arg}`,
-		message:    "Expected provider policy and smoke coverage to reject bundled Copilot short options",
-		targetFile: providerPolicyRelPath,
-	},
-	// Bundled-short-option guard (third probe, container-smoke.sh): shares the message.
+	// Bundled-short-option smoke coverage: keeps the former guard's message.
 	{
 		kind:       kindPresent,
 		pattern:    "workcell-copilot-policy-bundled-short-options.out",
 		message:    "Expected provider policy and smoke coverage to reject bundled Copilot short options",
 		targetFile: containerSmokeRelPath,
 	},
-	{
-		// kindAbsent: the shell's `if grep -Fq -- '-p | --prompt | -i |
-		// --interactive)' ...; then ... exit 1` is a negated fixed-string guard
-		// (treating -i/--interactive as a prompt alias present is a violation).
-		kind:       kindAbsent,
-		pattern:    "-p | --prompt | -i | --interactive)",
-		message:    "Expected provider policy not to treat Copilot -i/--interactive as prompt aliases",
-		targetFile: providerPolicyRelPath,
-	},
 }
 
-// CheckCopilotPolicyWrapper runs the twenty-two Copilot-policy-wrapper invariants
+// CheckCopilotPolicyWrapper runs the fourteen Copilot-policy-wrapper invariants
 // against the repo rooted at rootDir, in the shell's original order.  It returns
 // nil when every invariant holds (the shell's exit 0), or an error whose message
 // equals the shell's stderr for the first violated invariant (the shell's exit 1).
@@ -2436,29 +2375,24 @@ func CheckCopilotPolicyWrapper(rootDir string) error {
 	return evaluate(rootDir, copilotPolicyWrapperChecks)
 }
 
-// copilotUnsafeBareShortForms lists the two Copilot bare short-flag case
-// snippets the shell's `for unsafe_copilot_bare_short in ...` loop asserted are
-// rejected and smoke-tested.  Each is a fixed single-quoted shell literal
-// (including its spaces, pipes, parens, and trailing `)`), matched by
-// `grep -Fq` across BOTH scripts/container-smoke.sh and
-// runtime/container/provider-policy.sh (a multi-file OR: present in either file
-// satisfies the check).  Order matches the shell verbatim.
-var copilotUnsafeBareShortForms = []string{
-	"copilot_short_flag in -C -i -n -r -w",
-	"-C | -i | -n | -r | -w)",
-}
+// copilotUnsafeBareShortForm is the Copilot bare short-flag loop of the smoke
+// harness that the shell's `for unsafe_copilot_bare_short in ...` loop asserted
+// is smoke-tested.  The second snippet of that loop, the case label
+// `-C | -i | -n | -r | -w)` of the shell provider policy, went with that
+// policy: the Go Copilot policy table tests refuse each of those bare short
+// flags.
+const copilotUnsafeBareShortForm = "copilot_short_flag in -C -i -n -r -w"
 
-// copilotUnsafeFlagsChecks returns the ten Copilot unsafe-flag invariants
+// copilotUnsafeFlagsChecks returns the nine Copilot unsafe-flag invariants
 // that remain text probes, in the order of the former inline block in
 // scripts/verify-invariants.sh.  The sixteen unsafe long flags and five
-// attached short forms that the block once grepped for in provider-policy.sh
-// are now [flags] deny entries in adapters/copilot/adapter.toml, and
+// attached short forms that the block once grepped for in the shell provider
+// policy are now [flags] deny entries in adapters/copilot/adapter.toml, and
 // TestFlagInventoryEntriesMatchProviderPolicy runs each one (and each glued
-// short form) through reject_unsafe_copilot_args, so the manifest is their one
+// short form) through the Go Copilot policy, so the manifest is their one
 // owner.
 //
-// The block reads six files via the per-check targetFile / targetFiles fields:
-// the runtime provider policy (runtime/container/provider-policy.sh), the
+// The block reads five files via the per-check targetFile field: the
 // container smoke harness (scripts/container-smoke.sh), the runtime provider
 // wrapper (runtime/container/provider-wrapper.sh), the runtime development
 // wrapper (runtime/container/development-wrapper.sh), the exec-guard Rust
@@ -2466,11 +2400,9 @@ var copilotUnsafeBareShortForms = []string{
 // helper.
 //
 // Matching semantics mirror the shell exactly:
-//   - The bare short-flag loop ran `grep -Fq -- NEEDLE container-smoke.sh
-//     provider-policy.sh` — a multi-file grep whose `! grep` guard fails only
-//     when the needle is absent from BOTH files.  Each item is therefore a
-//     kindPresentInAnyFile check over those two files, sharing the loop's
-//     interpolated message.
+//   - The bare short-flag loop grepped container-smoke.sh and the shell
+//     provider policy for each NEEDLE.  Its remaining needle lives in container-smoke.sh,
+//     so it is a kindPresent check there with the loop's interpolated message.
 //   - The eight trailing guards are single-file `! grep -Fq NEEDLE file` probes
 //     (kindPresent, per-check targetFile).  Two former shell `if` guards each
 //     joined two `grep -Fq` probes with `||` under one message (the exec-guard
@@ -2480,20 +2412,16 @@ var copilotUnsafeBareShortForms = []string{
 //     identical (the first missing probe yields the same stderr and exit 1).
 func copilotUnsafeFlagsChecks() []check {
 	var cs []check
-	// Two bare short-flag snippets present in container-smoke.sh OR
-	// provider-policy.sh (multi-file grep OR).
-	for _, form := range copilotUnsafeBareShortForms {
-		cs = append(cs, check{
-			kind:        kindPresentInAnyFile,
-			pattern:     form,
-			message:     "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: " + form,
-			targetFiles: []string{containerSmokeRelPath, providerPolicyRelPath},
-		})
-	}
 	cs = append(cs,
 		check{
 			kind:       kindPresent,
-			pattern:    "reject_unsafe_copilot_args",
+			pattern:    copilotUnsafeBareShortForm,
+			message:    "Expected Copilot bare unsafe short flags to be rejected and smoke-tested: " + copilotUnsafeBareShortForm,
+			targetFile: containerSmokeRelPath,
+		},
+		check{
+			kind:       kindPresent,
+			pattern:    `workcell_provider_policy_check copilot "$@"`,
 			message:    "Expected provider wrapper to re-check Copilot argv before launch",
 			targetFile: providerWrapperRelPath,
 		},
@@ -2547,7 +2475,7 @@ func copilotUnsafeFlagsChecks() []check {
 	return cs
 }
 
-// CheckCopilotUnsafeFlags runs the ten Copilot-unsafe-flag invariants
+// CheckCopilotUnsafeFlags runs the nine Copilot-unsafe-flag invariants
 // against the repo rooted at rootDir, in the shell's original order.  It returns
 // nil when every invariant holds (the shell's exit 0), or an error whose message
 // equals the shell's stderr for the first violated invariant (the shell's exit

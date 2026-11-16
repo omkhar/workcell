@@ -767,6 +767,10 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
 fi
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
+# The copy is not scripts/workcell, so its entry guard would refuse it: give
+# it the tree root that this script already uses instead.
+sed -i.bak "s|^workcell_entry_root=.*|workcell_entry_root=\"${ROOT_DIR}\"|" "${WORKCELL_FUNCTIONS_COPY}"
+rm -f "${WORKCELL_FUNCTIONS_COPY}.bak"
 MONITOR_WAIT_FUNCTIONS_COPY="${TMP_DIR}/monitor-finalization-wait-functions"
 {
   sed -n '/^detached_session_monitor_command_matches() {$/,/^}$/p' "${ROOT_DIR}/scripts/verify-invariants-live.sh"

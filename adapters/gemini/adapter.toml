@@ -40,7 +40,7 @@ container_path = "/opt/workcell/host-inputs/credentials/gcloud-adc.json"
 [egress]
 endpoints = ["generativelanguage.googleapis.com:443", "ai.google.dev:443"]
 
-# Classifies tests/fixtures/flags/gemini.txt as reject_unsafe_gemini_args decides.
+# Classifies tests/fixtures/flags/gemini.txt as the gemini policy in internal/providerpolicy decides.
 # other_commands names the remaining top-level commands.
 [flags]
 subcommands = [

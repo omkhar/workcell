@@ -166,16 +166,27 @@ emit_codex_rules_mutability_notice() {
   esac
 }
 
+workcell_die() {
+  echo "$*" >&2
+  exit 2
+}
+
 # shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
 # shellcheck source=runtime/container/generated-adapters.sh
 source /usr/local/libexec/workcell/generated-adapters.sh
-# shellcheck source=runtime/container/provider-policy.sh
-source /usr/local/libexec/workcell/provider-policy.sh
 # shellcheck source=runtime/container/home-control-plane.sh
 source /usr/local/libexec/workcell/home-control-plane.sh
 # shellcheck source=runtime/container/runtime-user.sh
 source /usr/local/libexec/workcell/runtime-user.sh
+
+# workcell_provider_policy_check ID ARGS... runs the provider policy of ID
+# over the provider arguments. The wrapper exports WORKCELL_WRAPPER_CONTEXT=1,
+# so breakglass never applies here.
+workcell_provider_policy_check() {
+  /usr/local/libexec/workcell/workcell-provider-policy check --mode="${WORKCELL_MODE:-}" \
+    --agent-ui="${AGENT_UI:-}" --wrapper-context="${WORKCELL_WRAPPER_CONTEXT:-}" "$@" || exit 2
+}
 
 sanitize_provider_env
 pin_runtime_env
@@ -202,7 +213,7 @@ codex_args_include_profile() {
     # post-`--` `--profile` is NOT mistaken for an operator-supplied profile —
     # otherwise managed-profile injection would be skipped and the sandbox/
     # approval contract dropped. This mirrors codex_first_subcommand (above) and
-    # reject_unsafe_codex_args (runtime/container/provider-policy.sh), which both
+    # the Codex provider policy (internal/providerpolicy/codex.go), which both
     # return/break at `--`.
     if [[ "${arg}" == "--" ]]; then
       return 1
@@ -226,8 +237,8 @@ codex_args_include_profile() {
 # token is found, and `--*=*`/boolean flags (e.g. --version/--help) are skipped.
 # Both managed-injection decisions below classify this single token.
 # This list must cover EVERY value-taking top-level Codex global (from
-# `codex --help`), and stay in lockstep with reject_unsafe_codex_args
-# (runtime/container/provider-policy.sh): the policy must likewise consume or
+# `codex --help`), and stay in lockstep with the Codex provider policy
+# (internal/providerpolicy/codex.go): the policy must likewise consume or
 # reject each of these values before its first-subcommand blocklist, or a flag
 # value would be mistaken for the command token (e.g.
 # `codex --local-provider ollama plugin`).
@@ -473,18 +484,18 @@ case "${AGENT_NAME}" in
     fi
     declare -a MANAGED_CODEX_APP_SERVER_ARGS=()
     codex_app_server_sandbox_args
-    reject_unsafe_codex_args "$@"
+    workcell_provider_policy_check codex "$@"
     exec /usr/local/libexec/workcell/real/codex "${MANAGED_CODEX_PROFILE_ARGS[@]}" "${MANAGED_CODEX_SANDBOX_ARGS[@]}" "${MANAGED_CODEX_APP_SERVER_ARGS[@]}" "${MANAGED_AUTONOMY_ARGS[@]}" "$@"
     ;;
   claude)
-    reject_unsafe_claude_args "$@"
+    workcell_provider_policy_check claude "$@"
     DISABLE_AUTOUPDATER=1 CLAUDE_CONFIG_DIR="${HOME}/.claude" exec /usr/local/libexec/workcell/real/claude \
       "${MANAGED_AUTONOMY_ARGS[@]}" \
       "$@"
     ;;
   copilot)
     declare copilot_github_token=""
-    reject_unsafe_copilot_args "$@"
+    workcell_provider_policy_check copilot "$@"
     if copilot_invocation_requires_auth "$@"; then
       copilot_github_token="$(workcell_load_copilot_github_token)"
       unset WORKCELL_COPILOT_GITHUB_TOKEN
@@ -506,7 +517,7 @@ case "${AGENT_NAME}" in
     ;;
   gemini)
     sanitize_gemini_sandbox_env
-    reject_unsafe_gemini_args "$@"
+    workcell_provider_policy_check gemini "$@"
     # Gemini CLI self-relaunch conflicts with Workcell's protected exec boundary.
     GEMINI_CLI_NO_RELAUNCH=1 GEMINI_SANDBOX=false exec /usr/local/libexec/workcell/real/node \
       "$(gemini_provider_script_path)" \
@@ -514,7 +525,7 @@ case "${AGENT_NAME}" in
       "$@"
     ;;
   opencode)
-    reject_manifest_args opencode "$@"
+    workcell_provider_policy_check opencode "$@"
     for env_name in "${!OPENCODE_@}"; do
       unset "${env_name}"
     done
@@ -535,7 +546,7 @@ case "${AGENT_NAME}" in
       "${MANAGED_AUTONOMY_ARGS[@]}"
     ;;
   goose)
-    reject_manifest_args goose "$@"
+    workcell_provider_policy_check goose "$@"
     for env_name in "${!GOOSE_@}"; do
       unset "${env_name}"
     done
@@ -556,7 +567,7 @@ case "${AGENT_NAME}" in
       "$@"
     ;;
   amp)
-    reject_manifest_args amp "$@"
+    workcell_provider_policy_check amp "$@"
     for env_name in "${!AMP_@}"; do
       unset "${env_name}"
     done
