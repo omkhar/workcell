@@ -6,10 +6,12 @@ package testkit
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -328,6 +330,274 @@ func TestEntryScriptGuardAnchorsTheTree(t *testing.T) {
 	}
 }
 
+// TestEntryScriptGuardFindsHelpersFromThePhysicalRoot starts the script
+// through a symlink to its root and through a symlink to an ancestor of the
+// root. Right after the guard passes, the script itself points that symlink at
+// another tree, as a racing user who can replace the symlink would. The
+// helper still comes from the tree the guard checked, because the script
+// finds it from ${workcell_entry_root}.
+func TestEntryScriptGuardFindsHelpersFromThePhysicalRoot(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	for _, side := range []string{"good", "evil"} {
+		tree := filepath.Join(base, side, "tree")
+		mkdirs(t, filepath.Join(tree, "scripts", "lib"))
+		if err := os.WriteFile(filepath.Join(tree, "scripts", "lib", "helper.sh"), []byte("echo "+side+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		body := "#!/bin/bash\n" + entryScriptGuard("scripts/entry.sh") +
+			`{ IFS= read -r link && IFS= read -r target; } <"${workcell_entry_root}/../swap" && ln -sfn -- "${target}" "${link}"` + "\n" +
+			`source "${workcell_entry_root}/scripts/lib/helper.sh"` + "\n"
+		if err := os.WriteFile(filepath.Join(tree, "scripts", "entry.sh"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct {
+		name, link, good, evil, entry string
+	}{
+		{"a symlinked root", "root-link", filepath.Join(base, "good", "tree"), filepath.Join(base, "evil", "tree"), filepath.Join("root-link", "scripts", "entry.sh")},
+		{"a symlinked ancestor", "ancestor-link", filepath.Join(base, "good"), filepath.Join(base, "evil"), filepath.Join("ancestor-link", "tree", "scripts", "entry.sh")},
+	} {
+		link := filepath.Join(base, row.link)
+		if err := os.Symlink(row.good, link); err != nil {
+			t.Fatal(err)
+		}
+		swap := link + "\n" + row.evil + "\n"
+		if err := os.WriteFile(filepath.Join(base, "good", "swap"), []byte(swap), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, out := runEntryScript(t, base, filepath.Join(base, row.entry)); code != 0 || out != "good\n" {
+			t.Errorf("%s swapped after the guard: exit %d, want the checked tree's helper:\n%s", row.name, code, out)
+		}
+		if target, err := os.Readlink(link); err != nil || target != row.evil {
+			t.Errorf("%s: the script did not swap the link: %q, %v", row.name, target, err)
+		}
+	}
+}
+
+// TestEntryScriptGuardReadsGroupsAndACLs covers the group and access control
+// list rules where they differ from the mode bits alone: an ancestor above the
+// root's parent, as /opt/homebrew/Cellar is above Cellar/workcell/X/libexec;
+// an access control list that grants only read; and a group that is private by
+// name and members but is another user's primary group.
+func TestEntryScriptGuardReadsGroupsAndACLs(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	tree := filepath.Join(base, "parent", "tree")
+	mkdirs(t, filepath.Join(tree, "scripts", "lib"))
+	script := filepath.Join(tree, "scripts", "entry.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/bash\n"+entryScriptGuard("scripts/entry.sh")+"echo ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(tree, "scripts", "lib", "helper.sh")
+	if err := os.WriteFile(helper, []byte("true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, ok bool, out string, err error) {
+		t.Helper()
+		switch {
+		case ok && (err != nil || out != "ran\n"):
+			t.Errorf("%s: %v:\n%s", name, err, out)
+		case !ok && (err == nil || !strings.Contains(out, entryScriptRefusal)):
+			t.Errorf("%s: %v, want the refusal:\n%s", name, err, out)
+		}
+	}
+	run := func(name string, ok bool) {
+		t.Helper()
+		code, out := runEntryScript(t, base, script)
+		var err error
+		if code != 0 {
+			err = fmt.Errorf("exit %d", code)
+		}
+		check(name, ok, out, err)
+	}
+	baseMode := os.FileMode(0o700)
+	run("a private tree", true)
+
+	// A shared group may write an ancestor only where the guard trusts it:
+	// the user's private group, and on macOS the admin group, whose members
+	// can already run sudo.
+	if privateGroup(t) {
+		chmod(t, base, 0o775)
+		run("a 775 ancestor in the user's private group", true)
+		chmod(t, base, baseMode)
+	}
+	if gid, ok := sharedGroup(t); ok {
+		chgrp(t, base, gid)
+		chmod(t, base, 0o775)
+		run("a 775 ancestor in a shared group", false)
+		chmod(t, base, baseMode)
+		chgrp(t, base, os.Getgid())
+	}
+	if runtime.GOOS == "darwin" {
+		if err := os.Lchown(base, -1, 80); err != nil {
+			t.Logf("cannot give the ancestor to the admin group: %v", err)
+		} else {
+			chmod(t, base, 0o775)
+			run("a 775 ancestor in the admin group", true)
+			chmod(t, base, baseMode)
+			chgrp(t, base, os.Getgid())
+		}
+	}
+
+	// An access control list counts only when it lets another user write.
+	if runtime.GOOS == "linux" && privateGroup(t) {
+		for _, row := range []struct {
+			name string
+			path string
+			perm uint32
+			ok   bool
+		}{
+			{"an ancestor whose access control list lets another user read", base, 5, true},
+			{"an ancestor whose access control list lets another user write", base, 7, false},
+			{"a helper whose access control list lets another user read", helper, 4, true},
+		} {
+			info, err := os.Stat(row.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := setNamedUserACL(row.path, 65534, row.perm); err != nil {
+				t.Logf("no access control list on this filesystem: %v", err)
+				break
+			}
+			run(row.name, row.ok)
+			if err := unix.Removexattr(row.path, "system.posix_acl_access"); err != nil {
+				t.Fatal(err)
+			}
+			chmod(t, row.path, info.Mode().Perm())
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		for _, row := range []struct {
+			name, entry string
+			ok          bool
+		}{
+			{"a helper whose access control list lets everyone read", "everyone allow read", true},
+			{"a helper whose access control list lets everyone write", "everyone allow write", false},
+		} {
+			if out, err := execRetryETXTBSY(func() *exec.Cmd { return exec.Command("/bin/chmod", "+a", row.entry, helper) }); err != nil {
+				t.Fatalf("chmod +a: %v\n%s", err, out)
+			}
+			run(row.name, row.ok)
+			if out, err := execRetryETXTBSY(func() *exec.Cmd { return exec.Command("/bin/chmod", "-N", helper) }); err != nil {
+				t.Fatalf("chmod -N: %v\n%s", err, out)
+			}
+		}
+	}
+
+	// getent group lists no user whose primary group it is, so the guard also
+	// reads getent passwd: a fake /etc/group and /etc/passwd in a private mount
+	// namespace, which only root can set up.
+	if os.Geteuid() == 0 && os.Getgid() == 0 {
+		chmod(t, filepath.Join(tree, "scripts"), 0o775)
+		const rootUser = "root:x:0:0:root:/root:/bin/bash\n"
+		for _, row := range []struct {
+			name, group, passwd string
+			gid                 int
+			ok                  bool
+		}{
+			{"group write for a group that no other user has as primary group", "root:x:0:\n", rootUser, 0, true},
+			{"group write for a group that another user has as primary group", "root:x:0:\n", rootUser + "svc:x:4242:0::/:/bin/false\n", 0, false},
+			// Run with gid 1000, the prefix of another user's primary group 10000.
+			{"group write for a group whose number begins another user's primary group", "root:x:1000:\n",
+				"root:x:0:1000:root:/root:/bin/bash\nsvc:x:4242:10000::/:/bin/false\n", 1000, true},
+		} {
+			chgrp(t, filepath.Join(tree, "scripts"), row.gid)
+			dir := t.TempDir()
+			group, passwd := filepath.Join(dir, "group"), filepath.Join(dir, "passwd")
+			if err := os.WriteFile(group, []byte(row.group), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(passwd, []byte(row.passwd), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			home := t.TempDir()
+			out, err := execRetryETXTBSY(func() *exec.Cmd {
+				cmd := exec.Command("unshare", "-m", "sh", "-c", `mount --bind "$1" /etc/group && mount --bind "$2" /etc/passwd && exec setpriv --regid="$4" --clear-groups bash "$3"`, "sh", group, passwd, script, fmt.Sprint(row.gid))
+				cmd.Dir = base
+				cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+				return cmd
+			})
+			if strings.Contains(string(out), "mount:") || strings.Contains(string(out), "unshare:") || strings.Contains(string(out), "setpriv:") {
+				t.Logf("no private mount namespace: %s", out)
+				break
+			}
+			check(row.name, row.ok, string(out), err)
+		}
+		chgrp(t, filepath.Join(tree, "scripts"), 0)
+		chmod(t, filepath.Join(tree, "scripts"), 0o755)
+	}
+}
+
+// The launcher starts its session monitor from the physical root, which an
+// upgrade can move, as a Homebrew upgrade moves the Cellar version directory.
+// A newer launcher from another root must still find the monitor live for its
+// own state file, also where COLUMNS would narrow ps, and not for another
+// session's state file or a command that only mentions this one.
+func TestSessionMonitorLivenessSurvivesAMovedRoot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	oldScript := filepath.Join(dir, "old", "scripts", "workcell")
+	mkdirs(t, filepath.Dir(oldScript))
+	if err := os.WriteFile(oldScript, []byte("while :; do sleep 1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	audit := filepath.Join(dir, "audit")
+	mkdirs(t, audit)
+	state := filepath.Join(audit, "session-monitor.env")
+	launcher := ShellQuote(filepath.Join(repoRoot(t), "scripts", "workcell"))
+	var b strings.Builder
+	for _, name := range []string{"session_monitor_state_path", "session_monitor_pid_is_live"} {
+		b.WriteString(`eval "$(sed -n '/^` + name + `() {$/,/^}$/p' ` + launcher + `)"` + "\n")
+	}
+	// The probe starts the rest of its arguments as the monitor and checks it
+	// against the audit directory in its first argument.
+	b.WriteString(`workcell_entry_root=` + ShellQuote(filepath.Join(dir, "new")) + `
+"${@:2}" </dev/null >/dev/null 2>&1 &
+SESSION_META_MONITOR_PID=$!
+trap 'kill "${SESSION_META_MONITOR_PID}"' EXIT
+for _ in $(seq 100); do
+  [[ "$(ps -ww -o command= -p "${SESSION_META_MONITOR_PID}")" != *"--state-file "* ]] || break
+  sleep 0.05
+done
+SESSION_META_SESSION_AUDIT_DIR="$1"
+session_monitor_pid_is_live
+`)
+	probe := filepath.Join(dir, "probe.sh")
+	if err := os.WriteFile(probe, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	monitor := func(stateFile string) []string {
+		return []string{"/bin/bash", oldScript, "session", "monitor", "--state-file", stateFile}
+	}
+	for _, row := range []struct {
+		name, audit string
+		argv        []string
+		columns     bool
+		live        bool
+	}{
+		{"its own state file", audit, monitor(state), false, true},
+		{"its own state file with COLUMNS=80", audit, monitor(state), true, true},
+		{"another session's state file", filepath.Join(dir, "other"), monitor(state), false, false},
+		{"a state file with a suffix", audit, monitor(state + ".bak"), false, false},
+		{"a state file with a prefix", audit, monitor("/zz" + state), false, false},
+		{"a comment that names the state file", audit, []string{"/bin/sh", "-c", "while :; do sleep 1; done # session monitor --state-file " + state}, false, false},
+	} {
+		out, err := execRetryETXTBSY(func() *exec.Cmd {
+			cmd := exec.Command("/bin/bash", append([]string{probe, row.audit}, row.argv...)...)
+			if row.columns {
+				cmd.Env = append(os.Environ(), "COLUMNS=80")
+			}
+			return cmd
+		})
+		if (err == nil) != row.live {
+			t.Errorf("a monitor from another root, %s: live=%v, want %v:\n%s", row.name, err == nil, row.live, out)
+		}
+	}
+}
+
 func chmod(t *testing.T, path string, mode os.FileMode) {
 	t.Helper()
 	if err := os.Chmod(path, mode); err != nil {
@@ -508,6 +778,125 @@ func TestWorkcellLauncherAnchorsItsTree(t *testing.T) {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 || !strings.Contains(string(out), entryScriptRefusal) || strings.Contains(string(out), "v6.6.6") {
 			t.Errorf("%s --version = %v, want exit 2 and the refusal:\n%s", path, err, out)
+		}
+	}
+}
+
+// TestEntryScriptsCarryTheGuard is the one rule for repository entry scripts:
+// each tracked executable Bash script in the entry directories that reads
+// BASH_SOURCE to find its helpers runs entryScriptGuard, with its own path in
+// the tree, before any other command. scripts/workcell follows its installed
+// symlink first, so it runs the same guard on the file that resolve_self_path
+// finds before it sets ROOT_DIR and sources a library.
+func TestEntryScriptsCarryTheGuard(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	listing, err := exec.Command("git", "-C", root, "ls-files", "-s", "-z", "--", "scripts", "tests", ".githooks", "verify").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, record := range strings.Split(string(listing), "\x00") {
+		meta, path, ok := strings.Cut(record, "\t")
+		if !ok || !strings.HasPrefix(meta, "100755 ") || path == "scripts/workcell" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(data), "\n")
+		if !strings.HasPrefix(lines[0], "#!") || !strings.Contains(lines[0], "bash") || !strings.Contains(string(data), "BASH_SOURCE") {
+			continue
+		}
+		checked++
+		first := 1
+		for first < len(lines) && (strings.TrimSpace(lines[first]) == "" || strings.HasPrefix(strings.TrimSpace(lines[first]), "#")) {
+			first++
+		}
+		want := entryScriptGuard(path)
+		if got := strings.Join(lines[first:min(first+strings.Count(want, "\n"), len(lines))], "\n") + "\n"; got != want {
+			t.Errorf("%s: the first command is not the entry guard for its path:\n%s", path, got)
+			continue
+		}
+		rest := lines[min(first+strings.Count(want, "\n"), len(lines)):]
+		checkPhysicalSelf(t, path, rest)
+		if strings.Contains(strings.Join(rest, "\n"), "/scripts/lib/trusted-entrypoint.sh\"") && filepath.Dir(path) != "scripts" {
+			t.Errorf("%s: scripts/lib/trusted-entrypoint.sh re-runs its caller as scripts/ plus the caller's name, so only a script in scripts/ may source it", path)
+		}
+	}
+	if checked < 100 {
+		t.Fatalf("checked %d entry scripts; the listing looks incomplete", checked)
+	}
+
+	launcher, err := os.ReadFile(filepath.Join(root, "scripts", "workcell"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "WORKCELL_SELF_PATH=\"$(resolve_self_path)\"\n" +
+		strings.ReplaceAll(entryScriptGuard("scripts/workcell"), "${BASH_SOURCE[0]}", "${WORKCELL_SELF_PATH}") +
+		`ROOT_DIR="${workcell_entry_root}"` + "\n"
+	at := strings.Index(string(launcher), want)
+	if strings.Count(string(launcher), want) != 1 || at > strings.Index(string(launcher), "\nsource ") {
+		t.Error("scripts/workcell does not run the entry guard on its resolved file before it sets ROOT_DIR from the checked root and sources a library")
+	} else {
+		checkPhysicalSelf(t, "scripts/workcell", strings.Split(string(launcher[at+len(want):]), "\n"))
+	}
+
+	// A library runs in its caller's shell, where $0 is the caller's path as
+	// it was started, so no shell library may pass that path on as a word.
+	// Files in another language, such as workcell-cache-lock.pl, are skipped.
+	shellLibraries := 0
+	for _, pattern := range []string{"scripts/lib/*", "scripts/lib/launcher/*", "scripts/ci/lib/*"} {
+		libraries, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(pattern)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, library := range libraries {
+			if info, err := os.Lstat(library); err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			data, err := os.ReadFile(library)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, _, _ := strings.Cut(string(data), "\n")
+			if !strings.HasSuffix(library, ".sh") && !(strings.HasPrefix(first, "#!") && strings.Contains(first, "sh")) {
+				continue
+			}
+			shellLibraries++
+			for number, line := range strings.Split(string(data), "\n") {
+				if trimmed := strings.TrimSpace(line); !strings.HasPrefix(trimmed, "#") && libraryDollarZero.MatchString(line) {
+					t.Errorf("%s:%d: a library passes on $0, the caller's unchecked path: %s", library[len(root)+1:], number+1, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	if shellLibraries < 20 {
+		t.Fatalf("checked %d shell libraries; the listing looks incomplete", shellLibraries)
+	}
+}
+
+// selfDollarZero matches $0 run as a command or read as a file, and
+// selfSourcePath matches a path built from BASH_SOURCE: either one follows the
+// path the script was started from, whose symlinks can move after the guard.
+// libraryDollarZero matches $0 as a word of its own anywhere in a library, as
+// an argument to a command that may run it.
+var (
+	selfDollarZero    = regexp.MustCompile(`(^\s*|exec |bash -p |\| |head -n 1 )"\$0"(\s|$)`)
+	libraryDollarZero = regexp.MustCompile(`(^|[\s;&|(])"?\$(0|\{0\})"?([\s;&|)]|$)`)
+	selfSourcePath    = regexp.MustCompile(`dirname "\$\{BASH_SOURCE|\$\{BASH_SOURCE\[0\]%/|(^\s*|bash |exec |--launcher=)"?\$\{BASH_SOURCE\[0\]\}|\*"\$\{BASH_SOURCE\[0\]\}"\*`)
+)
+
+// checkPhysicalSelf reports each line after the guard of path that finds a
+// file from the path the script was started from rather than from
+// ${workcell_entry_root}, the physical root that the guard checked.
+func checkPhysicalSelf(t *testing.T, path string, rest []string) {
+	t.Helper()
+	for number, line := range rest {
+		if selfSourcePath.MatchString(line) || selfDollarZero.MatchString(line) {
+			t.Errorf("%s: after the guard, line %d finds a path from BASH_SOURCE or $0 instead of ${workcell_entry_root}: %s", path, number+1, strings.TrimSpace(line))
 		}
 	}
 }

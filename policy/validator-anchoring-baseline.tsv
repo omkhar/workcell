@@ -365,7 +365,9 @@ internal/testkit	TestCopilotReleaseCheckGuardsEachLocalOnlyBranch	6a60f3ff,b059b
 internal/testkit	TestGitHubUnauthenticatedGetNamesTheSpentQuota	3288323f,b0624deb,c60f58bc	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestToolPinImageConsumersRejectOtherRepositories	55750ef1	a test assertion on the refusal text that the script under test prints
 internal/testkit	TestUninstallRefusesSymlinkedScript	d2735c1b	the search checks the output of an uninstall run through a symlink, not script text
+internal/testkit	TestEntryScriptsCarryTheGuard	1066927e,12420dcc,2df9475b,434e08a4,752130ca,7780a891,7780a891,8466149b,8cf3431e,c024b1d1,d9718b27,e4f56ad9,e5cf8918,e614513e,f07ffd4e	the checks read a git ls-files mode field, a script's shebang line and its leading lines, and the launcher's guard block, which are the subject of the entry-script rule, not a command search
 internal/testkit	TestEntryScriptGuardAnchorsTheTree	20e6c84d,3db87680,8f1e5420,a3044b32,d71b6a1e	the searches check the output of an entry script run from a copy, a link or a fake group file, not script text
+internal/testkit	TestEntryScriptGuardReadsGroupsAndACLs	6529fcf1,b0ace1eb,c7d12c07,ffc921e1	the searches check the output of an entry script run under a fake group or user file or an access control list, not script text
 internal/testkit	TestUninstallRefusesCopyBesideHostileHelper	1be2b7e5,b02cc340	the searches check the output of an entry script run from a copy or a link, not script text
 internal/testkit	TestWorkcellLauncherAnchorsItsTree	05527b2f,eca3e407	the searches check the output of an entry script run from a copy or a link, not script text
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
@@ -562,6 +564,7 @@ internal/testkit	assertValidatorJobImageOwnership	5eb85259,79f0016a,8b17c2c6,cd2
 internal/testkit	callSubjects	96d4b7b5	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	canonicalBuildEnvVariable	0c152327,8e451779,bcfd7a20,efa4fcb5	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	canonicalEntrypointOrder	00f5806d	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	checkPhysicalSelf	aa35785b,e6cba84f	the patterns find a path built from BASH_SOURCE or $0 on each line after the entry guard; a shell reader would have to model what each word points at
 internal/testkit	ciPlanFixture.replaceScript	76aafe26	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	commandLines	17133723,17828184	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	containerSmokeLiteralHeredoc	38490834,73de45b5	unreviewed debt in a test: review the subject, then port or justify
