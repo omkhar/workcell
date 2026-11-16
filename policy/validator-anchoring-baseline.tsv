@@ -217,7 +217,6 @@ internal/metadatautil	laneRootReadOnly	607f42e5,781c6eca	fails closed: any menti
 internal/metadatautil	laneStatement	80051bfe,8ef9ab42	the check reads one line for a set prelude; a line it does not read as one counts as the first statement, which leaves the root unpinned and fails closed
 internal/metadatautil	loadDocLanguageBaseline	5939fd27	the prefix skips a TSV comment line
 internal/metadatautil	loadHardenedBaseline	7d0fa33e,a3ef0e02	the prefix skips a TSV comment line
-internal/metadatautil	loadShellFailOpenBaseline	ec489ec0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	loadTextMatchBaseline	4eeca9bb,d6395a28	the prefix skips a TSV comment line, and the pattern checks one TSV field
 internal/metadatautil	mapStringSetKeys	22e4373c,a9ce114c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	matchesText	55cdea10,ad3d3395,e58a4acd	the check reads a Go call's package and function names, identifiers the go/ast parser returns, against fixed lists of text-matching calls; it reads names, not the text a validator checks
@@ -239,6 +238,7 @@ internal/metadatautil	parseFlagFixture	9313fcd8,bb3556d6,e91b6bff	unreviewed deb
 internal/metadatautil	parseJQInvocation	6214cf24	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseOperatorWorkflow	1cac3ece	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseBuildStampedVersion	c1d7340c,f0c4e7f3	the pattern and the cut check one npm version string, not file content
+internal/metadatautil	parseShellFailOpenBaseline	bd45fee8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseStableVersion	dabcc20c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.loadCIReproBuildJob	d666d2a3,eb3871b0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCIReproEntriesAndTail	9d3f0df3	unreviewed debt: review the subject, then port or justify
@@ -368,7 +368,8 @@ internal/metadatautil	shellFailOpenLastSubst	1c0daaa7,a0c9d33a	unreviewed debt: 
 internal/metadatautil	shellFailOpenNamed	1498e420,9c9af020	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenReadsOwnStatus	5394aec0,ac82f6b1,e65dcc10	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenReadsStatus	df096ef4,e38318ae	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	shellFailOpenRunsFirst	55b36551	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenRunsFirst	20eebb7c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellFailOpenStartsUnseen	667c20b7,7a4608ad,92dd08ce,abac485f,bf44b40f,c94214c7	the checks read one flattenedCommands command past its wrappers for a computed name, a mapfile -C option, a BASH_ALIASES word and a trap option or signal word, and the raw text for BASH_ALIASES, which only denies the wait exemption; they parse words, not free text
 internal/metadatautil	shellListOperands	7cedd069	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellProgram	0dede830,19b61cf5,3726acb9,3ceb6305,3ceb6305,3f5e2870,7caa62b8,916bd6f6,916bd6f6,be5c2d65	the checks read the option words of one sh, bash, dash, ksh or zsh command a closed reader returns, each against fixed option letters and names; an option they do not list counts as running no program, so its script wires nothing, which fails closed; they parse words, not free text
 internal/metadatautil	shellRedirect	969f347e	unreviewed debt: review the subject, then port or justify
