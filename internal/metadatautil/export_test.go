@@ -8,3 +8,7 @@ var GooseDockerfilePin = gooseDockerfilePin
 
 // ValidateGooseInstallRun exposes the goose RUN check to the shared evasion corpus.
 var ValidateGooseInstallRun = validateGooseInstallRun
+
+// LaneEntryGuard exposes the entry guard line, with REL for the script's path,
+// to the lane rows that build a guarded lane.
+var LaneEntryGuard = laneEntryGuard

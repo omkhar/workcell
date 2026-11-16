@@ -25,7 +25,14 @@ const (
 	laneAssignedRoot = `ROOT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"`
 	laneRoot         = laneAssignedRoot + "\nreadonly ROOT_DIR"
 	jobRoot          = `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"` + "\nreadonly ROOT_DIR"
+	laneEntryStop    = "[[ -n \"${workcell_entry_root}\" ]] || {\n  echo \"Run ${BASH_SOURCE[0]} from its own place\" >&2\n  exit 2\n}\n"
+	laneEntryRoot    = `ROOT_DIR="${workcell_entry_root}"`
 )
+
+// laneEntry returns the entry guard of the script at rel, with its stop.
+func laneEntry(rel string) string {
+	return strings.Replace(metadatautil.LaneEntryGuard, "REL", rel, 1) + "\n" + laneEntryStop
+}
 
 func TestLaneScripts(t *testing.T) {
 	t.Parallel()
@@ -88,6 +95,7 @@ func TestLaneScripts(t *testing.T) {
 func TestLaneScriptsReadsTheRootAndShadowingFunctions(t *testing.T) {
 	t.Parallel()
 	const gate = "\"${ROOT_DIR}/scripts/gate.sh\"\n"
+	entry := laneEntry("scripts/validate-repo.sh")
 	cases := []struct {
 		name, lane, library, want string // want: wired, unwired, or an error substring
 	}{
@@ -151,6 +159,35 @@ func TestLaneScriptsReadsTheRootAndShadowingFunctions(t *testing.T) {
 		{"bash function spelled name ( )", laneRoot + "\nbash ( ) {\n  :\n}\nbash scripts/gate.sh\n", "", "lane wiring is unreadable"},
 		{"bash function inside an if", laneRoot + "\nif true; then bash() { :; }; fi\nbash scripts/gate.sh\n", "", "lane wiring is unreadable"},
 		{"bash function an eval defines", laneRoot + "\neval 'bash() { :; }'\nbash scripts/gate.sh\n", "", "lane wiring is unreadable"},
+		// An entry guard fixes the root: its stop exits unless workcell_entry_root
+		// holds it, and ROOT_DIR takes it on a line that runs whenever the lane does.
+		{"entry guard root", entry + laneEntryRoot + "\n" + gate, "", "wired"},
+		{"entry guard root read by its own name", entry + laneEntryRoot + "\n\"${workcell_entry_root}/scripts/gate.sh\"\n", "", "wired"},
+		{"entry guard of another script", laneEntry("scripts/other.sh") + laneEntryRoot + "\n" + gate, "", "lane wiring is unreadable"},
+		{"entry guard changed by a byte", strings.Replace(entry, "y=/usr/bin/find", "y=/usr/bin/fine", 1) + laneEntryRoot + "\n" + gate, "", "lane wiring is unreadable"},
+		{"entry stop whose message runs a command", strings.Replace(entry, "from its own place", "$(id)", 1) + laneEntryRoot + "\n" + gate, "", "lane wiring is unreadable"},
+		{"entry stop that runs when the root is set", strings.Replace(entry, "}\" ]] || {", "}\" ]] && {", 1) + laneEntryRoot + "\n" + gate, "", "lane wiring is unreadable"},
+		{"entry stop that exits 0", strings.Replace(entry, "  exit 2", "  exit 0", 1) + laneEntryRoot + "\n" + gate, "", "lane wiring is unreadable"},
+		{"entry guard root read before its line", entry + "echo \"${ROOT_DIR}\"\n" + laneEntryRoot + "\n" + gate, "", "lane wiring is unreadable"},
+		{"entry guard root line in a pipeline", entry + "true |\n" + laneEntryRoot + "\n" + gate, "", "assigns ROOT_DIR the entry guard's root"},
+		{"entry guard root line after the reader lost track", entry + "coproc c ( :; )\n" + laneEntryRoot + "\n" + gate, "", "assigns ROOT_DIR the entry guard's root"},
+		{"entry guard root line behind &&", entry + "true && " + laneEntryRoot + "\n" + gate, "", "lane wiring is unreadable"},
+		{"entry guard root line after a line that ends in &&", entry + "true &&\n" + laneEntryRoot + "\n" + gate, "", "assigns ROOT_DIR the entry guard's root"},
+		{"entry guard root line in an if", entry + "if true; then\n" + laneEntryRoot + "\nfi\n" + gate, "", "assigns ROOT_DIR the entry guard's root"},
+		{"entry guard root line in a function", entry + "f() {\n" + laneEntryRoot + "\n}\nf\n" + gate, "", "assigns ROOT_DIR the entry guard's root"},
+		{"entry guard root line in a heredoc", entry + "cat <<EOF\n" + laneEntryRoot + "\nEOF\n" + gate, "", "assigns ROOT_DIR the entry guard's root"},
+		{"entry guard root moved", entry + laneEntryRoot + "\nworkcell_entry_root=/tmp\n" + gate, "", "lane wiring is unreadable"},
+		{"entry guard root moved by a split name", entry + laneEntryRoot + "\nexport \"workcell_entry_\"root=/tmp\n" + gate, "", "lane wiring is unreadable"},
+		{"entry guard with the reader's own line", entry + laneEntryRoot + "\n: workcell-lane-root-assigned\n" + gate, "", "lane wiring is unreadable"},
+		{"entry guard library that reads ROOT_DIR before the root line", entry + "source \"${workcell_entry_root}/scripts/lib/l.sh\"\n" + laneEntryRoot + "\n" + gate, "f() { echo \"${ROOT_DIR}\"; }\n", "lane wiring is unreadable"},
+		{"entry guard library that reads the guard's root before the root line", entry + "source \"${workcell_entry_root}/scripts/lib/l.sh\"\n" + laneEntryRoot + "\n" + gate, "f() { echo \"${workcell_entry_root}\"; }\n", "wired"},
+		{"entry guard library with its own guard", entry + laneEntryRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\n" + gate, laneEntry("scripts/lib/l.sh") + "f() { :; }\n", "wired"},
+		{"entry guard library with the guard of another library", entry + laneEntryRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\n" + gate, laneEntry("scripts/lib/m.sh") + "f() { :; }\n", "lane wiring is unreadable"},
+		{"entry guard library with the reader's own line", entry + laneEntryRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\n" + gate, ": workcell-lane-root-assigned\n", "assigns ROOT_DIR the entry guard's root"},
+		{"entry guard eval of the reader's own line", entry + laneEntryRoot + "\neval ': workcell-lane-root-'assigned\n" + gate, "", "assigns ROOT_DIR the entry guard's root"},
+		// A ( inside an array in a substitution closes nothing outside it.
+		{"array in a substitution before an arithmetic test", laneRoot + "\ny=\"$(a=(/) && echo x)\"\nX=0\nif [[ \"${X}\" -eq 1 ]]; then echo; fi\n" + gate, "", "wired"},
+		{"array in a subshell before an arithmetic test", laneRoot + "\n( a=(/) b=1 )\nX=0\nif [[ \"${X}\" -eq 1 ]]; then echo; fi\n" + gate, "", "wired"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

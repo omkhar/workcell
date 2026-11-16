@@ -495,6 +495,15 @@ cancels the path, in the lane or in a library that the lane sources. A line
 that only reads it, as `${ROOT_DIR}` or `${#ROOT_DIR}` do, keeps it. A workflow
 step does not set `ROOT_DIR`, so the path does not count there.
 
+A lane may instead open with the entry guard of the launcher scripts, for its
+own path, and the guard's exact stop. The stop exits unless
+`workcell_entry_root` holds the root. The lane then sets
+`ROOT_DIR="${workcell_entry_root}"` on a line of its own that runs whenever
+the lane does, outside every branch, group, function and list
+(`internal/metadatautil/lane_scripts.go`). No line before it may name
+`ROOT_DIR`, nor a library that such a line sources. The check then reads
+`workcell_entry_root` as `ROOT_DIR`, and a library may open with its own guard.
+
 A child shell does not inherit the pinned value, so a child whose own program
 names `ROOT_DIR` stops the check. A program name without a slash runs from
 `PATH`, so it does not count. A lane that assigns `PATH`, `BASH_ENV` or `ENV`

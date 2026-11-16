@@ -278,6 +278,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 	var exitActions []string // the action of each EXIT trap
 	opened := map[int]bool{} // whether the command that opens each scope runs whenever its body does
 	var own *laneOwnCase     // the lane script's cases on its own $1
+	assigned := false        // the lane has assigned ROOT_DIR the entry guard's root
 
 	var covers []laneEventPatch // each command only a branch on the event name runs
 	if site.lane {
@@ -420,6 +421,12 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 				}
 			}
 			command := laneCommand(laneLeading(laneUnredirected(texts(run))))
+			if strings.Join(command, " ") == laneEntryAssigned { // the line that assigns ROOT_DIR the entry guard's root
+				if at != 0 || len(scopes) > 0 || each.conditional || each.nested || each.piped || lost {
+					return false, fmt.Errorf("lane wiring is unreadable: a %s assigns ROOT_DIR the entry guard's root where the assignment may not run whenever the lane does, so ROOT_DIR may keep a value it inherits", where)
+				}
+				assigned = true
+			}
 			if function == 0 {
 				cases.shift(command, scopes, certain)
 			}
@@ -570,6 +577,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 			for _, words := range part.commands {
 				counted = append(counted, laneCall{words, part.function})
 			}
+		}
+		if at == 0 && strings.Contains(text, laneEntryAssigned) && !assigned {
+			return false, fmt.Errorf("lane wiring is unreadable: a %s assigns ROOT_DIR the entry guard's root where the assignment may not run whenever the lane does, so ROOT_DIR may keep a value it inherits", where)
 		}
 		if at == 0 {
 			for _, words := range laneCommands(body)[0] { // the lane runs its own commands as EveryShellCommand reads them
