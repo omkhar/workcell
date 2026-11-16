@@ -28,14 +28,14 @@ var laneBridgePins = map[string]bool{
 	"scripts/ci/job-mutation.sh 92cf9d88765c1d8756f972701829d091e07bead86e7ad66c32f694f5d1877da3":            true,
 	"scripts/ci/job-pin-hygiene.sh 62fefe077f16e97929227e5887f2972c065f8d239d83732623009a098758b1cd":         true,
 	"scripts/ci/job-pr-shape.sh 9e954e229370cae48a74a78f5bf1be7efe19ec5c3a07c0742c9a00a0a38e79f4":            true,
-	"scripts/ci/job-release-asset-acl.sh 9b3c1b46d649130677717455517c6394585c65ea4e24be31cbb0c9136e144ff2":   true,
+	"scripts/ci/job-release-asset-acl.sh 7440b8be87bf2b7a553e18dcd229927216d3e495ca633c842239e8ccb13e8114":   true,
 	"scripts/ci/job-validate.sh d7556f6981a936142e87e21691244edd5313f99033401a35a6d20b64c5ccbac7":            true,
 	"scripts/ci/lib/local-docker-parity.sh 4ce035e24b8b85123af3695a1e4732cbf8b39faad3e81c3fb23e17887f9f35d9": true,
 	"scripts/lib/canonical-build-env.sh 7adee61eddf064dc025b5d168bfbf88e187f95a7b8ea6b3db642683b6d877fbc":    true,
 	"scripts/lib/go-run-env.sh 6d8fac16daf282c210e3283e590f344c0800dc2383861d1a2b54d5948815a27c":             true,
 	"scripts/lib/owned-root.sh cda88920e315acdb6cc34fa8df8f484752b2bf3e92cc85bd0500c18016e35d74":             true,
-	"scripts/lib/trusted-docker-client.sh 3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674":  true,
-	"scripts/validate-repo.sh 0d8b3e40db13f72e28b8f70d9ae9948aa7fc3fd9f37c7603faedc2eb3e90fb84":              true,
+	"scripts/lib/trusted-docker-client.sh fe74966fb062c3e3ddf3b1cb5557c94ea76f48793bd97fe8ece6588562320a95":  true,
+	"scripts/validate-repo.sh 970268c89193dd174501622d86c46931df5994c9a87690e01dad078a291b9ae6":              true,
 }
 
 // laneBridgeGuard opens the entry guard's line, laneBridgeRoot is the line

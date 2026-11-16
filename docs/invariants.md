@@ -374,15 +374,33 @@ runs. The check reads every command that a lane can run, so a command after
 does not count. A workflow path starts from the working directory of its step,
 and a `cd` before it moves that directory.
 
-`internal/metadatautil/lane_scripts.go` reads the lanes. A lane fails the
-check when it can change what a later command runs. An `alias` does this, and
-so does a source of a path outside `${ROOT_DIR}`. A program name that the check
-cannot read also fails. The check does not follow a symlink to a lane file.
-
+`internal/metadatautil/lane_scripts.go` reads the lanes, and
 `internal/metadatautil/lane_reading.go` reads what a lane and each library it
-sources may run. It reads the literal text of an `eval`, a `trap` action and a
-child shell's program. It reads them at most eight deep, after any leading
-redirection.
+sources may run. The reader models a fixed list of bash features. Anything
+outside that list stops the check with an error that names it, so a new shell
+trick cannot keep a script wired. The check does not follow a symlink to a
+lane file.
+
+The reader models these features (`internal/metadatautil/lane_reading.go`).
+A command word may be a literal program name or a function that the lane or a
+library defines. It may be a path, which a literal slash outside its
+expansions makes it. It may be one expansion of a variable whose every write is
+a single literal program name. A write by `+=`, `read`, a substitution or a
+positional parameter leaves the variable unspelled.
+
+A builtin counts only when the reader models it: `set`, `shopt`, `hash`, the
+declarations, `read`, `printf`, `mapfile`, `compgen`, `eval`, `trap` and
+`source`. Each of these must spell its options and names with no expansion
+(`internal/metadatautil/lane_reading.go`). So `set -o $o` and `export P{A,X}TH=`
+stop the check. An inert builtin such as `cd` or `test` counts too. Every other
+builtin stops the check, as `alias`, `enable` and `fc` do.
+
+The reader reads the literal text of an `eval`, a `trap` action and a child
+shell's program, at most eight deep, after any leading redirection. A source
+must name a fixed `${ROOT_DIR}/` library, which the reader then reads as part of
+the lane. A `hash -p`, a `mapfile -C` callback, `set -n` and
+`shopt -s extdebug` stop the check. So does a `trap` whose action expands and
+runs on a signal other than `EXIT` (`internal/metadatautil/lane_reading.go`).
 
 A `${ROOT_DIR}/` path counts only in a lane script that sets `ROOT_DIR` to the
 repository root first and makes it `readonly` on the next line. Bash then keeps
@@ -404,6 +422,20 @@ own text and in the text that an `eval` or a `trap` runs. The function then
 runs in place of the program (`internal/metadatautil/lane_reading.go`). A lane
 that names `BASH_CMDS` or `BASH_ALIASES` stops the check. So does an assignment
 in arithmetic to a name an expansion spells, or to `PATH`.
+
+A write to a variable whose name an expansion computes stops the check too, as
+`printf -v "${v}"`, a nameref or `${!x:=y}` write. One such write is read: a
+library function that writes the variable its caller names, through a `local`
+copy of a positional parameter. Each caller must then name a plain variable
+that bash does not read to decide what runs (`internal/metadatautil/lane_reading.go`).
+That variable then holds no literal program name.
+
+A library function forwards its arguments only in one form. Its body runs
+`"$@"` alone and quoted, and each other command runs a program, a function or a
+builtin that cannot change the positional parameters. A `shift`, a `set` or an
+`eval` in the body makes `"$@"` a command word the check cannot spell. The
+check reads each call as the command it forwards. That command must be a
+program, not a builtin or a function (`internal/metadatautil/lane_reading.go`).
 
 Each reader charges its parsing to a bound linear in the length of the text.
 Text past a bound stops the check with an error, so no lane costs more than a

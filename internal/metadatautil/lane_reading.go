@@ -10,8 +10,173 @@ import (
 	"strings"
 )
 
+// The lane reader models a fixed set of bash features and fails closed on
+// every other one, so a construct it has never seen cannot keep a script
+// wired. It models:
+//
+//   - a command word that is a literal program name, a function the lane or a
+//     library defines, or a builtin in laneModeled or laneInert, whose
+//     operands it reads by that builtin's rule;
+//   - a command word that expands a variable, when bash cannot split it and
+//     the word is a path, as a literal slash outside its expansions makes it,
+//     or the variable holds only literal program names;
+//   - an assignment to a name it can spell, and the literal value it assigns;
+//   - the literal text an eval, a trap action or a child shell runs, read as
+//     the lane is, up to eight deep;
+//   - a source of a fixed ${ROOT_DIR}/ library, read as part of the lane.
+//
+// Anything else that may change what a later command runs is unreadable: an
+// unmodeled builtin, an option or a name an expansion spells, a command word
+// it cannot prove, and a write to a variable bash reads to decide what runs.
+
+// laneModeled are the builtins whose effect on a later command this reader
+// models, each with the reason it cannot read one use, or "".
+var laneModeled = map[string]func(args []string, read map[string]bool) string{
+	"hash": func(args []string, _ map[string]bool) string {
+		if reason := laneLiteralOptions(args, "pt"); reason != "" {
+			return reason
+		}
+		if laneOption(args, "p") {
+			return "binds a name to a path, as hash -p does"
+		}
+		return ""
+	},
+	"set": func(args []string, _ map[string]bool) string {
+		if slices.ContainsFunc(args, laneExpands) {
+			return "sets options or parameters an expansion spells"
+		}
+		if laneOption(args, "n") || slices.Contains(args, "noexec") {
+			return "stops bash running any later command, as set -n does"
+		}
+		return ""
+	},
+	"shopt": func(args []string, _ map[string]bool) string {
+		if slices.ContainsFunc(args, laneExpands) {
+			return "sets options an expansion spells"
+		}
+		if laneOption(args, "s") && slices.Contains(args, "extdebug") {
+			return "lets a DEBUG trap skip a later command, as shopt -s extdebug does"
+		}
+		return ""
+	},
+	"declare": laneDeclaration, "typeset": laneDeclaration, "local": laneDeclaration,
+	"export": laneDeclaration, "readonly": laneDeclaration,
+	"read":    func(args []string, _ map[string]bool) string { return laneLiteralOptions(args, "adinNptu") },
+	"printf":  func(args []string, _ map[string]bool) string { return laneLiteralOptions(args, "v") },
+	"mapfile": laneMapfile, "readarray": laneMapfile,
+	"eval": func(args []string, _ map[string]bool) string {
+		if slices.ContainsFunc(args, laneExpands) {
+			return "evals text this reader cannot spell"
+		}
+		return ""
+	},
+	"trap": func(args []string, _ map[string]bool) string {
+		if len(args) > 0 && args[0] == "--" {
+			args = args[1:]
+		}
+		if len(args) > 1 && laneExpands(args[0]) && slices.ContainsFunc(args[1:], func(signal string) bool {
+			return !slices.Contains([]string{"EXIT", "SIGEXIT", "0"}, strings.ToUpper(signal))
+		}) {
+			return "sets a trap whose action this reader cannot spell"
+		}
+		return ""
+	},
+	"source": laneSourceReason, ".": laneSourceReason,
+	"compgen": func(args []string, _ map[string]bool) string {
+		if reason := laneLiteralOptions(args, "oAGWFCXPS"); reason != "" {
+			return reason
+		}
+		if laneOption(args, "FC") {
+			return "runs a function or a command to complete words, as compgen -F or -C does"
+		}
+		return ""
+	},
+}
+
+// laneInert are the builtins and reserved words no use of which changes what
+// a later command runs, past the variables they assign, which laneWrites
+// reads. exec runs a program only, never a builtin or a function.
+var laneInert = strings.Fields(`: [ true false echo test pwd exit return break continue shift umask ulimit kill
+	jobs times wait type unset cd pushd popd dirs exec caller help logout disown bg fg getopts let builtin
+	command time if then else elif fi case esac for select while until do done in function { } ! [[ ]] coproc`)
+
+// laneDeclaration reads declare, typeset, local, export and readonly: each
+// option must be literal, a nameref is unreadable, since every write through
+// it assigns the name it holds, and each name must be one this reader can
+// spell, with no expansion and no brace group, as export P{A,X}TH= has.
+func laneDeclaration(args []string, _ map[string]bool) string {
+	if reason := laneLiteralOptions(args, ""); reason != "" {
+		return reason
+	}
+	if laneOption(args, "n") {
+		return "declares a nameref, through which a write assigns the name it holds"
+	}
+	for _, arg := range args {
+		if name, _, _ := strings.Cut(arg, "="); arg[0] != '-' && arg[0] != '+' && !laneDeclaredName.MatchString(name) {
+			return "declares a name this reader cannot spell"
+		}
+	}
+	return ""
+}
+
+// laneDeclaredName is a name a declaration may assign: an identifier, an
+// optional subscript and the + of +=.
+var laneDeclaredName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?$`)
+
+// laneMapfile reads mapfile and readarray, whose -C callback runs text.
+func laneMapfile(args []string, _ map[string]bool) string {
+	if reason := laneLiteralOptions(args, "dnOsuCc"); reason != "" {
+		return reason
+	}
+	if laneOption(args, "C") {
+		return "runs a callback this reader cannot spell"
+	}
+	return ""
+}
+
+// laneSourceReason reads a source, which must name a fixed ${ROOT_DIR}/
+// library the reader has read.
+func laneSourceReason(args []string, read map[string]bool) string {
+	library, fixed := laneLibraryPath(append([]string{"source"}, args...))
+	switch {
+	case !fixed:
+		return "sources a file this reader cannot name"
+	case !read[library]:
+		return "sources a library this reader has not read"
+	}
+	return ""
+}
+
 // laneExpands reports whether a word holds an expansion bash makes.
 func laneExpands(word string) bool { return strings.ContainsAny(word, "$`") }
+
+// laneOption reports whether an option word among args holds a letter.
+func laneOption(args []string, letters string) bool {
+	return slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "-") && strings.ContainsAny(arg[1:], letters) })
+}
+
+// laneLiteralOptions returns why a builtin's options are unreadable: a word
+// in option position, before -- and the first operand, that holds an
+// expansion, which may spell any option. The value of an option in valued,
+// the next word when the option ends its word, may hold one: laneWrites reads
+// it when it names a variable.
+func laneLiteralOptions(args []string, valued string) string {
+	for at := 0; at < len(args); at++ {
+		switch arg := args[at]; {
+		case arg == "--":
+			return ""
+		case strings.HasPrefix(arg, "$") || strings.HasPrefix(arg, "`"):
+			return "takes an option an expansion spells"
+		case arg == "" || arg[0] != '-' && arg[0] != '+':
+			return ""
+		case laneExpands(arg):
+			return "takes an option an expansion spells"
+		case strings.ContainsRune(valued, rune(arg[len(arg)-1])) && strings.IndexAny(arg[1:], valued) == len(arg)-2:
+			at++
+		}
+	}
+	return ""
+}
 
 // laneReading is what the reader learns from every command a lane and its
 // libraries may run before it reads any call.
@@ -19,6 +184,8 @@ type laneReading struct {
 	read      map[string]bool        // the libraries the lane sources
 	functions map[string]bool        // the functions the lane and its libraries define
 	writes    map[string][]laneWrite // each variable's writes
+	split     map[string]bool        // each word text seen, true when some use of it leaves an expansion, a glob or a brace group unquoted
+	computed  map[string]string      // each name word an expansion computes, with a command that assigns through it
 	pinned    bool                   // ROOT_DIR is the repository root
 }
 
@@ -31,11 +198,12 @@ type laneReading struct {
 // they run, and then each call as EveryShellCommand reads it.
 func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bool, err error) {
 	bodies := []string{body}
-	reading := laneReading{read: map[string]bool{}, functions: map[string]bool{}, writes: map[string][]laneWrite{}, pinned: pinned}
+	reading := laneReading{read: map[string]bool{}, functions: map[string]bool{}, writes: map[string][]laneWrite{}, split: map[string]bool{}, computed: map[string]string{}, pinned: pinned}
 	for _, library := range libraries {
 		bodies, reading.read[library.path] = append(bodies, library.text), true
 	}
 	var calls []laneCall
+	stable, forwarders := map[string]bool{}, map[string]bool{}
 	for at, text := range bodies {
 		where := "lane"
 		if at > 0 {
@@ -68,12 +236,18 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		}
 		for _, args := range scanned {
 			words := texts(args)
+			for _, each := range args {
+				reading.split[each.text] = reading.split[each.text] || laneUnquotedRisk(each)
+			}
 			if laneChildNamesRoot(words) {
 				return false, fmt.Errorf("lane wiring is unreadable: a %s runs %q, a child shell whose own program names ROOT_DIR, which the child does not inherit pinned", where, strings.Join(words, " "))
 			}
-			writes, _, opaque := laneScanWrites(args)
+			writes, computed, opaque := laneScanWrites(args)
 			if opaque {
 				return false, errLaneBraces
+			}
+			for _, name := range computed {
+				reading.computed[name] = strings.Join(words, " ")
 			}
 			for _, write := range writes {
 				switch {
@@ -97,14 +271,36 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 			return false, fmt.Errorf("lane wiring is unreadable: a lane nests function definitions deeper than this reader parses")
 		}
 		for _, part := range parts {
+			stable[part.function], forwarders[part.function] = laneBodyRuns(part.text)
+			forwarders[part.function] = forwarders[part.function] && part.function != ""
 			for _, words := range part.commands {
 				calls = append(calls, laneCall{words, part.function})
 			}
 		}
 	}
+	outputs, err := reading.outputs(calls, stable)
+	if err != nil {
+		return false, err
+	}
 	for _, call := range calls {
 		if slices.Equal(call.words, shellReadBound) {
 			return false, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which stands for text past what the shell reader reads", strings.Join(call.words, " "))
+		}
+		command := laneCommand(call.words)
+		if forwarders[call.function] && slices.Equal(command, []string{"$@"}) {
+			continue // each call of the forwarder is read as the command it forwards
+		}
+		reason := reading.callReason(command)
+		if len(command) > 0 && forwarders[command[0]] && reason == "" {
+			reason = reading.forwardedReason(command[1:])
+		}
+		for _, at := range outputs[firstOf(command)] {
+			if name := strings.Join(command[min(at, len(command)):min(at+1, len(command))], ""); !laneOutputName(name) {
+				reason = fmt.Sprintf("names %q for a variable %s assigns, which bash may read to decide what runs", name, command[0])
+			}
+		}
+		if reason != "" {
+			return false, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which %s", strings.Join(call.words, " "), reason)
 		}
 	}
 	return startup, nil
@@ -117,11 +313,215 @@ type laneCall struct {
 	function string
 }
 
+// laneBodyRuns reads a library function's body. stable reports that each
+// command of it runs a literal program, a function or a builtin in
+// laneForwardSafe, none of which can change the positional parameters, as
+// shift, set or an eval of either would. forwards reports that the function
+// also forwards its arguments as a command, which this reader models in one
+// form only: a stable body with a command that is "$@" alone and quoted. Each
+// call of it then runs the words after the function's name.
+func laneBodyRuns(body string) (stable, forwards bool) {
+	budget := 16*len(body) + 1<<16
+	stable = shellLogicalCommands(body, &budget, func(each command) bool {
+		words := laneUnredirected(texts(each.args))
+		for len(words) > 0 && words[0] != "[[" && (slices.Contains(laneLeadingWords, words[0]) || isCommandPrefixWord(words[0]) || laneAssignmentWord.MatchString(words[0]) || strings.HasSuffix(words[0], ")")) {
+			words = words[1:]
+		}
+		switch {
+		case len(words) == 0:
+			return true
+		case words[0] == "$@" || words[0] == "${@}":
+			forwards = len(words) == 1 && !slices.ContainsFunc(each.args, func(arg word) bool { return laneExpands(arg.text) && laneExpands(arg.syntax) })
+			return forwards
+		}
+		if name := words[0]; laneExpands(name) || name != "[" && name != "[[" && strings.ContainsAny(name, "*?[{") {
+			return false
+		}
+		return slices.Contains(laneForwardSafe, words[0]) || !slices.Contains(laneBuiltins, words[0])
+	})
+	return stable, stable && forwards
+}
+
+// outputs returns, for each library function, the positional parameters it
+// uses as the name of a variable it assigns, as printf -v "${name}" does after
+// local name="$2". A write to a name an expansion computes is an error unless
+// it is one such parameter: a local of a stable library function that holds
+// it, under a name every write to which is a local of that same parameter, so
+// no function the outer one calls rebinds it through bash's dynamic scope.
+func (reading laneReading) outputs(calls []laneCall, stable map[string]bool) (map[string][]int, error) {
+	parameters := map[string]map[string]int{} // function, local name, positional index
+	for _, call := range calls {
+		writes, _ := laneWrites(call.words)
+		for _, write := range writes {
+			match := laneParameter.FindStringSubmatch(write.name + "=" + write.value)
+			if match == nil || call.function == "" || !stable[call.function] || firstOf(laneCommand(call.words)) != "local" ||
+				slices.ContainsFunc(reading.writes[write.name], func(other laneWrite) bool { return !other.parameter || other.value != write.value }) {
+				continue
+			}
+			if parameters[call.function] == nil {
+				parameters[call.function] = map[string]int{}
+			}
+			parameters[call.function][match[1]] = int(match[2][0] - '0')
+		}
+	}
+	outputs, accepted := map[string][]int{}, map[string]bool{}
+	for _, call := range calls {
+		_, computed := laneWrites(call.words)
+		for _, name := range computed {
+			if match := laneComputedName.FindStringSubmatch(name); match != nil && parameters[call.function][match[1]] > 0 {
+				outputs[call.function] = append(outputs[call.function], parameters[call.function][match[1]])
+				accepted[name] = true
+			}
+		}
+	}
+	for name, command := range reading.computed {
+		if !accepted[name] {
+			return nil, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which assigns a variable whose name this reader cannot spell", command)
+		}
+	}
+	for _, call := range calls {
+		command := laneCommand(call.words)
+		for _, at := range outputs[firstOf(command)] {
+			if at < len(command) {
+				reading.writes[command[at]] = append(reading.writes[command[at]], laneWrite{name: command[at]}) // a value the function computes
+			}
+		}
+	}
+	return outputs, nil
+}
+
 // laneArithmeticAssigns is an assignment in arithmetic, in (( )), let, $[ ],
 // a subscript or a test's integer operand, to a name an expansion computes or
 // to one bash reads to decide what runs, which no word of the command spells
 // as an assignment when it is written with spaces, as (( PATH = 1 )) is.
 var laneArithmeticAssigns = regexp.MustCompile(`(?:\(\(|\blet\b|\$\[|\w\[|-(?:eq|ne|lt|le|gt|ge)\s)[^)\]\n]*(?:\$\{?[A-Za-z0-9_]+\}?\w*|\b(?:PATH|ENV|BASH\w*|PS4|SHELLOPTS)\b)(?:\[[^\]]*\])?\s*(?:[-+*/%&|^]|<<|>>)?=(?:[^=]|$)`)
+
+// laneParameter is a local assignment of a positional parameter, as in
+// local name="$2" read without its quotes, and laneComputedName is a name word
+// that is one expansion of a variable.
+var (
+	laneParameter    = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)=\$\{?([1-9])\}?$`)
+	laneComputedName = regexp.MustCompile(`^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$`)
+)
+
+// laneOutputName reports whether a caller may hand a library function name as
+// the variable it assigns: a plain identifier that bash does not read to
+// decide what runs, as it reads BASH_CMDS, BASHOPTS, PATH, ENV and PS4, and
+// not ROOT_DIR.
+func laneOutputName(name string) bool {
+	return laneVariableName.MatchString(name) && !strings.HasPrefix(name, "BASH") && !slices.Contains(laneStartupNames, name) &&
+		!slices.Contains(laneShellNames, name) && name != "ROOT_DIR"
+}
+
+// laneForwardSafe are the builtins a forwarder's body may run: none of them
+// changes the positional parameters.
+var laneForwardSafe = strings.Fields(`: [ [[ test true false echo printf pwd return exit break continue cd pushd popd dirs
+	local declare typeset readonly export unset read mapfile readarray umask ulimit kill wait jobs type let`)
+
+// forwardedReason returns why this reader cannot show what a forwarder runs
+// for one call, or "": the forwarded command word must name a program, since
+// a builtin or a function it forwards to would run text, or bind names, this
+// reader never sees as a command of the lane, as run eval or run trap would.
+func (reading laneReading) forwardedReason(args []string) string {
+	command := laneCommand(args)
+	if len(command) == 0 {
+		return ""
+	}
+	if name := command[0]; !laneExpands(name) && (slices.Contains(laneBuiltins, name) || reading.functions[name]) {
+		return fmt.Sprintf("forwards its arguments to %s, a builtin or a function this reader does not read through", name)
+	}
+	return reading.callReason(command)
+}
+
+// callReason returns why this reader cannot show what a command, from its
+// command word on, does to a later command, or "" when it can.
+func (reading laneReading) callReason(command []string) string {
+	if len(command) == 0 {
+		return ""
+	}
+	name, args := command[0], command[1:]
+	if laneExpands(name) {
+		return reading.expandedReason(name)
+	}
+	if name != "[" && name != "[[" && (strings.ContainsAny(name, "*?[") || len(braceWords(name)) > 1) {
+		return "runs a command word that a glob or a brace group may spell"
+	}
+	if rule, modeled := laneModeled[name]; modeled {
+		return rule(args, reading.read)
+	}
+	if slices.Contains(laneBuiltins, name) && !slices.Contains(laneInert, name) {
+		return fmt.Sprintf("runs %s, a builtin this reader does not model", name)
+	}
+	return ""
+}
+
+// expandedReason returns why this reader cannot prove what program a command
+// word with an expansion runs, or "". A word bash may split, one that some
+// use leaves unquoted and that expands a variable the lane writes, is
+// unreadable. Otherwise a word with a slash outside its expansions is a path,
+// which bash never runs as a builtin or a function, and a word that is one
+// expansion of a variable runs a program when its default and every value
+// the lane writes to it is a literal program name. A pinned ROOT_DIR holds
+// an absolute path, so a word that starts with it is a path too.
+func (reading laneReading) expandedReason(name string) string {
+	if reading.pinned && laneRootStart.MatchString(name) {
+		return ""
+	}
+	if split, seen := reading.split[name]; split || !seen {
+		for _, variable := range laneExpansionNames.FindAllStringSubmatch(name, -1) {
+			if !laneVariableName.MatchString(variable[1]) || variable[1] == "_" || len(reading.writes[variable[1]]) > 0 {
+				return "runs a command word bash may split, which expands a variable the lane writes"
+			}
+		}
+	}
+	if strings.Contains(laneExpansion.ReplaceAllString(name, ""), "/") {
+		return ""
+	}
+	variable := laneProgramVariable.FindStringSubmatch(name)
+	if variable == nil || variable[1]+variable[2] == "_" {
+		return "runs a command whose name this reader cannot spell"
+	}
+	for _, write := range append([]laneWrite{{value: variable[3], literal: true}}, reading.writes[variable[1]+variable[2]]...) {
+		if !write.literal || !laneProgramWord(write.value, reading.functions) {
+			return fmt.Sprintf("may run %q, which is not a program this reader can name", write.value)
+		}
+	}
+	return ""
+}
+
+// laneRootStart is a word that starts with an expansion of ROOT_DIR.
+var laneRootStart = regexp.MustCompile(`^\$(?:ROOT_DIR|\{ROOT_DIR\})(?:/|$)`)
+
+// laneExpansion is one expansion in a word: ${...} with no nested brace, a
+// named or special parameter, or a backquoted substitution, and
+// laneExpansionNames captures the name each expands. laneVariableName is a
+// name a lane may write.
+var (
+	laneExpansion      = regexp.MustCompile("\\$\\{[^}]*\\}|\\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])|`[^`]*`")
+	laneExpansionNames = regexp.MustCompile("\\$\\{?[!#]?([A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])|`")
+	laneVariableName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
+
+// laneProgramVariable is a command word that is one expansion of a named
+// variable, with an optional literal default, as ${GO_BIN} or
+// ${HOST_DOCKER_BIN:-docker} are.
+var laneProgramVariable = regexp.MustCompile(`^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([A-Za-z0-9_./+-]*))?\})$`)
+
+// laneUnquotedRisk reports whether a word, as written, leaves an expansion, a
+// glob or a brace group unquoted, so bash may split it into other words.
+func laneUnquotedRisk(each word) bool {
+	return strings.ContainsAny(each.syntax, "$`*?") || strings.Contains(each.syntax, "[") || len(braceWords(each.syntax)) > 1
+}
+
+// braceWords returns the words a brace expansion makes of a word, read as its
+// own syntax, with two words standing for one too large to expand.
+func braceWords(text string) []string {
+	variants, opaque := braceVariants(text, text)
+	if opaque {
+		return []string{"", ""}
+	}
+	return variants
+}
 
 // laneScan returns the words of every command text may run, as written: each
 // command of each logical line, a function body's included, and, read the same
@@ -141,8 +541,31 @@ func laneScan(text string) (commands [][]word, children []string, complete bool)
 			return !found || scan(inner, depth+1)
 		})
 	}
-	complete = scan(text, 0)
+	complete = scan(laneProcessesAsCommands(text), 0)
 	return commands, children, complete
+}
+
+// laneProcessesAsCommands rewrites each unquoted <( or >( as $(, so the shell
+// reader moves the process a process substitution runs out of the command's
+// words and reads it as its own command, as it reads a command substitution.
+func laneProcessesAsCommands(text string) string {
+	out := []byte(text)
+	single, double := false, false
+	for at := 0; at < len(out); at++ {
+		switch c := out[at]; {
+		case single:
+			single = c != '\''
+		case c == '\\':
+			at++
+		case c == '\'' && !double:
+			single = true
+		case c == '"':
+			double = !double
+		case !double && (c == '<' || c == '>') && at+1 < len(out) && out[at+1] == '(':
+			out[at] = '$'
+		}
+	}
+	return string(out)
 }
 
 // laneInnerText returns the text a command runs, if it runs one this reader
@@ -267,6 +690,9 @@ func laneScanWrites(args []word) (writes []laneWrite, computed []string, opaque 
 			}
 		}
 	}
+	for at := range writes {
+		writes[at].parameter = firstOf(laneCommand(command)) == "local" && laneParameter.MatchString(writes[at].name+"="+writes[at].value)
+	}
 	return writes, computed, false
 }
 
@@ -300,6 +726,7 @@ var laneShellNames = []string{"PS4", "SHELLOPTS", "BASHOPTS"}
 type laneWrite struct {
 	name, value string
 	literal     bool // the command assigns value, spelled with no expansion
+	parameter   bool // a local assigns a positional parameter, as local name="$2" does
 }
 
 // laneDefaultAssign is an expansion that assigns a default, as ${name:=value}
@@ -416,4 +843,31 @@ func laneWrites(words []string) (writes []laneWrite, computed []string) {
 		}
 	}
 	return writes, computed
+}
+
+// laneProgramName is a value that names a program: a path or a bare name of
+// path characters alone.
+var laneProgramName = regexp.MustCompile(`^[A-Za-z0-9_./+-]+$`)
+
+// laneBuiltins are bash's builtins and reserved words, which bash runs in the
+// shell itself, so a variable that holds one may rebind what the lane runs.
+var laneBuiltins = strings.Fields(`. : [ alias bg bind break builtin caller cd command compgen complete compopt
+	continue declare dirs disown echo enable eval exec exit export false fc fg getopts hash help history jobs kill
+	let local logout mapfile popd printf pushd pwd read readarray readonly return set shift shopt source suspend test
+	times trap true type typeset ulimit umask unalias unset wait if then else elif fi case esac for select while until
+	do done in function time { } ! [[ ]] coproc`)
+
+// laneProgramWord reports whether a value a lane spells for a program variable
+// names a program: empty, which runs nothing, or a program name that is not a
+// builtin, a reserved word or a function the lane or a library defines.
+func laneProgramWord(value string, functions map[string]bool) bool {
+	return value == "" || laneProgramName.MatchString(value) && !slices.Contains(laneBuiltins, value) && !functions[value]
+}
+
+// firstOf returns the first word, or "".
+func firstOf(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	return words[0]
 }

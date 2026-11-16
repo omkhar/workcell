@@ -318,11 +318,13 @@ select_workcell_docker_context() {
 }
 
 buildx_cmd() {
+  # A literal slash keeps each command word below a path the lane wiring check
+  # can read, never a builtin or a function.
   ensure_workcell_trusted_buildx
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
-    run_workcell_docker_client_command env DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
+    run_workcell_docker_client_command env DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" "${WORKCELL_TRUSTED_BUILDX_BIN%/*}/${WORKCELL_TRUSTED_BUILDX_BIN##*/}" "$@"
   else
-    run_workcell_docker_client_command "${WORKCELL_TRUSTED_BUILDX_BIN}" "$@"
+    run_workcell_docker_client_command "${WORKCELL_TRUSTED_BUILDX_BIN%/*}/${WORKCELL_TRUSTED_BUILDX_BIN##*/}" "$@"
   fi
 }
 
