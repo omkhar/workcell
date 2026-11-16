@@ -298,15 +298,8 @@ func (cases *laneCases) shift(command []string, scopes []int, certain bool) {
 		}
 		c.branch.shift = map[bool]int{true: count, false: -1}[c.branch.shift == 0]
 	case "set":
-		for at := 1; at < len(command); at++ {
-			option := command[at]
-			if option == "-" || option == "--" || !strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "+") {
-				cases.own.changed = true
-				return
-			}
-			if strings.Contains(option[1:], "o") {
-				at++
-			}
+		if laneSetMoves(command[1:]) {
+			cases.own.changed = true
 		}
 	}
 }
