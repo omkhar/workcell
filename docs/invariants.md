@@ -370,9 +370,33 @@ descriptors.
 `validate-repo.sh`, a CI job script or a workflow must run a cited
 `scripts/*.sh` path as a command. Thus a doc cannot cite a gate that nothing
 runs. The check reads every command that a lane can run, so a command after
-`false &&` or after an `exit` counts. A comment, a heredoc or an array member
-does not count. A workflow path starts from the working directory of its step,
-and a `cd` before it moves that directory.
+`false &&` counts. A comment, a heredoc or an array member does not count, but
+a substitution in an unquoted heredoc runs, so it counts. A workflow path starts
+from the working directory of its step, and a `cd` before it moves that
+directory.
+
+An `exit` or an `exec` of a program that always runs stops the check when any
+command follows it. So does a call, a `source` or an `eval` whose body or text
+always runs one (`internal/metadatautil/lane_reading.go`). An `exit` whose
+status may be 0 stops the check in a loop, a `case` branch or an `if`
+condition too, since those may run. One in an `if` branch, behind `||` or `&&`,
+or in a subshell still counts, as a lane's failed check does. So does one in a
+`case` branch of literal patterns on one variable, as `-h | --help)` on the
+lane's own `$1` is. A literal subject or a glob such as `*)` matches whenever
+the case runs, and a function's `$1` is its caller's, so neither counts.
+
+A call stops the check when its body may exit with 0 before a `return` that
+always runs. A `return` in a branch or a loop does not count, since the body
+may skip it. In the body itself, an `exit` that a later command follows stops
+the check even after a `return`. A `return` in a subshell, a pipeline, a
+`coproc` or the background returns from nothing, so it does not count. When
+the reader loses track of the nesting, as after a `coproc`, any later `exit`
+stops the check.
+
+An `EXIT` trap stops the check when its action, or a function it calls, may
+replace the status the lane ends with. An `exit` whose status may be 0, a bare
+`exit` after another command, an `exec` of a program and a `source` all can.
+Such a trap can turn a failure before the gate into success.
 
 `internal/metadatautil/lane_scripts.go` reads the lanes, and
 `internal/metadatautil/lane_reading.go` reads what a lane and each library it
@@ -395,15 +419,25 @@ declarations, `read`, `printf`, `mapfile`, `compgen`, `eval`, `trap` and
 stop the check. An inert builtin such as `cd` or `test` counts too. Every other
 builtin stops the check, as `alias`, `enable` and `fc` do.
 
+The check stops at `kill`, `pkill`, `killall`, `logout` and `suspend`, which
+may end the lane's shell. An `export -f`, a `declare -fx`, an `export` of a defined function's name and
+`set -a` stop the check too. A child bash calls an exported function in place
+of the program it names, so the gate would not run its own commands.
+
 The reader reads the literal text of an `eval`, a `trap` action and a child
 shell's program, at most eight deep, after any leading redirection. A source
 must name a fixed `${ROOT_DIR}/` library, which the reader then reads as part of
 the lane. A `hash -p`, a `mapfile -C` callback, `set -n`, `set -t`,
 `shopt -so noexec` and `shopt -s extdebug` stop the check. So does a `trap`
-whose action expands and runs on a signal other than `EXIT`
+that sets an action on a signal other than `EXIT`
 (`internal/metadatautil/lane_reading.go`). A child shell counts only with the
 options that run its file, such as `-e`, `-x` or `-o pipefail`
 (`internal/metadatautil/shell_invocations.go`).
+
+The reader reads `set -o` options only from `set`, so any `shopt -o` stops the
+check. So does `shopt -s lastpipe`, which runs a pipeline's last command, and
+any `exit` in it, in the lane's shell. A function that the text of an `eval` or
+a `trap` defines stops the check, since the reader does not read its body.
 
 Bash reads the value of a variable in arithmetic as an expression, which can
 assign `PATH`. The reader reads `((`, `$((`, `let`, a `[[` number test, a
@@ -415,7 +449,9 @@ and `localvar_inherit` stop the check.
 
 Only a plain assignment, a declaration with a value and a `for` loop count as
 writes. None counts in a pipeline or a background job, which run in a
-subshell, or in the text an `eval` runs.
+subshell, or in the text an `eval` runs. A default such as `${v:=word}` counts
+wherever bash expands it, also in a redirection, a here-string or the body of
+an unquoted heredoc.
 
 A plain `local` at the top level of a function body gives the function its
 own copy of a name. A write in any function that does not declare that name
@@ -431,9 +467,13 @@ it may run.
 
 The reader refuses a function named after a builtin or a reserved word
 (`internal/metadatautil/lane_reading.go`). Bash would call that function in
-place of the builtin. An `eval` counts only when it stands bare and every
-other `eval` of the same text counts too. An `unset` of a name counts as a
-write that may expose the copy a caller holds. That holds for a name it reads
+place of the builtin. An `eval` counts only when it stands bare, with no
+wrapper, prefix or redirection, as in `eval "exec $fd<&-" 2>/dev/null`. Every
+other `eval` of the same text must count too. The reader counts each
+definition once, however often the lane calls it.
+
+An `unset` of a name counts as a write that may expose the copy a caller
+holds. That holds for a name it reads
 from a list as well. A `for` or `select` loop over the name counts as a write
 too.
 
