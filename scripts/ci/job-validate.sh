@@ -18,6 +18,10 @@ if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
   fi
 fi
 unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN workcell_validate_token
+# The trusted docker client library runs HOST_DOCKER_BIN; a lane names it, so
+# a value the job inherits cannot choose the program.
+# shellcheck disable=SC2034
+HOST_DOCKER_BIN=docker
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
 PROFILE="${WORKCELL_CI_VALIDATE_PROFILE:-pr-parity}"

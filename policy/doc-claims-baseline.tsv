@@ -6,6 +6,8 @@
 # change may add its rows once. Delete a row when you fix its hit.
 # Rules: missing-path (named path does not exist), escaping-path (a .. or
 # symlink component), unwired-script (no lane runs it as a command),
+# ungated-script (a lane runs it only where its failure does not fail
+# the lane, as continue-on-error, || true or a pipe without pipefail do),
 # unanchored-claim (a sentence with an enforcement word
 # from scripts/lib/doc-claims.awk and no scripts/, internal/ or
 # .github/workflows/ span within 2 lines). SUBJECT is the full sentence.
@@ -43,10 +45,13 @@ CHANGELOG.md	unanchored-claim	- publish `policy/hardening-profile.toml`, a revie
 CHANGELOG.md	unanchored-claim	It also rejects an `approvals_reviewer` config override.	changelog entry records a past change by pull request, not by gate path
 CHANGELOG.md	unanchored-claim	It fails when the CLI help shows an option or a top-level command that the adapter manifest does not classify.	changelog entry records a past change by pull request, not by gate path
 CHANGELOG.md	unanchored-claim	Supersedes v1.0.0-rc.1, which was tagged but never published: its release workflow failed in the new arm64 Copilot runtime-image probe, whose build requested a manifest-list output (`BUILDKIT_MULTI_PLATFORM=1`) that the `--load` docker exporter rejects on the buildx `v0.35.0` pin, and release preflight then failed closed on that check.	changelog entry records a past change by pull request, not by gate path
+CHANGELOG.md	ungated-script	scripts/update-provider-pins.sh	the upstream-refresh provider step runs it with continue-on-error, so a failed kind drops its candidate and the report job fails the run
+CHANGELOG.md	ungated-script	scripts/update-provider-pins.sh	the upstream-refresh provider step runs it with continue-on-error, so a failed kind drops its candidate and the report job fails the run
 CHANGELOG.md	unwired-script	scripts/lib/trusted-entrypoint.sh	sourced library, not a gate; no lane runs it as a command
 CONTRIBUTING.md	unanchored-claim	- Node.js and npm (the bootstrap helper enforces the repository-locked markdownlint runtime requirement)	claim predates the rule; cite the enforcing path or drop the claim
 CONTRIBUTING.md	unanchored-claim	A symlink anywhere in the pushed tree fails the push before any check runs.	claim predates the rule; cite the enforcing path or drop the claim
 CONTRIBUTING.md	unanchored-claim	Without it `git verify-commit` cannot verify your own commits and the `pre-push` hook rejects every push:	claim predates the rule; cite the enforcing path or drop the claim
+CONTRIBUTING.md	ungated-script	scripts/update-provider-pins.sh	the upstream-refresh provider step runs it with continue-on-error, so a failed kind drops its candidate and the report job fails the run
 CONTRIBUTING.md	unwired-script	scripts/ci/run-codespell.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
@@ -96,6 +101,8 @@ docs/b6-disposition-options-draft.md	unanchored-claim	It now requires local oper
 docs/benchmark-evidence/session-startup-2026-07-15.md	unwired-script	scripts/bench/run-startup-bench.sh	operator tool, or called by another script; no lane runs it directly
 docs/ci-efficiency-and-reliability.md	unanchored-claim	A missing archive or a different ID fails the job.	claim predates the rule; cite the enforcing path or drop the claim
 docs/ci-efficiency-and-reliability.md	unanchored-claim	The job names that branch protection requires did not change.	claim predates the rule; cite the enforcing path or drop the claim
+docs/ci-efficiency-and-reliability.md	ungated-script	scripts/ci/cost-report.sh	a report piped to tee under the default shell, which has no pipefail; it informs and does not gate
+docs/ci-efficiency-and-reliability.md	ungated-script	scripts/ci/flaky-report.sh	a report piped to tee under the default shell, which has no pipefail; it informs and does not gate
 docs/ci-threat-model.md	unanchored-claim	**No global rule rejects self-hosted runners.** Pin checks cover the CI build matrix, macOS matrices, and arm64 release label.	claim predates the rule; cite the enforcing path or drop the claim
 docs/ci-threat-model.md	unanchored-claim	It also rebuilds the Rust vendor tree from crates.io against `Cargo.lock` and rejects any difference except the `$comment` member of checksum files.	claim predates the rule; cite the enforcing path or drop the claim
 docs/ci-threat-model.md	unanchored-claim	The environment requires maintainer approval and does not permit administrator bypass.	claim predates the rule; cite the enforcing path or drop the claim
@@ -144,6 +151,11 @@ docs/github-workflows.md	unanchored-claim	The signer downloads those subjects by
 docs/github-workflows.md	unanchored-claim	`pre-merge.sh` waits for the live lane at the end and fails if that lane fails.	claim predates the rule; cite the enforcing path or drop the claim
 docs/github-workflows.md	unanchored-claim	`publish` also fails closed if GitHub drops the mode of a changed executable file, because the tree check then fails.	claim predates the rule; cite the enforcing path or drop the claim
 docs/github-workflows.md	unanchored-claim	| `pr-base-policy.yml` | Requires `main` as the base for a ready PR.	claim predates the rule; cite the enforcing path or drop the claim
+docs/github-workflows.md	ungated-script	scripts/ci/upstream-refresh-candidate.sh	the refresh steps run it with continue-on-error, so a failed kind drops its candidate and the report job fails the run
+docs/github-workflows.md	ungated-script	scripts/ci/upstream-refresh-rederive.sh	non-blocking by design: the step runs it with continue-on-error, and its failure holds only the toolchain candidate
+docs/github-workflows.md	ungated-script	scripts/ci/upstream-refresh-rederive.sh	non-blocking by design: the step runs it with continue-on-error, and its failure holds only the toolchain candidate
+docs/github-workflows.md	ungated-script	scripts/ci/upstream-refresh-rederive.sh	non-blocking by design: the step runs it with continue-on-error, and its failure holds only the toolchain candidate
+docs/github-workflows.md	ungated-script	scripts/ci/upstream-refresh-scope-guard.sh	non-blocking by design: its result decides auto-merge, and the doc says its failure does not fail the job
 docs/github-workflows.md	unwired-script	scripts/build-and-test.sh	operator tool, or called by another script; no lane runs it directly
 docs/github-workflows.md	unwired-script	scripts/ci-plan.sh	operator tool, or called by another script; no lane runs it directly
 docs/github-workflows.md	unwired-script	scripts/ci-plan.sh	operator tool, or called by another script; no lane runs it directly

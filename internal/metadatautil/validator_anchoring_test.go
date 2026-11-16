@@ -155,6 +155,13 @@ func TestTextMatchingFunctions(t *testing.T) {
 	}{
 		"read then contains":         {"func f() { b, _ := os.ReadFile(p); _ = bytes.Contains(b, x) }", []string{"f"}},
 		"read then has prefix":       {"func f() { s := readText(p); _ = strings.HasPrefix(s, x) }", []string{"f"}},
+		"read then has suffix":       {"func f() { s := readText(p); _ = strings.HasSuffix(s, x) }", []string{"f"}},
+		"bytes has suffix":           {"func f() { b, _ := os.ReadFile(p); _ = bytes.HasSuffix(b, x) }", []string{"f"}},
+		"has suffix value alias":     {"var ends = strings.HasSuffix\nfunc f() { _ = ends(a, x) }", []string{"ends", "f"}},
+		"cut suffix":                 {"func f() { s := readText(p); _, _ = strings.CutSuffix(s, x) }", []string{"f"}},
+		"cut prefix":                 {"func f() { b := readRepoFile(p); _, _ = bytes.CutPrefix(b, x) }", []string{"f"}},
+		"cut":                        {"func f() { s := readText(p); _, _, _ = strings.Cut(s, x) }", []string{"f"}},
+		"trim suffix is no search":   {"func f() { s := readText(p); _ = strings.TrimSuffix(s, x) }", nil},
 		"read then index":            {"func f() { s := readRepoFile(p); _ = strings.Index(s, x) }", []string{"f"}},
 		"read then regexp":           {"func f() { s := readText(p); _ = regexp.MustCompile(x).MatchString(s) }", []string{"f", "f"}},
 		"one name per match":         {"func f() { _ = strings.Contains(a, x); _ = strings.HasPrefix(a, y) }", []string{"f", "f"}},

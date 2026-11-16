@@ -1128,7 +1128,7 @@ func TestCheckPinnedInputsRejectsPATHResolvedMarkdownlintValidation(t *testing.T
 	t.Parallel()
 
 	cfg := rewriteValidateRepoFixture(t, func(content string) string {
-		return strings.Replace(content, `"${MARKDOWNLINT_BIN}" "${markdown_files[@]}"`, `markdownlint "${markdown_files[@]}"`, 1)
+		return strings.Replace(content, `"${MARKDOWNLINT_BIN%/*}/markdownlint" "${markdown_files[@]}"`, `markdownlint "${markdown_files[@]}"`, 1)
 	})
 	requirePinnedInputsErrorContains(t, cfg, "repository-local locked markdownlint binary")
 }

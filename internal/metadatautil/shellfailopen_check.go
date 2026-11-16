@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"fmt"
+	"iter"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,7 @@ import (
 // its status, so every one is a hit until the script repairs it.
 //
 // The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits each file carries today; a count above its row fails, and so does a count below it, so the row drops with the repair.
+// A row may only shrink: a row that the baseline at the merge base of HEAD with origin/main (or main) does not hold, or a count above that row's, fails, so a change cannot admit a new hit by adding its row.
 //
 // The scan reads lines with shellWords, the reader ShellInvocations uses, so
 // quotes, comments, heredocs and an open `$(` mean the same thing to both.
@@ -65,7 +67,17 @@ func CheckShellFailOpen(rootDir string) error {
 	if err != nil {
 		return err
 	}
+	base, err := mergeBaseShellFailOpenBaseline(rootDir)
+	if err != nil {
+		return err
+	}
 	var failures []string
+	for key, allowed := range baseline {
+		if allowed > base[key] {
+			failures = append(failures, fmt.Sprintf("%s: baseline row for %s allows %d, but the merge base allows %d; repair the hit instead of adding to the row",
+				key.path, key.rule, allowed, base[key]))
+		}
+	}
 	for key, count := range counts {
 		allowed := baseline[key]
 		switch {
@@ -150,7 +162,6 @@ var (
 	// shellInnerPipe is a later pipeline stage, whose status replaces the
 	// tool's unless set -o pipefail ran before it and no set +o pipefail since.
 	shellInnerPipe = regexp.MustCompile(`(?:^|[^|])\|\s*[^\s;&|)}]`)
-	shellPipefail  = regexp.MustCompile(`\bset\s+([-+])[A-Za-z]*o\s+pipefail\b`)
 	// shellProcessSubst is a process substitution, <( or >(, as a redirection or an argument.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^$])[<>]\(`)
 	// shellLoopSubst is the done < <( loop form, the only one a wait "$!" or a completion sentinel covers.
@@ -187,8 +198,8 @@ var (
 	// ends the script or function, so the list after it never runs.
 	shellFailOpenTerminal   = regexp.MustCompile(`^\s*(?:(?:command|builtin)(?:\s+(?:-p|--))*\s+)?(?:exit|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`) // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit or die-style command, which ends the script, so the list after it never runs; a return fails outside a function, so it does not end the list.
 	shellFailOpenStatusRead = regexp.MustCompile(`\$(?:\?|\{\?\})(?:[^\w]|$)`)
-	shellFailOpenRunsFirst  = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&") // shellFailOpenRunsFirst is a substitution, a process substitution or an operator, which runs a command of its own before a later word. The & of a >& or <& redirection runs nothing.
-	shellFailOpenTested     = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
+	shellFailOpenRunsFirst  = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&|[;\n]") // shellFailOpenRunsFirst is a substitution, a process substitution, an operator or a command boundary, which runs a command of its own before a later word, as the true of { true; rc=$?; } does. The & of a >& or <& redirection runs nothing.
+	shellFailOpenTested     = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                               // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
 	// shellFailOpenList is a && or || operator, which joins two commands.
 	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
 	shellOutWord      = regexp.MustCompile(`[^\s;&|<>()]+`)
@@ -198,7 +209,12 @@ var (
 	shellAssignment   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
 	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`) // shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
 	shellRedirectOnly = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
-	shellLaterSubst   = regexp.MustCompile("\\$\\((?:[^(]|$)|`") // shellLaterSubst is a command substitution, not an arithmetic $((.
+	// shellNamedRedirect is a redirection that stores its descriptor in a
+	// variable, as {fd}>/dev/null does; shellNamedRedirectOnly is one whose
+	// target is the next word.
+	shellNamedRedirect     = regexp.MustCompile(`^\{[A-Za-z_][A-Za-z0-9_]*\}[<>]`)
+	shellNamedRedirectOnly = regexp.MustCompile(`^\{[A-Za-z_][A-Za-z0-9_]*\}[<>]+&?$`)
+	shellLaterSubst        = regexp.MustCompile("\\$\\((?:[^(]|$)|`") // shellLaterSubst is a command substitution, not an arithmetic $((.
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips
@@ -275,7 +291,23 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		current.code = shellCodeOnly(current.raw)
 		statements = append(statements, current)
 	}
-	pipefail, nesting := false, 0
+	// A wait "$!" covers a loop only when nothing in it may start a job the
+	// reader cannot see: a function this file may define, an eval or a
+	// source, or, once the file runs an eval or a source anywhere or sets a
+	// trap that runs mid-loop, any command, since that text may define a
+	// function by any name or start a job between commands.
+	// A script the definition reader could not finish may define any name.
+	defined, complete := shellFailOpenDefinedFunctions(script)
+	opaque := !complete || slices.ContainsFunc(statements, func(each logical) bool {
+		called, traps := shellFailOpenStartsUnseen(each.raw, func(string) bool { return false })
+		return called || traps
+	})
+	hidesJob := func(raw string) bool {
+		called, _ := shellFailOpenStartsUnseen(raw, func(name string) bool { return opaque || defined[name] })
+		return shellFailOpenBackgrounds(raw) || called
+	}
+	quiet := shellQuietGrepFunctions(script)
+	pipefail, mayPipefail, nesting := false, false, 0
 	var findings []ShellFailOpenFinding
 	var seen []string // the raw text of each command read so far
 	var opens []int   // where in seen each open compound command starts
@@ -313,17 +345,35 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			after, end := commands[at+1], start+len(raws[at])
 			marked := slices.ContainsFunc(statement.marks, func(mark int) bool { return mark >= start && mark <= end })
 			start = end + 1
-			// Only a set certain to run turns pipefail on; any set +o turns it off.
-			change, runsSet := shellCommandScope(raws[at])
-			if set := shellPipefail.FindStringSubmatch(command); set != nil && (set[1] == "+" || nesting == 0 && runsSet) {
-				pipefail = set[1] == "-"
+			// pipefail is on only after a set certain to run turns it on and
+			// no set turns it off; mayPipefail is on after any set that may
+			// turn it on, until one certain to run turns it off.
+			change := shellCommandScope(raws[at])
+			turns := shellPipefailTurns(raws[at])
+			if turns.off || turns.on && nesting == 0 {
+				pipefail = turns.on && nesting == 0
+			}
+			reachedPipefail := mayPipefail || turns.may // a set before the quiet grep on raw may turn pipefail on for it
+			if turns.may {
+				mayPipefail = true
+			} else if turns.cleared && nesting == 0 {
+				mayPipefail = false
+			}
+			if turns.unread {
+				hits[ruleQuietGrepPipe]++ // a set this reader cannot read may turn pipefail on for a later quiet grep
 			}
 			nesting = max(nesting+change, 0)
+			if shellSubstsUnbounded(command) {
+				if !marked {
+					hits[ruleCommandSubstitution]++ // the substitution readers cost more than linear time past this bound, so a command past it is not read and counts
+				}
+				continue
+			}
 			// A process substitution loses its producer's status wherever it
 			// stands, so it needs proof: a loop reports its inner status only
 			// through a completion sentinel its body sets or a wait "$!" after it.
 			loopForm := shellLoopSubst.MatchString(command)
-			looped := loopForm && shellFailOpenWaited(raws[at+1]) && shellFailOpenLastSubst(command) && !slices.ContainsFunc(append(body, raws[at]), shellFailOpenBackgrounds)
+			looped := loopForm && shellFailOpenWaited(raws[at+1]) && shellFailOpenLastSubst(command) && !slices.ContainsFunc(append(body, raws[at]), hidesJob)
 			if !looped && loopForm {
 				codes, following := commands[at+1:len(commands)-1], raws[at+1:len(raws)-1]
 				for _, later := range statements[index+1:] {
@@ -370,8 +420,22 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
 			hits[ruleOrTrue] += shellSwallowingHandlers(command, later, false)
-			if pipefail {
-				hits[ruleQuietGrepPipe] += shellQuietGrepStages(command)
+			if reachedPipefail {
+				hits[ruleQuietGrepPipe] += shellQuietGrepStages(raws[at], quiet, func(yield func(string) bool) {
+					for _, raw := range raws[at+1 : len(raws)-1] {
+						if !yield(raw) {
+							return
+						}
+					}
+					for _, each := range statements[index+1:] {
+						_, laterRaws := shellFailOpenCommands(each.code, each.raw)
+						for _, raw := range laterRaws {
+							if !yield(raw) {
+								return
+							}
+						}
+					}
+				})
 			}
 			offset := 0 // A redirect belongs to the operand of the && || or | list it is written in, so git fetch || printf x 2>/dev/null hides no git status, and each operand's own status test counts, so the && after git fetch does not cover git gc 2>/dev/null. A redirect inside a substitution belongs to the command there, so $(git x 2>/dev/null) hides git's status while foo "$(git x)" 2>/dev/null hides foo's; each is read in its own text.
 			for _, operand := range shellListOperands(command) {
@@ -488,22 +552,321 @@ func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 }
 
 // shellCommandScope returns the change in compound-command nesting the
-// command makes, read with the shared controlWords and commandBrace, and
-// whether a set starts it and runs whenever it does: not in a pipeline or
-// after & in it, so not in a subshell.
-func shellCommandScope(raw string) (change int, runsSet bool) {
+// command makes, read with the shared controlWords and commandBrace.
+func shellCommandScope(raw string) (change int) {
 	words, _, _, _, _, _ := shellWords(raw, nil)
-	commands := splitCommands(words)
-	for _, each := range commands {
+	for _, each := range splitCommands(words) {
 		change += commandBrace(each)
 		if len(each.args) > 0 && !each.args[0].quoted {
 			change += controlWords[each.args[0].text]
 		}
 	}
-	first := commands[0].args
-	runsSet = len(first) > 0 && !first[0].quoted && first[0].text == "set" &&
-		(len(commands) == 1 || commands[1].conditional)
-	return change, runsSet
+	return change
+}
+
+// shellLineWords returns the words of each line of raw, as the shared
+// shellWords reads them, with a ; between lines, since a line end ends a
+// command as ; does. A line that ends inside a quote is read on with the next
+// one, so a quoted line end stays text. Each parse is charged to a budget
+// linear in raw's length, and ok is false once it runs out.
+func shellLineWords(raw string) (words []word, ok bool) {
+	budget := 16*len(raw) + 1<<16
+	return shellBudgetedLineWords(raw, &budget)
+}
+
+// shellBudgetedLineWords is shellLineWords charged to a budget the caller
+// shares across every text it reads.
+func shellBudgetedLineWords(raw string, budget *int) (words []word, ok bool) {
+	var joined strings.Builder
+	clean := true
+	for line := range strings.Lines(raw) {
+		line = strings.TrimSuffix(line, "\n")
+		continues, stillClean, ok := shellContinues(joined.String(), line, clean, budget)
+		if !ok {
+			return words, false
+		}
+		if continues {
+			joined.WriteString(strings.TrimSuffix(line, `\`))
+			clean = stillClean
+			continue
+		}
+		joined.WriteString(line)
+		if *budget -= joined.Len() + 1; *budget < 0 {
+			return words, false
+		}
+		parsed, _, open, rest, _, _ := shellWords(joined.String(), nil)
+		if open != 0 || len(rest) > 0 {
+			joined.WriteString("\n")
+			clean = false
+			continue
+		}
+		joined.Reset()
+		clean = true
+		words = append(append(words, parsed...), word{text: ";", syntax: ";"})
+	}
+	if joined.Len() > 0 {
+		parsed, _, _, _, _, _ := shellWords(joined.String(), nil)
+		words = append(words, parsed...)
+	}
+	return words, true
+}
+
+// pipefailTurns is what one command's text does to pipefail. on, off and
+// unread serve the rules that pipefail makes safe, so on is certain: on
+// reports that the last set that changes pipefail turns it on and runs
+// whenever raw does, off that any set turns it off, wherever it stands, and
+// unread a set or shopt whose options an expansion spells, eval text nested
+// more than eight deep, or text past a budget linear in raw's length that
+// every eval shares. may and cleared serve the quiet grep rule, which pipefail
+// makes unsafe, so on counts wherever it may run: may reports that a set
+// that turns pipefail on may run after the last set certain to turn it off,
+// which cleared reports. A set in a function body, a group, a subshell, a
+// compound command, a pipeline stage, a trap action or a mapfile callback may
+// run, and so may whatever a command word, an eval or a source that an
+// expansion spells runs.
+type pipefailTurns struct{ on, off, unread, may, cleared bool }
+
+// shellPipefailTurns reads each command of raw whose command word, past any
+// assignment, redirection and any command, builtin or time in front of it, is
+// set or shopt, or eval, trap or mapfile -C with such text. A set runs
+// whenever raw does when nothing before it on raw opens a compound command,
+// and it follows a ;, a line end, true && or false ||; one in a pipeline or
+// before & runs in a subshell.
+func shellPipefailTurns(raw string) pipefailTurns {
+	budget := 16*len(raw) + 1<<16
+	return shellBudgetedPipefailTurns(raw, &budget, 0)
+}
+
+// shellBudgetedPipefailTurns is shellPipefailTurns for eval text depth deep.
+func shellBudgetedPipefailTurns(raw string, budget *int, depth int) (turns pipefailTurns) {
+	words, ok := shellBudgetedLineWords(raw, budget)
+	if !ok || depth > 8 {
+		return pipefailTurns{off: true, unread: true, may: true}
+	}
+	var commands [][]string
+	operators := []string{";"} // the operator before each command
+	commands = append(commands, nil)
+	inTest := 0 // inside [[ ]], && and || join tests, not commands
+	for _, each := range words {
+		if !each.quoted {
+			switch each.text {
+			case "[[":
+				inTest++
+			case "]]":
+				inTest = max(inTest-1, 0)
+			}
+		}
+		if !each.quoted && isOperator(each.text) && !(inTest > 0 && (each.text == "&&" || each.text == "||")) {
+			commands, operators = append(commands, nil), append(operators, each.text)
+			continue
+		}
+		commands[len(commands)-1] = append(commands[len(commands)-1], each.text)
+	}
+	operators = append(operators, ";")
+	expands := func(arg string) bool { return strings.ContainsAny(arg, "$`") }
+	certain, opened := true, false
+	for at, command := range commands {
+		switch operators[at] {
+		case "&&":
+			certain = certain && (slices.Equal(commands[at-1], []string{"true"}) || slices.Equal(commands[at-1], []string{":"}))
+		case "||":
+			certain = certain && slices.Equal(commands[at-1], []string{"false"})
+		case "|", "|&":
+		default:
+			certain = !opened
+		}
+		// A compound command, a function header or a case pattern opens what
+		// follows, which may or may not run.
+	strip:
+		for len(command) > 0 {
+			switch {
+			case command[0] == "case":
+				end := slices.IndexFunc(command, func(each string) bool { return strings.HasSuffix(each, ")") })
+				if end < 0 {
+					end = len(command) - 1
+				}
+				command = command[end+1:]
+			case command[0] == "function" && len(command) > 1:
+				command = command[2:]
+			case len(command) > 1 && command[1] == "()":
+				command = command[2:]
+			case slices.Contains(shellKeywords, command[0]) || slices.Contains([]string{"!", "for", "select", "}", "fi", "done", "esac"}, command[0]) || strings.HasPrefix(command[0], "(") || strings.HasSuffix(command[0], ")") && !expands(command[0]):
+				command = command[1:]
+			default:
+				break strip
+			}
+			opened, certain = true, false
+		}
+		for len(command) > 0 && (shellRedirection.MatchString(command[0]) || shellNamedRedirect.MatchString(command[0]) || strings.HasPrefix(command[0], "&>")) {
+			if shellRedirectOnly.MatchString(command[0]) || shellNamedRedirectOnly.MatchString(command[0]) || command[0] == "&>" || command[0] == "&>>" {
+				command = command[1:] // the target is the next word
+			}
+			command = command[min(1, len(command)):]
+		}
+		if len(command) > 0 && shellArrayAssignment.MatchString(command[0]) {
+			command = nil // the words up to its ) are the array's elements, not a command
+		}
+		command = unwrapBuiltins(command[assignmentPrefix(command):])
+		alone := !slices.Contains([]string{"|", "|&"}, operators[at]) && !slices.Contains([]string{"|", "|&", "&"}, operators[at+1])
+		turn := shellSetsPipefail(command)
+		if shellOptionsUnread(command) {
+			turns.unread, turns.off = true, true // options an expansion spells may turn pipefail off
+		}
+		// inner reads text bash may run as commands: an eval's, which runs
+		// here, or a trap action's or a mapfile callback's, which run later.
+		inner := func(text string, here bool) {
+			nested := shellBudgetedPipefailTurns(text, budget, depth+1)
+			turns.off, turns.unread = turns.off || nested.off, turns.unread || nested.unread
+			if here && nested.on {
+				turn = 1
+			} else if here && nested.off {
+				turn = -1
+			}
+			if nested.may {
+				turns.may, turns.cleared = true, false
+			} else if here && nested.cleared && certain && alone {
+				turns.may, turns.cleared = false, true
+			}
+		}
+		switch {
+		case len(command) == 0:
+		case expands(command[0]):
+			turns.may, turns.cleared, turns.off = true, false, true // a command an expansion spells may turn pipefail on or off
+		case command[0] == "source" || command[0] == "." || command[0] == "alias", command[0] == "eval" && slices.ContainsFunc(command[1:], expands):
+			turns.may, turns.cleared, turns.off = true, false, true // a library, an alias or an expansion eval runs may turn pipefail on or off
+		case command[0] == "eval" && len(command) > 1:
+			inner(strings.Join(command[1:], " "), true)
+		case command[0] == "trap" && len(command) > 1 && !strings.HasPrefix(command[1], "-"):
+			inner(command[1], false)
+		case command[0] == "mapfile" || command[0] == "readarray":
+			for option := 1; option < len(command); option++ {
+				if callback, found := strings.CutPrefix(command[option], "-C"); found {
+					if callback == "" && option+1 < len(command) {
+						callback = command[option+1]
+					}
+					inner(callback, false)
+				}
+			}
+		}
+		switch {
+		case turn < 0:
+			turns.on, turns.off = false, true
+			if certain && alone {
+				turns.may, turns.cleared = false, true
+			}
+		case turn > 0:
+			turns.may, turns.cleared = true, false
+			if certain && alone {
+				turns.on = true
+			}
+		}
+	}
+	if shellDropsWords(raw) {
+		turns.may, turns.cleared = true, false // the line reader drops a line that carries a quoted substitution, and any command on it
+	}
+	return turns
+}
+
+// shellArrayAssignment is the first word of an array assignment, as a=( or
+// a+=( spells it.
+var shellArrayAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=\(`)
+
+// shellDropsWords reports whether raw holds a command substitution inside
+// double quotes, whose line shellWords drops with every command on it.
+func shellDropsWords(raw string) bool {
+	quote := byte(0)
+	for at := 0; at < len(raw); at++ {
+		switch character := raw[at]; {
+		case quote == '\'':
+			if character == '\'' {
+				quote = 0
+			}
+		case character == '\\':
+			at++
+		case quote == '"' && (character == '`' || character == '$' && at+1 < len(raw) && raw[at+1] == '('):
+			return true
+		case character == '"' || character == '\'' && quote == 0:
+			quote = map[bool]byte{true: 0, false: character}[quote == character]
+		}
+	}
+	return false
+}
+
+// shellOptionsUnread reports a set or shopt whose options an expansion spells,
+// which the check cannot read. set's options end at -- or the first operand, so
+// `set -- "$@"` only sets the positional parameters; every shopt word names an
+// option.
+func shellOptionsUnread(command []string) bool {
+	expands := func(arg string) bool { return strings.ContainsAny(arg, "$`") }
+	if len(command) == 0 {
+		return false
+	}
+	switch command[0] {
+	case "shopt":
+		return slices.ContainsFunc(command[1:], expands)
+	case "set":
+		for at := 1; at < len(command); at++ {
+			arg := command[at]
+			if expands(arg) {
+				return true
+			}
+			if arg == "--" || len(arg) < 2 || arg[0] != '-' && arg[0] != '+' {
+				return false
+			}
+			for _, letter := range arg[1:] {
+				if letter == 'o' && at+1 < len(command) {
+					if at++; expands(command[at]) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// shellSetsPipefail returns 1 when the words are a set or shopt that turns
+// pipefail on, -1 when they turn it off, and 0 otherwise. set reads each o in
+// a cluster of options as naming the option in the next word, and its options
+// end at -- or the first operand; shopt reads -s, -u and -o in any cluster and
+// order, with the option names as its operands.
+func shellSetsPipefail(command []string) int {
+	turn := 0
+	if len(command) == 0 {
+		return 0
+	}
+	switch command[0] {
+	case "set":
+		for at := 1; at < len(command); at++ {
+			arg := command[at]
+			if arg == "--" || len(arg) < 2 || arg[0] != '-' && arg[0] != '+' {
+				break
+			}
+			for _, letter := range arg[1:] {
+				if letter == 'o' && at+1 < len(command) {
+					if at++; command[at] == "pipefail" {
+						turn = map[byte]int{'-': 1, '+': -1}[arg[0]]
+					}
+				}
+			}
+		}
+	case "shopt":
+		mode, named, at := 0, false, 1
+		for ; at < len(command) && len(command[at]) > 1 && command[at][0] == '-'; at++ {
+			if command[at] == "--" {
+				at++
+				break
+			}
+			for _, letter := range command[at][1:] {
+				mode += map[rune]int{'s': 1, 'u': -1}[letter]
+				named = named || letter == 'o'
+			}
+		}
+		if named && slices.Contains(command[at:], "pipefail") {
+			turn = max(-1, min(1, mode))
+		}
+	}
+	return turn
 }
 
 // shellFailOpenFirstCall returns where a command's first tool call starts, or its length.
@@ -673,12 +1036,76 @@ func shellFailOpenLastSubst(command string) bool {
 
 // shellFailOpenBackgrounds reports whether a command starts a job in the
 // background with & or coproc, which sets $! to that job, so a wait "$!"
-// after the loop no longer waits for the producer.
+// after the loop no longer waits for the producer. flattenSubstitutions moves
+// each substitution onto a line of its own first, since shellWords reads no
+// words on a line that holds a quoted one.
 func shellFailOpenBackgrounds(raw string) bool {
-	words, _, _, _, _, _ := shellWords(raw, nil)
-	return slices.ContainsFunc(words, func(each word) bool {
-		return !each.quoted && (each.text == "&" || each.text == "coproc")
-	})
+	for line := range strings.Lines(flattenSubstitutions(raw)) {
+		words, _, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
+		if slices.ContainsFunc(words, func(each word) bool {
+			return !each.quoted && (each.text == "&" || each.text == "coproc")
+		}) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellFailOpenDefinedFunctions returns the name of each function the script
+// may define, as the shared definedFunctionNames reads them: nested, in an if
+// or case arm, spelled name ( ), or in the literal text of an eval or a trap.
+// complete is false when the reader stopped short of the whole script.
+func shellFailOpenDefinedFunctions(script string) (defined map[string]bool, complete bool) {
+	names, complete := definedFunctionNames(script)
+	defined = map[string]bool{}
+	for _, name := range names {
+		defined[name] = true
+	}
+	return defined, complete
+}
+
+// shellFailOpenStartsUnseen reads raw with the reader under EveryShellCommand,
+// flattenSubstitutions and flattenedCommands, so a command in a substitution, a
+// case arm or after a redirection counts, and each name is the one after any
+// reserved word, assignment or wrapper such as command or env. It skips the
+// call expansion EveryShellCommand adds, since the caller reads each body
+// itself, and it anchors no validator: a command it finds only denies the wait
+// exemption, so a command it cannot see is text or sits behind an eval, a
+// source, an alias or a definition, each of which denies the exemption too.
+// calls reports whether a command runs eval, source or ., sets an alias,
+// which may name a function, runs a mapfile or readarray -C callback, which
+// bash runs as eval does, runs a command whose name an expansion computes, or
+// runs one whose name calls accepts; each is read past any assignment and any
+// command, builtin or time in front of it, so builtin trap counts as trap. A
+// mention of BASH_ALIASES counts as an alias, since an element of it is one.
+// traps reports whether raw sets a trap that can run while a loop runs: any
+// trap other than an EXIT trap, whose signal bash reads in any case.
+func shellFailOpenStartsUnseen(raw string, calls func(name string) bool) (called, traps bool) {
+	called = strings.Contains(strings.ReplaceAll(raw, "\\\n", ""), "BASH_ALIASES")
+	for _, words := range flattenedCommands(flattenSubstitutions(heredocsAsHereStrings(raw))) {
+		command := unwrapBuiltins(words[assignmentPrefix(words):])
+		if len(command) == 0 {
+			continue
+		}
+		name, args := command[0], command[1:]
+		called = called || slices.Contains([]string{"eval", "source", ".", "alias"}, name) || strings.ContainsAny(name, "$`") || calls(name) ||
+			slices.ContainsFunc(words, func(word string) bool { return strings.Contains(word, "BASH_ALIASES") }) ||
+			(name == "mapfile" || name == "readarray") && slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, "-") && strings.Contains(arg, "C") })
+		if name != "trap" {
+			continue
+		}
+		if len(args) > 0 && args[0] == "--" {
+			args = args[1:]
+		}
+		if len(args) < 2 || strings.HasPrefix(args[0], "-") {
+			continue
+		}
+		traps = traps || slices.ContainsFunc(args[1:], func(signal string) bool {
+			signal = strings.ToUpper(signal)
+			return signal != "EXIT" && signal != "0" && signal != "SIGEXIT"
+		})
+	}
+	return called, traps
 }
 
 // shellSubstMasked reports whether a tool substitution's status is lost: the
@@ -694,6 +1121,36 @@ func shellSubstMasked(command string, pipefail bool) bool {
 		}
 	}
 	return shellSubstHidden(command)
+}
+
+// shellSubstsUnbounded reports whether a command nests $( more than eight
+// deep, or holds so many that their count times the command's length passes
+// 1<<20, past which the substitution readers, which rescan each body, cost
+// more than linear time.
+func shellSubstsUnbounded(command string) bool {
+	var substitution []bool // whether each open ( is a $(
+	openers, depth := 0, 0
+	for at := 0; at < len(command); at++ {
+		switch command[at] {
+		case '(':
+			opens := at > 0 && command[at-1] == '$'
+			substitution = append(substitution, opens)
+			if opens {
+				openers, depth = openers+1, depth+1
+				if depth > 8 {
+					return true
+				}
+			}
+		case ')':
+			if len(substitution) > 0 {
+				if substitution[len(substitution)-1] {
+					depth--
+				}
+				substitution = substitution[:len(substitution)-1]
+			}
+		}
+	}
+	return openers*len(command) > 1<<20
 }
 
 // shellSubstEnd returns the index just past the ) that closes the $( at start, or the command's length when the command does not close it.
@@ -876,17 +1333,36 @@ func shellUnwrapped(command string) string {
 	out := []byte(command)
 	for _, loc := range shellCommandStart.FindAllStringIndex(command, -1) {
 		rest := command[loc[1]:]
-		rest = rest[:strings.IndexAny(rest+";", ";&|)\n")]
-		fields := shellField.FindAllStringIndex(rest, -1)
-		words := make([]string, len(fields))
-		for index, field := range fields {
-			words[index] = rest[field[0]:field[1]]
+		if end := strings.IndexAny(rest, ";&|)\n"); end >= 0 {
+			rest = rest[:end]
 		}
-		if len(words) == 0 {
-			continue
-		}
-		if run := len(words) - len(wrappedCommand(words)); run > 0 {
-			copy(out[loc[1]:], strings.Repeat(" ", fields[run][0]))
+		// wrappedCommand reads a word only after each word before it, so
+		// its run over the first limit words, followed by three words that
+		// stop every wrapper, is its run over all of them while it leaves
+		// three of the first limit words and reads none of the three after.
+		// Reading words in growing batches keeps each command start's cost to
+		// the words its run reads.
+		for limit := 8; ; limit *= 2 {
+			fields := shellField.FindAllStringIndex(rest, limit)
+			words := make([]string, len(fields), len(fields)+3)
+			for index, field := range fields {
+				words[index] = rest[field[0]:field[1]]
+			}
+			if len(words) == 0 {
+				break
+			}
+			truncated := len(fields) == limit
+			if truncated {
+				words = append(words, "\x00", "\x00", "\x00")
+			}
+			wrapped := wrappedCommand(words)
+			if truncated && (len(wrapped) < 6 || slices.Contains(wrapped[:len(wrapped)-3], "\x00")) {
+				continue
+			}
+			if run := len(words) - len(wrapped); run > 0 {
+				copy(out[loc[1]:], strings.Repeat(" ", fields[run][0]))
+			}
+			break
 		}
 	}
 	return string(out)
@@ -1023,6 +1499,55 @@ func loadShellFailOpenBaseline(path string) (map[shellFailOpenKey]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", shellFailOpenBaselinePath, err)
 	}
+	return parseShellFailOpenBaseline(content)
+}
+
+// mergeBaseShellFailOpenBaseline reads the baseline at the merge base of HEAD
+// with origin/main, or with main when origin/main is missing, as the testkit
+// exec ratchet does. A merge base with no baseline file allows no row. A
+// missing base ref or any other git failure is an error, so the ratchet fails
+// closed.
+func mergeBaseShellFailOpenBaseline(rootDir string) (map[shellFailOpenKey]int, error) {
+	git := func(args ...string) (string, error) {
+		out, err := exec.Command("git", append([]string{"-C", rootDir}, args...)...).Output()
+		return string(out), err
+	}
+	ref := ""
+	for _, candidate := range []string{"refs/remotes/origin/main", "refs/heads/main"} {
+		_, err := git("rev-parse", "--verify", "--quiet", candidate+"^{commit}")
+		if exitErr, missing := err.(*exec.ExitError); missing && exitErr.ExitCode() == 1 {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("probe %s for the %s ratchet: %w", candidate, shellFailOpenBaselinePath, err)
+		}
+		ref = candidate
+		break
+	}
+	if ref == "" {
+		return nil, fmt.Errorf("no origin/main or main ref to ratchet %s against", shellFailOpenBaselinePath)
+	}
+	mergeBase, err := git("merge-base", ref, "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("find the merge base of HEAD with %s for %s: %w", ref, shellFailOpenBaselinePath, err)
+	}
+	mergeBase = strings.TrimSpace(mergeBase)
+	listed, err := git("ls-tree", "--name-only", mergeBase, "--", shellFailOpenBaselinePath)
+	if err != nil {
+		return nil, fmt.Errorf("list %s at the merge base: %w", shellFailOpenBaselinePath, err)
+	}
+	if strings.TrimSpace(listed) == "" {
+		return map[shellFailOpenKey]int{}, nil
+	}
+	content, err := git("show", mergeBase+":"+shellFailOpenBaselinePath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s at the merge base: %w", shellFailOpenBaselinePath, err)
+	}
+	return parseShellFailOpenBaseline([]byte(content))
+}
+
+// parseShellFailOpenBaseline parses the baseline rows of content.
+func parseShellFailOpenBaseline(content []byte) (map[shellFailOpenKey]int, error) {
 	baseline := map[shellFailOpenKey]int{}
 	for number, line := range strings.Split(string(content), "\n") {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
@@ -1050,55 +1575,331 @@ func loadShellFailOpenBaseline(path string) (map[shellFailOpenKey]int, error) {
 	return baseline, nil
 }
 
-// shellQuietGrepStages counts the later pipeline stages of command (after |
+// shellQuietGrepStages counts the later pipeline stages of a command (after |
 // or |&) that run grep, egrep or fgrep in quiet mode. Quiet grep exits at the
 // first match, so under pipefail the stage before it can die of SIGPIPE and
-// fail the pipeline although the text matched. The command text has no
-// wrapper words such as command or env.
-func shellQuietGrepStages(command string) int {
+// fail the pipeline although the text matched. The shared
+// flattenSubstitutions moves each command substitution onto a line of its
+// own, so a pipeline inside one is read there and one around it reads the
+// substitution as a word; the shared shellWords then reads each line, so a
+// quoted or escaped name or option is read as bash reads it. A stage ends at
+// an operator or at the ) that closes a subshell around it, and a ( that
+// opens one is not part of its command word. A stage that is a compound
+// command is read to its matching close, through the commands following
+// yields after raw, as shellCompoundQuietGreps reads it.
+func shellQuietGrepStages(raw string, quiet map[string]bool, following iter.Seq[string]) int {
 	count := 0
-	for at := 0; at < len(command); at++ {
-		if command[at] != '|' {
+	words, ok := shellLineWords(flattenSubstitutions(raw))
+	if !ok {
+		return 1 // text past the reader's bound may hold a quiet grep stage
+	}
+	for at, each := range words {
+		if each.quoted || each.text != "|" && each.text != "|&" {
 			continue
 		}
-		if at+1 < len(command) && command[at+1] == '|' {
-			at++ // || is a list operator, not a pipe
+		var stage []string
+		rest := words[at+1:]
+		if len(rest) > 0 && !rest[0].quoted && rest[0].text == "&" {
+			rest = rest[1:] // the reader splits |& into | and &
+		}
+		if len(rest) > 0 && shellCompoundOpener(rest[0]) {
+			count += shellCompoundQuietGreps(rest, quiet, following)
 			continue
 		}
-		stage := strings.TrimPrefix(command[at+1:], "&")
-		if end := strings.IndexAny(stage, "|;&)"); end >= 0 {
-			stage = stage[:end]
+		for _, next := range rest {
+			if !next.quoted && isOperator(next.text) {
+				break
+			}
+			text, syntax := next.text, next.syntax
+			if cut := strings.IndexAny(syntax, ")`"); cut >= 0 && cut <= len(text) {
+				stage = append(stage, text[:cut])
+				break
+			}
+			stage = append(stage, text)
 		}
-		if shellGrepIsQuiet(strings.Fields(stage)) {
+		if shellStageIsQuiet(stage, quiet) {
 			count++
 		}
 	}
 	return count
 }
 
-// shellGrepIsQuiet reports whether words, one pipeline stage, run grep with
-// -q, --quiet or --silent before the -- that ends the options. In a short
-// option cluster, an option that takes an operand (-e, -f, -m, -A, -B, -C, -d,
-// -D) takes the rest of the cluster, so -eq searches for q.
-func shellGrepIsQuiet(words []string) bool {
-	if len(words) == 0 || !slices.Contains([]string{"grep", "egrep", "fgrep"}, words[0]) {
+// shellCompoundOpener reports whether a word opens a compound command: a
+// group, a subshell, though not the (( of arithmetic, a case, a loop or an if.
+func shellCompoundOpener(first word) bool {
+	if first.quoted {
 		return false
 	}
-	for _, word := range words[1:] {
-		switch {
-		case word == "--":
-			return false
-		case word == "--quiet" || word == "--silent":
-			return true
-		case strings.HasPrefix(word, "--") || !strings.HasPrefix(word, "-"):
-			continue
+	return slices.Contains([]string{"{", "case", "for", "select", "while", "until", "if"}, first.text) ||
+		strings.HasPrefix(first.syntax, "(") && !strings.HasPrefix(first.syntax, "((")
+}
+
+// shellCompoundCloser maps each word that opens a compound command to the
+// word that closes it; a subshell's ( closes at a ).
+var shellCompoundCloser = map[string]string{"{": "}", "case": "esac", "for": "done", "select": "done", "while": "done", "until": "done", "if": "fi"}
+
+// shellCompoundQuietGrepLimit bounds the words one compound stage is read
+// through, so a stage that never closes costs a fixed amount of work.
+const shellCompoundQuietGrepLimit = 1 << 14
+
+// shellCompoundQuietGreps counts the quiet greps a compound pipeline stage
+// runs, any of which may read the pipe: words opens the compound, and its
+// commands are read, through the commands following yields when words ends
+// first, up to the word that closes it. A command after a | inside it is a
+// stage of its own, counted at that |, so it is skipped here. A case
+// pattern, a reserved word and a group opener or closer are not command words.
+// A stage longer than shellCompoundQuietGrepLimit words counts as one more.
+func shellCompoundQuietGreps(words []word, quiet map[string]bool, following iter.Seq[string]) int {
+	count, read := 0, 0
+	var stack []string // the closer each open compound waits for
+	var command []string
+	start, piped, header, pattern := true, false, false, false
+	end := func() {
+		if !piped && shellStageIsQuiet(command, quiet) {
+			count++
 		}
-		for _, option := range word[1:] {
-			if option == 'q' {
+		command, start = nil, true
+	}
+	// visit reads one word and reports whether the compound is still open.
+	visit := func(each word) bool {
+		text, syntax := each.text, each.syntax
+		switch {
+		case !each.quoted && isOperator(text):
+			end()
+			piped = text == "|" || text == "|&"
+			pattern = text == ";;" && len(stack) > 0 && stack[len(stack)-1] == "esac"
+			return len(stack) > 0
+		case header:
+			header = text != "in"
+			pattern = !header
+			return true
+		case each.quoted || !start:
+		case pattern || len(stack) > 0 && stack[len(stack)-1] == "esac" && text != "esac" && strings.Contains(syntax, ")"):
+			if text == "esac" {
+				break
+			}
+			// A case pattern ends at its ); a command may follow on the word.
+			cut := strings.IndexByte(syntax, ')')
+			if cut < 0 {
 				return true
 			}
-			if strings.ContainsRune("efmABCdD", option) {
-				break
+			text, syntax, pattern = text[cut+1:], syntax[cut+1:], false
+			if text == "" {
+				return true
+			}
+		}
+		if !each.quoted && start {
+			if closer, ok := shellCompoundCloser[text]; ok {
+				stack = append(stack, closer)
+				header = text == "case"
+				return true
+			}
+			for strings.HasPrefix(syntax, "(") && !strings.HasPrefix(syntax, "((") {
+				stack = append(stack, ")")
+				text, syntax = text[1:], syntax[1:]
+			}
+			if text == "" {
+				return true
+			}
+			if len(stack) > 0 && text == stack[len(stack)-1] {
+				stack = stack[:len(stack)-1]
+				return len(stack) > 0
+			}
+			if slices.Contains(shellKeywords, text) || text == "!" {
+				return true
+			}
+		}
+		// A ) outside quotes closes the subshells it ends.
+		if cut := strings.IndexByte(syntax, ')'); cut >= 0 && len(stack) > 0 && stack[len(stack)-1] == ")" {
+			if cut > 0 {
+				command = append(command, text[:cut])
+			}
+			end()
+			for _, character := range syntax[cut:] {
+				if character == ')' && len(stack) > 0 && stack[len(stack)-1] == ")" {
+					stack = stack[:len(stack)-1]
+				}
+			}
+			return len(stack) > 0
+		}
+		command, start = append(command, text), false
+		return true
+	}
+	for _, each := range words {
+		if read++; read > shellCompoundQuietGrepLimit {
+			return count + 1
+		}
+		if !visit(each) {
+			return count
+		}
+	}
+	for raw := range following {
+		more, ok := shellLineWords(flattenSubstitutions(raw))
+		if !ok {
+			return count + 1
+		}
+		for _, each := range append([]word{{text: ";", syntax: ";"}}, more...) {
+			if read++; read > shellCompoundQuietGrepLimit {
+				return count + 1
+			}
+			if !visit(each) {
+				return count
+			}
+		}
+	}
+	end()
+	return count
+}
+
+// shellStageIsQuiet reports whether a stage runs a quiet grep: grep itself,
+// or a function in quiet, whose body runs one on the stage's input. When
+// quiet holds "", the reader could not read every body, so any stage counts.
+func shellStageIsQuiet(words []string, quiet map[string]bool) bool {
+	command := shellStageCommand(words)
+	return shellGrepIsQuiet(command) || len(command) > 0 && (quiet[command[0]] || quiet[""])
+}
+
+// shellQuietGrepFunctions returns each function the script defines whose body
+// runs a quiet grep, itself or through a call of another such function, read
+// with the shared functionBodies and flattenedCommands. Each nested body is
+// read again on its own, charged to a budget linear in the script's length;
+// past it every function counts, which fails closed. A function that eval or
+// trap text defines is not read.
+func shellQuietGrepFunctions(script string) map[string]bool {
+	quiet, calls := map[string]bool{}, map[string][]string{} // calls maps a callee to its callers
+	budget := 16*len(script) + 1<<16
+	var pending []string
+	var read func(text string) bool
+	read = func(text string) bool {
+		if budget -= len(text) + 1; budget < 0 {
+			return false
+		}
+		for _, part := range functionBodies(flattenSubstitutions(heredocsAsHereStrings(text))) {
+			if part.name == "" {
+				continue
+			}
+			for _, words := range flattenedCommands(part.text) {
+				command := shellStageCommand(words)
+				if shellGrepIsQuiet(command) && !quiet[part.name] {
+					quiet[part.name], pending = true, append(pending, part.name)
+				} else if len(command) > 0 {
+					calls[command[0]] = append(calls[command[0]], part.name)
+				}
+			}
+			if !read(part.text) {
+				return false
+			}
+		}
+		return true
+	}
+	if !read(script) {
+		return map[string]bool{"": true}
+	}
+	for ; len(pending) > 0; pending = pending[1:] {
+		for _, caller := range calls[pending[0]] {
+			if !quiet[caller] {
+				quiet[caller], pending = true, append(pending, caller)
+			}
+		}
+	}
+	return quiet
+}
+
+// shellStageCommand returns the words of a pipeline stage from the program it
+// runs: after any group opener, reserved prefix such as ! or time -p,
+// assignment, redirection and its target, and any wrapper that wrappedCommand
+// steps over, as command or env do.
+func shellStageCommand(words []string) []string {
+	for len(words) > 0 {
+		switch first := words[0]; {
+		case first == "{" || first == "(" || isCommandPrefixWord(first) || shellAssignment.MatchString(first):
+			words = words[1:]
+		case shellRedirectOnly.MatchString(first) || first == "&>" || first == "&>>" || shellNamedRedirectOnly.MatchString(first):
+			words = words[min(2, len(words)):]
+		case shellRedirection.MatchString(first) || strings.HasPrefix(first, "&>") || shellNamedRedirect.MatchString(first):
+			words = words[1:]
+		default:
+			// xargs runs its command on the words it reads, so the pipe ends at xargs, not at the command.
+			command := wrappedCommand(words)
+			if slices.ContainsFunc(words[:max(len(words)-len(command), 0)], func(word string) bool { return commandName(word) == "xargs" }) {
+				return nil
+			}
+			return command
+		}
+	}
+	return nil
+}
+
+// grepLongOptions maps each GNU grep long option to whether it takes an
+// operand. getopt_long reads a unique prefix of a name as the name, so --qui
+// is --quiet and --reg is --regexp; --color and --colour take one only after =.
+var grepLongOptions = map[string]bool{
+	"after-context": true, "basic-regexp": false, "before-context": true, "binary": false, "binary-files": true,
+	"byte-offset": false, "color": false, "colour": false, "context": true, "count": false, "dereference-recursive": false,
+	"devices": true, "directories": true, "exclude": true, "exclude-dir": true, "exclude-from": true,
+	"extended-regexp": false, "file": true, "files-with-matches": false, "files-without-match": false,
+	"fixed-strings": false, "group-separator": true, "help": false, "ignore-case": false, "include": true,
+	"initial-tab": false, "invert-match": false, "label": true, "line-buffered": false, "line-number": false,
+	"line-regexp": false, "max-count": true, "no-filename": false, "no-group-separator": false,
+	"no-ignore-case": false, "no-messages": false, "null": false, "null-data": false, "only-matching": false,
+	"perl-regexp": false, "quiet": false, "recursive": false, "regexp": true, "silent": false, "text": false,
+	"version": false, "with-filename": false, "word-regexp": false,
+}
+
+// grepLongOption returns the long option a --name word names, exactly or by a
+// unique prefix, or "" when it names none or more than one.
+func grepLongOption(name string) string {
+	if _, exact := grepLongOptions[name]; exact {
+		return name
+	}
+	found := ""
+	for option := range grepLongOptions {
+		if strings.HasPrefix(option, name) {
+			if found != "" {
+				return ""
+			}
+			found = option
+		}
+	}
+	return found
+}
+
+// shellGrepIsQuiet reports whether words, one pipeline stage, run grep with
+// -q, --quiet or --silent before the -- that ends the options. The command
+// word is read after any group opener, assignment, redirection and wrapper,
+// by its base name, so /usr/bin/grep is grep. In a short option cluster, an
+// option that takes an operand (-e, -f, -m, -A, -B, -C, -d, -D) takes the rest
+// of the cluster, so -eq searches for q, or the next word when the cluster
+// ends with it, so -e -q searches for -q. A long option that takes an operand
+// and has no = takes the next word in the same way.
+func shellGrepIsQuiet(words []string) bool {
+	words = shellStageCommand(words)
+	if len(words) == 0 || !slices.Contains([]string{"grep", "egrep", "fgrep"}, commandName(words[0])) {
+		return false
+	}
+	operand := false
+	for _, word := range words[1:] {
+		switch {
+		case operand:
+			operand = false
+		case word == "--":
+			return false
+		case strings.HasPrefix(word, "--"):
+			name, _, attached := strings.Cut(word[2:], "=")
+			option := grepLongOption(name)
+			if option == "quiet" || option == "silent" {
+				return true
+			}
+			operand = grepLongOptions[option] && !attached
+		case strings.HasPrefix(word, "-") && len(word) > 1:
+			for at, option := range word[1:] {
+				if option == 'q' {
+					return true
+				}
+				if strings.ContainsRune("efmABCdD", option) {
+					operand = at == len(word)-2
+					break
+				}
 			}
 		}
 	}

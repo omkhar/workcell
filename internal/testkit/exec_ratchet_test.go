@@ -162,8 +162,9 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 	// retried holds the command expressions a retry helper's closure returns: only those run under the helper's ETXTBSY retry. Any other execution inside the closure runs while the closure builds its result and is raw.
 	retried := map[ast.Expr]bool{}
 	isCmdLit := func(lit *ast.CompositeLit) bool {
-		id, ok := lit.Type.(*ast.Ident)
-		return isCmdType(lit.Type) || ok && names.cmdTypes[id.Name]
+		typ := genericBase(lit.Type)
+		id, ok := typ.(*ast.Ident)
+		return isCmdType(typ) || ok && names.cmdTypes[id.Name]
 	}
 	// build returns the counted node for an exec.Command call or a Cmd literal, direct or by &.
 	build := func(expr ast.Expr) ast.Expr {
@@ -635,7 +636,8 @@ func cmdTypeNames(files []*ast.File) map[string]bool {
 			_, isCmdType, _ := execCommandNameIn(file)
 			ast.Inspect(file, func(c ast.Node) bool {
 				if spec, ok := c.(*ast.TypeSpec); ok && !cmdTypes[spec.Name.Name] {
-					if id, ok := spec.Type.(*ast.Ident); isCmdType(spec.Type) || ok && cmdTypes[id.Name] {
+					typ := genericBase(spec.Type)
+					if id, ok := typ.(*ast.Ident); isCmdType(typ) || ok && cmdTypes[id.Name] {
 						cmdTypes[spec.Name.Name] = true
 						added = true
 					}
@@ -674,6 +676,8 @@ func commandValueIn(file *ast.File, execCommandName func(ast.Expr) string, isCmd
 		case *ast.StarExpr:
 			return isCommand(v.X)
 		case *ast.IndexExpr:
+			return isCommand(v.X)
+		case *ast.IndexListExpr:
 			return isCommand(v.X)
 		case *ast.TypeAssertExpr: // boxed.(*exec.Cmd) is a command; x.(type) has no Type
 			return v.Type != nil && mentionsCmd(v.Type) || isCommand(v.X)
@@ -792,18 +796,22 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 	savedSetenv, factories = map[string]bool{}, map[string]bool{}
 	params := functionParams(files...)
 	fields := structFields(files)
+	notStruct := listTypeNames(files)
 	isSetenv := func(value ast.Expr) bool { return isPathWriter(value, savedSetenv, factories) }
 	returnsWriter := func(fn *ast.FuncType, body *ast.BlockStmt) bool {
 		return returnsHeld(fn, body, func(name *ast.Ident) bool { return savedSetenv[name.Name] }, isSetenv)
 	}
 	// A name or a field that receives a writer holds it; a field is matched by
 	// name across the package, which only lists more.
-	holder := func(target ast.Expr) string {
+	var holder func(target ast.Expr) string
+	holder = func(target ast.Expr) string {
 		switch t := unparen(target).(type) {
 		case *ast.Ident:
 			return t.Name
 		case *ast.SelectorExpr:
 			return t.Sel.Name
+		case *ast.IndexExpr: // m["set"] = os.Setenv makes m hold a writer
+			return holder(t.X)
 		}
 		return ""
 	}
@@ -847,10 +855,22 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 						factories[n.Name.Name] = true
 						added = true
 					}
-				case *ast.KeyValueExpr:
-					// A keyed struct literal field such as writer{set: os.Setenv}.
-					added = record([]ast.Expr{n.Key}, []ast.Expr{n.Value}) || added
+				case *ast.RangeStmt:
+					// Each element of a map or slice that holds a writer is a writer.
+					if n.Value != nil && isSetenv(n.X) {
+						added = record([]ast.Expr{n.Value}, []ast.Expr{n.X}) || added
+					}
 				case *ast.CompositeLit:
+					// A keyed struct literal field such as writer{set: os.Setenv}. A
+					// map key names no field, so a map or slice literal marks none; the
+					// holder of such a literal is a writer through isPathWriter.
+					if !notStruct[localTypeName(n.Type)] && !isListType(n.Type) {
+						for _, elt := range n.Elts {
+							if kv, ok := elt.(*ast.KeyValueExpr); ok {
+								added = record([]ast.Expr{kv.Key}, []ast.Expr{kv.Value}) || added
+							}
+						}
+					}
 					// An unkeyed struct literal such as writer{os.Setenv} fills the
 					// fields of every same-named struct type in order; a literal
 					// whose type is elided, as inside a slice literal, is not resolved.
@@ -902,9 +922,79 @@ func isPathWriter(value ast.Expr, savedSetenv, factories map[string]bool) bool {
 		return savedSetenv[v.Name] || envWriters[v.Name]
 	case *ast.CallExpr:
 		// A call of a function that returns a writer, such as writer()("PATH", dir), or a conversion, matched without types, so any single-argument call of a writer only fails closed.
-		return factories[calleeName(v.Fun)] || len(v.Args) == 1 && isPathWriter(v.Args[0], savedSetenv, factories)
+		// append(ws, os.Setenv) holds a writer in any element it adds.
+		return factories[calleeName(v.Fun)] || len(v.Args) == 1 && isPathWriter(v.Args[0], savedSetenv, factories) ||
+			calleeName(v.Fun) == "append" && slices.ContainsFunc(v.Args, func(arg ast.Expr) bool { return isPathWriter(arg, savedSetenv, factories) })
+	case *ast.IndexExpr:
+		// An element of a map or slice that holds a writer, such as m["set"]("PATH", dir).
+		return isPathWriter(v.X, savedSetenv, factories)
+	case *ast.CompositeLit:
+		// A literal that holds a writer in any element holds a writer.
+		return slices.ContainsFunc(v.Elts, func(elt ast.Expr) bool {
+			if kv, ok := elt.(*ast.KeyValueExpr); ok {
+				elt = kv.Value
+			}
+			return isPathWriter(elt, savedSetenv, factories)
+		})
 	}
 	return false
+}
+
+// genericBase strips the type arguments of an instantiated generic type, such as command[int] or pair[K, V].
+func genericBase(expr ast.Expr) ast.Expr {
+	for {
+		switch t := unparen(expr).(type) {
+		case *ast.IndexExpr:
+			expr = t.X
+		case *ast.IndexListExpr:
+			expr = t.X
+		default:
+			return expr
+		}
+	}
+}
+
+// isListType reports a map, slice or array type written in place.
+func isListType(expr ast.Expr) bool {
+	switch unparen(expr).(type) {
+	case *ast.MapType, *ast.ArrayType:
+		return true
+	}
+	return false
+}
+
+// localTypeName names the type of a literal when it is a type of this package,
+// a bare name under any pointer, parentheses or type arguments, and is ""
+// otherwise. A type from another package, such as ext.Table, is never one of
+// listTypeNames, even when a list type here shares its name.
+func localTypeName(expr ast.Expr) string {
+	switch t := genericBase(expr).(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return localTypeName(t.X)
+	}
+	return ""
+}
+
+// listTypeNames lists the package-level types declared as a map, slice or
+// array, whose literal keys name no field. A name is matched across the
+// package, so a struct type of the same name elsewhere keeps its fields read.
+// A type declared in a function names nothing outside it, so it is not listed.
+func listTypeNames(files []*ast.File) map[string]bool {
+	names, structs := map[string]bool{}, structFields(files)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			if general, ok := decl.(*ast.GenDecl); ok && general.Tok == token.TYPE {
+				for _, each := range general.Specs {
+					if spec := each.(*ast.TypeSpec); isListType(spec.Type) && structs[spec.Name.Name] == nil {
+						names[spec.Name.Name] = true
+					}
+				}
+			}
+		}
+	}
+	return names
 }
 
 // calleeName names the function a call expression calls, bare or through a
@@ -1621,6 +1711,135 @@ func a(fixture string) {
 	} {
 		if got := rawExecSites(t, name, c.src); got != c.want {
 			t.Errorf("%s: rawExecSites = %d, want %d (the reference, plus the call through the generic or boxed provenance)", name, got, c.want)
+		}
+	}
+}
+
+func TestExecRatchetReadsGenericCommandsAndKeyedWriters(t *testing.T) {
+	for name, c := range map[string]struct {
+		src  string
+		want int
+	}{
+		// A Cmd literal of an instantiated generic Cmd type names its program in Path.
+		"generic_cmd_type_literal.go": {`package x
+import "os/exec"
+type command[T any] exec.Cmd
+func a(p string) { (&command[int]{Path: p}).Run() }
+`, 1},
+		"generic_list_cmd_type_literal.go": {`package x
+import "os/exec"
+type command[T, U any] exec.Cmd
+func a(p string) { _ = command[int, string]{Path: p} }
+`, 1},
+		"generic_cmd_type_of_generic.go": {`package x
+import "os/exec"
+type base[T any] exec.Cmd
+type command[T any] base[T]
+func a(p string) { _ = command[int]{Path: p} }
+`, 1},
+		// A Path set on the command a generic factory returns is a raw site, whatever the factory's type parameter count.
+		"generic_factory_path.go": {`package x
+import "os/exec"
+func factory[T any]() *exec.Cmd { return exec.Command("/bin/true") }
+func a(fixture string) { c := factory[int](); c.Path = fixture; c.Run() }
+`, 1},
+		"generic_list_factory_path.go": {`package x
+import "os/exec"
+func factory[T, U any]() *exec.Cmd { return exec.Command("/bin/true") }
+func a(fixture string) { c := factory[int, string](); c.Path = fixture; c.Run() }
+`, 1},
+		// A map key is not a struct field, so it names no PATH writer.
+		"map_key_is_not_a_writer.go": {`package x
+import ("os"; "os/exec"; "path/filepath")
+func apply(key func(string) string, dir string) { _ = key(dir) }
+func a(dir string) {
+	key := "HOME"
+	writers := map[string]func(string, string) error{key: os.Setenv}
+	_ = writers
+	apply(filepath.Base, dir)
+	exec.Command("git")
+}
+`, 0},
+		// A writer held in a map or a slice still rewrites PATH.
+		"map_held_writer.go": {`package x
+import ("os"; "os/exec")
+func a(dir string) { m := map[string]func(string, string) error{"set": os.Setenv}; m["set"]("PATH", dir); exec.Command("git") }
+`, 1},
+		"slice_held_writer.go": {`package x
+import ("os"; "os/exec")
+func a(dir string) { ws := []func(string, string) error{os.Setenv}; ws[0]("PATH", dir); exec.Command("git") }
+`, 1},
+		"named_map_held_writer.go": {`package x
+import ("os"; "os/exec")
+type table map[string]func(string, string) error
+func a(dir string) { t := table{"set": os.Setenv}; t["set"]("PATH", dir); exec.Command("git") }
+`, 1},
+		"named_map_key_is_not_a_writer.go": {`package x
+import ("os"; "os/exec"; "path/filepath")
+type table map[string]func(string, string) error
+func apply(key func(string) string, dir string) { _ = key(dir) }
+func a(dir string) { key := "HOME"; _ = table{key: os.Setenv}; apply(filepath.Base, dir); exec.Command("git") }
+`, 0},
+		"new_generic_cmd_path.go": {`package x
+import "os/exec"
+type command[T any] exec.Cmd
+func a(p string) { c := new(command[int]); c.Path = p }
+`, 1},
+		"factory_map_writer.go": {`package x
+import ("os"; "os/exec")
+func ws() map[string]func(string, string) error { return map[string]func(string, string) error{"s": os.Setenv} }
+func a(dir string) { ws()["s"]("PATH", dir); exec.Command("git") }
+`, 1},
+		"field_map_writer.go": {`package x
+import ("os"; "os/exec")
+type h struct{ m map[string]func(string, string) error }
+func a(dir string) { x := h{m: map[string]func(string, string) error{"s": os.Setenv}}; x.m["s"]("PATH", dir); exec.Command("git") }
+`, 1},
+		"element_assigned_writer.go": {`package x
+import ("os"; "os/exec")
+func a(dir string) { m := map[string]func(string, string) error{}; m["s"] = os.Setenv; m["s"]("PATH", dir); exec.Command("git") }
+`, 1},
+		"appended_writer.go": {`package x
+import ("os"; "os/exec")
+func a(dir string) { var ws []func(string, string) error; ws = append(ws, os.Setenv); ws[0]("PATH", dir); exec.Command("git") }
+`, 1},
+		"ranged_writer.go": {`package x
+import ("os"; "os/exec")
+func a(dir string) { for _, w := range []func(string, string) error{os.Setenv} { w("PATH", dir) }; exec.Command("git") }
+`, 1},
+		// Another package's type is never a list type of this one, whatever its name.
+		"imported_struct_named_like_a_local_list.go": {`package x
+import ("os"; "os/exec"; "example.com/ext")
+type Table []func(string, string) error
+func a(dir string) { t := ext.Table{Set: os.Setenv}; t.Set("PATH", dir); exec.Command("git") }
+`, 1},
+		"pointer_to_imported_struct_named_like_a_local_list.go": {`package x
+import ("os"; "os/exec"; "example.com/ext")
+type Table []func(string, string) error
+func a(dir string) { t := &ext.Table{Set: os.Setenv}; t.Set("PATH", dir); exec.Command("git") }
+`, 1},
+		"generic_local_list_key_is_not_a_writer.go": {`package x
+import ("os"; "os/exec"; "path/filepath")
+type table[T any] map[string]T
+func apply(key func(string) string, dir string) { _ = key(dir) }
+func a(dir string) { key := "HOME"; _ = table[func(string, string) error]{key: os.Setenv}; apply(filepath.Base, dir); exec.Command("git") }
+`, 0},
+		// A list type declared inside a function names nothing outside it, so a
+		// package type of the same name keeps its keyed fields read.
+		"function_local_list_type_keeps_a_package_struct_alias.go": {`package x
+import ("os"; "os/exec"; "example.com/ext")
+type writer = ext.W
+func b() { type writer []func(string, string) error; _ = writer{} }
+func a(dir string) { w := writer{Set: os.Setenv}; w.Set("PATH", dir); exec.Command("git") }
+`, 1},
+		"struct_key_is_a_writer.go": {`package x
+import ("os"; "os/exec")
+type writer struct{ set func(string, string) error }
+func a(dir string) { w := &writer{set: os.Setenv}; w.set("PATH", dir); exec.Command("git") }
+`, 1},
+	} {
+		if got := rawExecSites(t, name, c.src); got != c.want {
+			t.Errorf("%s: rawExecSites = %d, want %d", name, got, c.want)
 		}
 	}
 }
