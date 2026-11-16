@@ -58,8 +58,8 @@ Additional in-container session targets: `~/.gemini/.env`,
   always reads the root-owned system settings.
 - Autonomy is set host-side via `workcell --agent-autonomy` (mapped to
   `--approval-mode`); provider-native overrides are not honored.
-- `reject_unsafe_gemini_args` blocks permission bypass, sandbox, extra
-  directory, yolo, and approval-mode flags.
+- The Gemini policy in `internal/providerpolicy/providerpolicy.go` blocks
+  permission bypass, sandbox, extra directory, yolo, and approval-mode flags.
 - These rules apply in all modes, including `breakglass`. Breakglass changes
   the container posture. It does not change the provider unsafe-flag policy.
 

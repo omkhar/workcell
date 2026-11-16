@@ -2818,72 +2818,74 @@ SCRIPT
 
 run_container copilot bash -s <<'SCRIPT'
 set -euo pipefail
-source /usr/local/libexec/workcell/provider-policy.sh
-reject_unsafe_copilot_args -p mcp
-reject_unsafe_copilot_args --prompt=mcp
-reject_unsafe_copilot_args --model gpt-4.1 -p smoke
-reject_unsafe_copilot_args --model=gpt-4.1 --prompt=smoke
-if (reject_unsafe_copilot_args mcp) >/tmp/workcell-copilot-policy-mcp.out 2>&1; then
+copilot_policy() {
+  /usr/local/libexec/workcell/workcell-provider-policy check --mode=strict --agent-ui=cli --wrapper-context=1 copilot "$@"
+}
+copilot_policy -p mcp
+copilot_policy --prompt=mcp
+copilot_policy --model gpt-4.1 -p smoke
+copilot_policy --model=gpt-4.1 --prompt=smoke
+if (copilot_policy mcp) >/tmp/workcell-copilot-policy-mcp.out 2>&1; then
   echo "expected Copilot policy to reject bare MCP control-plane commands" >&2
   exit 1
 fi
 grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-copilot-policy-mcp.out
-if (reject_unsafe_copilot_args logout) >/tmp/workcell-copilot-policy-logout.out 2>&1; then
+if (copilot_policy logout) >/tmp/workcell-copilot-policy-logout.out 2>&1; then
   echo "expected Copilot policy to reject the logout auth-state command" >&2
   exit 1
 fi
 grep -q "Workcell blocked Copilot lifecycle/control-plane command: logout" /tmp/workcell-copilot-policy-logout.out
-if (reject_unsafe_copilot_args --model gpt-4.1 mcp) >/tmp/workcell-copilot-policy-model-mcp.out 2>&1; then
+if (copilot_policy --model gpt-4.1 mcp) >/tmp/workcell-copilot-policy-model-mcp.out 2>&1; then
   echo "expected Copilot policy to reject lifecycle commands after model values" >&2
   exit 1
 fi
 grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-copilot-policy-model-mcp.out
-if (reject_unsafe_copilot_args --prompt smoke mcp) >/tmp/workcell-copilot-policy-prompt-mcp.out 2>&1; then
+if (copilot_policy --prompt smoke mcp) >/tmp/workcell-copilot-policy-prompt-mcp.out 2>&1; then
   echo "expected Copilot policy to reject lifecycle commands after prompt values" >&2
   exit 1
 fi
 grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-copilot-policy-prompt-mcp.out
-if (reject_unsafe_copilot_args --model --yolo) >/tmp/workcell-copilot-policy-model-yolo.out 2>&1; then
+if (copilot_policy --model --yolo) >/tmp/workcell-copilot-policy-model-yolo.out 2>&1; then
   echo "expected Copilot policy to reject dash-prefixed model values" >&2
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --yolo" /tmp/workcell-copilot-policy-model-yolo.out
-if (reject_unsafe_copilot_args -p --allow-tool=write) >/tmp/workcell-copilot-policy-prompt-allow-tool.out 2>&1; then
+if (copilot_policy -p --allow-tool=write) >/tmp/workcell-copilot-policy-prompt-allow-tool.out 2>&1; then
   echo "expected Copilot policy to reject dash-prefixed prompt values" >&2
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --allow-tool=write" /tmp/workcell-copilot-policy-prompt-allow-tool.out
-if (reject_unsafe_copilot_args -p--allow-tool=write) >/tmp/workcell-copilot-policy-attached-short-prompt-allow-tool.out 2>&1; then
+if (copilot_policy -p--allow-tool=write) >/tmp/workcell-copilot-policy-attached-short-prompt-allow-tool.out 2>&1; then
   echo "expected Copilot policy to reject attached dash-prefixed short prompt values" >&2
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --allow-tool=write" /tmp/workcell-copilot-policy-attached-short-prompt-allow-tool.out
-if (reject_unsafe_copilot_args --prompt=--allow-tool=write) >/tmp/workcell-copilot-policy-attached-long-prompt-allow-tool.out 2>&1; then
+if (copilot_policy --prompt=--allow-tool=write) >/tmp/workcell-copilot-policy-attached-long-prompt-allow-tool.out 2>&1; then
   echo "expected Copilot policy to reject attached dash-prefixed long prompt values" >&2
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --allow-tool=write" /tmp/workcell-copilot-policy-attached-long-prompt-allow-tool.out
-if (reject_unsafe_copilot_args -si) >/tmp/workcell-copilot-policy-bundled-short-options.out 2>&1; then
+if (copilot_policy -si) >/tmp/workcell-copilot-policy-bundled-short-options.out 2>&1; then
   echo "expected Copilot policy to reject bundled short options" >&2
   exit 1
 fi
 grep -q "Workcell blocked bundled Copilot short options: -si" /tmp/workcell-copilot-policy-bundled-short-options.out
-if (reject_unsafe_copilot_args -i --allow-all-tools) >/tmp/workcell-copilot-policy-short-interactive.out 2>&1; then
+if (copilot_policy -i --allow-all-tools) >/tmp/workcell-copilot-policy-short-interactive.out 2>&1; then
   echo "expected Copilot policy to reject short interactive overrides" >&2
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: -i" /tmp/workcell-copilot-policy-short-interactive.out
-if (reject_unsafe_copilot_args --interactive --add-dir) >/tmp/workcell-copilot-policy-interactive.out 2>&1; then
+if (copilot_policy --interactive --add-dir) >/tmp/workcell-copilot-policy-interactive.out 2>&1; then
   echo "expected Copilot policy to reject long interactive overrides" >&2
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --interactive" /tmp/workcell-copilot-policy-interactive.out
-if (reject_unsafe_copilot_args --no-sandbox -p smoke) >/tmp/workcell-copilot-policy-no-sandbox.out 2>&1; then
+if (copilot_policy --no-sandbox -p smoke) >/tmp/workcell-copilot-policy-no-sandbox.out 2>&1; then
   echo "expected Copilot policy to reject session sandbox disablement" >&2
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --no-sandbox" /tmp/workcell-copilot-policy-no-sandbox.out
-if (reject_unsafe_copilot_args --sandbox -p smoke) >/tmp/workcell-copilot-policy-sandbox.out 2>&1; then
+if (copilot_policy --sandbox -p smoke) >/tmp/workcell-copilot-policy-sandbox.out 2>&1; then
   echo "expected Copilot policy to reject session sandbox toggles" >&2
   exit 1
 fi
@@ -3559,7 +3561,7 @@ test -f "$CODEX_HOME/config.toml"
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-cloud.out
     # app/app-server are the managed GUI backend: denied on cli, PERMITTED under
     # AGENT_UI=gui. The gate now permits ONLY the bare managed launch `codex
-    # app-server` with NO trailing args (see reject_unsafe_codex_args). The bare
+    # app-server` with NO trailing args (see internal/providerpolicy/codex.go). The bare
     # launch passes the workcell check, then execs real codex app-server which opens
     # its stdio transport; </dev/null delivers EOF so it exits without hanging. The
     # PERMIT proof is the ABSENCE of any workcell block message (NOT --help: --help
@@ -3577,7 +3579,7 @@ test -f "$CODEX_HOME/config.toml"
     fi
     # The managed GUI allowance for `app-server` permits ONLY the bare launch (plus
     # the sandbox/approval flags provider-wrapper.sh prepends, never in user argv).
-    # reject_unsafe_codex_args is DENY-BY-DEFAULT here: ANY user token after
+    # The Go Codex policy is DENY-BY-DEFAULT here: ANY user token after
     # `app-server` (before or after `--`) dies. Pinned Codex 0.142.4 exposes not
     # just the control tokens (`--remote-control`, daemon/proxy/generate-*,
     # bootstrap/enable-remote-control/…) but network-listening/config flags on
