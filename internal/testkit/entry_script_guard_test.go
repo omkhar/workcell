@@ -347,7 +347,7 @@ func TestEntryScriptGuardFindsHelpersFromThePhysicalRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 		body := "#!/bin/bash\n" + entryScriptGuard("scripts/entry.sh") +
-			`read -r link target <"${workcell_entry_root}/../swap" && ln -sfn -- "${target}" "${link}"` + "\n" +
+			`{ IFS= read -r link && IFS= read -r target; } <"${workcell_entry_root}/../swap" && ln -sfn -- "${target}" "${link}"` + "\n" +
 			`source "${workcell_entry_root}/scripts/lib/helper.sh"` + "\n"
 		if err := os.WriteFile(filepath.Join(tree, "scripts", "entry.sh"), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
@@ -363,7 +363,7 @@ func TestEntryScriptGuardFindsHelpersFromThePhysicalRoot(t *testing.T) {
 		if err := os.Symlink(row.good, link); err != nil {
 			t.Fatal(err)
 		}
-		swap := link + " " + row.evil + "\n"
+		swap := link + "\n" + row.evil + "\n"
 		if err := os.WriteFile(filepath.Join(base, "good", "swap"), []byte(swap), 0o644); err != nil {
 			t.Fatal(err)
 		}
