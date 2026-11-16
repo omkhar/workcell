@@ -76,11 +76,15 @@ func LaneScripts(rootDir string) ([]string, error) {
 		}
 		for rel, body := range files {
 			if lane.pattern != "" {
-				pinned, libraries, err := laneRootPinned(root, rel, string(body))
+				text, err := laneEntryBridged(string(body), rel)
 				if err != nil {
 					return nil, err
 				}
-				runs, scripts = append(runs, laneRun{body: string(body), pinned: pinned, libraries: libraries}), append(scripts, rel)
+				pinned, libraries, err := laneRootPinned(root, rel, text)
+				if err != nil {
+					return nil, err
+				}
+				runs, scripts = append(runs, laneRun{body: text, pinned: pinned, libraries: libraries}), append(scripts, rel)
 				continue
 			}
 			var document workflowDocument
@@ -248,10 +252,17 @@ func laneRootPinned(root *os.File, rel, body string) (bool, []laneLibrary, error
 				}
 				content, err := rootio.ReadFileAtNoFollow(parent, path.Base(library), "lane library", 1<<20)
 				_ = parent.Close()
-				if err != nil || namesLaneRoot(string(content)) {
+				if err != nil {
 					return false, nil, nil
 				}
-				libraries, pending = append(libraries, laneLibrary{library, string(content)}), append(pending, string(content))
+				read, err := laneEntryLibrary(string(content), library, body)
+				if err != nil {
+					return false, nil, err
+				}
+				if namesLaneRoot(read) {
+					return false, nil, nil
+				}
+				libraries, pending = append(libraries, laneLibrary{library, read}), append(pending, read)
 			}
 		}
 	}

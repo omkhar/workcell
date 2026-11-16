@@ -621,3 +621,6 @@ internal/workcellhardening	extractNamedFunctionBlock	079da643,448b9f98	unreviewe
 internal/workcellhardening	parseJSONPath	227fd4ba	unreviewed debt: review the subject, then port or justify
 internal/workcellhardening	regexMatchesAnyLine	322595ab,4b9db3b8	unreviewed debt: review the subject, then port or justify
 internal/workcellhardening	runtimePathMutation	0dc5861e,e50fdbcd	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	laneEntryBridged	70c52653,73362b48	fails closed: the publish bridge reads a lane that names workcell_entry_root only at bytes it pins by sha256, which the reader of lint-ratchets-3i reads with the root pinned; other bytes are unreadable and a lane that does not name it is read as written; the merge of lint-ratchets-3i removes it
+internal/metadatautil	laneEntryLibrary	c24c7b81	fails closed: for a lane the bridge read, the publish bridge reads a library only at bytes it pins by sha256, and other bytes are unreadable; a library of any other lane is read as written; the merge of lint-ratchets-3i removes it
+internal/metadatautil	laneBridgeRead	cc362222	reads only pinned bytes, which the reader of lint-ratchets-3i reads with the root pinned: it blanks the guard and its stop and writes the root line the bridge chose; the merge of lint-ratchets-3i removes it
