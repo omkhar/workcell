@@ -128,11 +128,7 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 		}
 		for rel, body := range files {
 			if lane.pattern != "" {
-				text, err := laneEntryBridged(string(body), rel)
-				if err != nil {
-					return nil, nil, err
-				}
-				pinned, libraries, err := laneRootPinned(root, rel, text)
+				pinned, text, libraries, err := laneRootPinned(root, rel, string(body))
 				if err != nil {
 					return nil, nil, err
 				}
@@ -151,9 +147,6 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 				context := laneStepContext{document: document, job: job}
 				startup := false // a startup file set in this job's GITHUB_ENV holds for its later steps
 				for _, step := range job.Steps {
-					if laneStepPinned(rel, body, step.Name) {
-						continue
-					}
 					if unreadShellStep(document, job, step) {
 						startup = true // a step in another language may do anything a startup step does
 						continue
@@ -164,14 +157,15 @@ func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 					}
 					now, later := laneUnwires(context, step)
 					startup = startup || startupFileStep(document, job, step) || laneStartupStep(context, step) || now
-					moved, subjects := startup, laneSubjects(context, step, slices.Contains(events, "workflow_call"))
+					reach, sure := laneReachable(automatic, job.If.Value, step.If.Value)
+					moved, subjects := startup, laneSubjects(context, step, slices.Contains(events, "workflow_call") || !sure)
 					startup, context = startup || later, context.next(step)
 					if laneNeverIf(job.If) || laneNeverIf(step.If) {
 						continue // the step may never run, so it runs no gate
 					}
 					shell := map[string][2]bool{"": {true, false}, "bash": {true, true}, "sh": {true, false}}[stepShell(document, job, step)]
 					fails := laneFails(extra.Jobs[name].ContinueOnError) && laneFails(step.ContinueOnError)
-					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: moved, shell: shell, site: laneSite{env: subjects, events: automatic, gating: fails}})
+					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: moved, shell: shell, site: laneSite{env: subjects, reads: laneEventReads(context, step), events: reach, gating: fails}})
 				}
 			}
 		}
@@ -367,7 +361,8 @@ func laneCallers(body string, commands [][]string, gating laneGating, fails bool
 // each step that runs it passes; and whether a failure of it fails the job.
 type laneSite struct {
 	env     map[string]string // the step's env names whose value laneSubjects lets a case read, with that value's github name
-	events  []string          // the events other than workflow_dispatch and workflow_call that start the step's workflow
+	reads   []string          // the env names whose value names the event name
+	events  []string          // the events laneReachable finds of those other than workflow_dispatch and workflow_call that start the workflow
 	callers []laneCaller
 	lane    bool
 	gating  bool // a failure of the body fails its job
@@ -408,45 +403,159 @@ var laneReadonlyRoot = regexp.MustCompile(`^(?:readonly|declare -r) ROOT_DIR$`)
 // assignment, is no prelude, so the root is not pinned.
 var lanePreludeSet = regexp.MustCompile(`^set(?:[ \t]+(?:[-+][A-Za-z]+|[a-z]+))*[ \t]*(?:#.*)?$`)
 
+// laneEntryGuard is the entry guard's line, with REL for the path of the
+// script that holds it, which the guard checks the script's own path ends
+// with, so the root it prints is the tree that holds the script.
+const laneEntryGuard = `workcell_entry_root="$(shopt -s nullglob && f="${BASH_SOURCE[0]}" r=REL && y=/usr/bin/find && { [[ -x "${y}" ]] || y=/bin/find; } && i=/usr/bin/id && { [[ -x "${i}" ]] || i=/bin/id; } && l=/bin/ls && { [[ -x "${l}" ]] || l=/usr/bin/ls; } && e=/usr/bin/getent && { [[ -x "${e}" ]] || e=/bin/getent; } && { [[ "${f}" == /* ]] || f="${PWD}/${f}"; } && cd -P -- "${f%/*}/" && d="${PWD}" && p="${d%/}/${f##*/}" && root="${p%/"${r}"}" && [[ -n "${root}" && "${root}/${r}" == "${p}" ]] && set -- "${p}" && f="${f%/*}" && while ((${#d} >= ${#root})); do cd -L -- "${f}/" && cd -P . && [[ "${PWD}" == "${d}" ]] && set -- "$@" "${d}" && d="${d%/*}" f="${f}/.." || exit 1; done && for h in scripts scripts/ci scripts/ci/lib scripts/lib scripts/lib/launcher runtime/container; do [[ ! -e "${root}/${h}" && ! -L "${root}/${h}" ]] || set -- "$@" "${root}/${h}" "${root}/${h}"/*; done && q="${root%/*}" && a=(/) && while [[ -n "${q}" ]]; do a+=("${q}") && q="${q%/*}"; done && { u="$(LC_ALL=C "${i}")" || u=""; } && g=(-perm -020) && { [[ "${u}" =~ ^uid=[0-9]+\(([^\)]+)\)\ gid=([0-9]+)\( ]] && n="${BASH_REMATCH[1]}" k="${BASH_REMATCH[2]}" && w="$(LC_ALL=C "${e}" group "${k}")" && [[ "${w}" == "${n}:"*":${k}:" ]] && j=$'\n' && o="${j}$(LC_ALL=C "${e}" passwd)" && o="${o//"${j}${n}:"/${j}#:#:#:#:}" && x=$'\n[^:\n]*:[^:\n]*:[^:\n]*:'"${k}:" && [[ ! "${o}" =~ ${x} ]] && g+=(! -gid "${k}") || :; } && { [[ "${OSTYPE}" != darwin* ]] || g+=(! -gid 80); } && bad="$("${y}" "$@" -maxdepth 0 \( ! -type d ! -type f -o ! -uid "${EUID}" ! -uid 0 -o "${g[@]}" -o -perm -002 \) -print)" && [[ -z "${bad}" ]] && bad="$("${y}" "${a[@]}" -maxdepth 0 \( ! -type d -o ! -uid "${EUID}" ! -uid 0 -o \( "${g[@]}" -o -perm -002 \) ! -perm -1000 \) -print)" && [[ -z "${bad}" ]] && if [[ "${OSTYPE}" == darwin* ]]; then z="$(LC_ALL=C "${l}" -lde -- "$@" "${a[@]}")" && x=$' allow ([^\n]*,)?(write|append|add_file|add_subdirectory|delete|delete_child|writeattr|writeextattr|writesecurity|chown)(,|\n|$)' && [[ ! "${z}" =~ ${x} ]]; else z="$(LC_ALL=C "${l}" -ld -- "$@" "${a[@]}")" && [[ $'\n'"${z}" != *$'\n'?????w????+* ]]; fi && printf '%s\n' "${root}")" || workcell_entry_root="" # fail-closed: an empty root stops the script below`
+
+// laneEntryStop is the guard's stop, around a laneEntryMessage, and
+// laneEntryMessage is an echo of a quoted message that expands nothing but
+// the script's path, so the stop runs no other command.
+var (
+	laneEntryStop    = []string{`[[ -n "${workcell_entry_root}" ]] || {`, "  exit 2", "}"}
+	laneEntryMessage = regexp.MustCompile(`^  echo "(?:[^"$\x60\\]|\$\{BASH_SOURCE\[0\]\})*" >&2$`)
+)
+
+// laneEntryRoot is the line that assigns ROOT_DIR the root the entry guard
+// checked, and laneEntryAssigned the command this reader reads in its place.
+const (
+	laneEntryRoot     = `ROOT_DIR="${workcell_entry_root}"`
+	laneEntryAssigned = ": workcell-lane-root-assigned"
+)
+
+// laneEntryNamed is workcell_entry_root, which an entry guard's lane is read
+// with spelled ROOT_DIR, so any spelling left names it in a way that one
+// replacement does not read, as "workcell_entry_"root does.
+var laneEntryNamed = regexp.MustCompile(`workcell_entry_root`)
+
+// laneEntrySpelled returns text with workcell_entry_root spelled ROOT_DIR.
+func laneEntrySpelled(text string) string {
+	return strings.ReplaceAll(text, "workcell_entry_root", "ROOT_DIR")
+}
+
 // laneLibrary is a repository library a lane sources, by its path and text.
 type laneLibrary struct{ path, text string }
 
 // laneRootPinned reports whether ${ROOT_DIR} in the lane script rel names the
-// repository root at each command after the prelude, and returns each
-// repository library the lane sources. The root is pinned when the first line
-// that is not a comment, a blank line or a lanePreludeSet is the canonical
-// assignment for the lane's directory, the next line makes ROOT_DIR readonly,
-// and no other line of the lane or of a library it sources by a ${ROOT_DIR}/
-// path names ROOT_DIR except in an expansion that only reads it, since a child
-// shell, as in env ROOT_DIR=/tmp bash -c, has its own. Every word is read
-// without its quotes too, so "ROOT_""DIR" names it. The libraries are found
-// from the words of every command of the lane and of each library, in every
-// function each defines, so "source", \source, command builtin source and a
-// source in a function count as source does. A library this reader cannot open
-// under the root leaves the root unpinned.
-func laneRootPinned(root *os.File, rel, body string) (bool, []laneLibrary, error) {
+// repository root at each command after the prelude, and returns the text
+// this reader reads for the lane and each repository library the lane
+// sources. The root is pinned when the first line that is not a comment, a
+// blank line or a lanePreludeSet is the canonical assignment for the lane's
+// directory, the next line makes ROOT_DIR readonly, and laneRootLibraries
+// finds the lane past those lines and its libraries leave it pinned. A lane
+// whose first such line is the entry guard is read by laneEntryPinned.
+func laneRootPinned(root *os.File, rel, body string) (bool, string, []laneLibrary, error) {
+	if stripped, guarded := laneEntryStripped(body, rel); guarded {
+		return laneEntryPinned(root, body, stripped)
+	}
 	ups := strings.TrimSuffix(strings.Repeat("../", strings.Count(rel, "/")), "/")
 	canonical := regexp.MustCompile(strings.ReplaceAll(laneCanonicalRoot, "UPS", regexp.QuoteMeta(ups)))
 	lines := strings.Split(body, "\n")
-	at := slices.IndexFunc(lines, func(line string) bool {
-		trimmed := strings.TrimSpace(line)
-		return trimmed != "" && !strings.HasPrefix(trimmed, "#") && !lanePreludeSet.MatchString(trimmed)
-	})
+	at := slices.IndexFunc(lines, laneStatement)
 	if at < 0 || at+1 >= len(lines) || !canonical.MatchString(lines[at]) || !laneReadonlyRoot.MatchString(lines[at+1]) {
-		return false, nil, nil
+		return false, body, nil, nil
 	}
 	lines[at], lines[at+1] = "", ""
-	if named, opaque := namesLaneRoot(strings.Join(lines, "\n")); opaque {
-		return false, nil, errLaneBraces
-	} else if named {
-		return false, nil, nil
+	libraries, pinned, err := laneRootLibraries(root, strings.Join(lines, "\n"), false, false)
+	return pinned, body, libraries, err
+}
+
+// laneStatement reports whether a line is past the prelude: neither blank,
+// a comment nor a lanePreludeSet.
+func laneStatement(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return trimmed != "" && !strings.HasPrefix(trimmed, "#") && !lanePreludeSet.MatchString(trimmed)
+}
+
+// laneEntryStripped returns text with its entry guard and the guard's stop
+// blank, and whether text holds them: its first line past the prelude is the
+// guard for rel, and the next lines are the stop exactly. The guard sets
+// workcell_entry_root to the root of the tree that holds rel, or to "" when
+// the script does not run from its own place in a tree no other user can
+// write, as for a library sourced by any other path, and the stop then
+// exits 2. Past them, workcell_entry_root holds the root or the shell has
+// ended, as this reader reads a repository library under the root.
+func laneEntryStripped(text, rel string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	at := slices.IndexFunc(lines, laneStatement)
+	if at < 0 || at+4 >= len(lines) || lines[at] != strings.Replace(laneEntryGuard, "REL", rel, 1) || lines[at+1] != laneEntryStop[0] ||
+		!laneEntryMessage.MatchString(lines[at+2]) || lines[at+3] != laneEntryStop[1] || lines[at+4] != laneEntryStop[2] {
+		return text, false
+	}
+	for line := at; line <= at+4; line++ {
+		lines[line] = ""
+	}
+	return strings.Join(lines, "\n"), true
+}
+
+// laneEntryPinned reads a lane that laneEntryStripped finds guarded. The root
+// is pinned when laneRootLibraries finds that the lane and its libraries name
+// workcell_entry_root and ROOT_DIR only in expansions that only read them,
+// but for the first laneEntryRoot line, which assigns ROOT_DIR the root.
+// ROOT_DIR keeps any value it inherits until that line runs, so no text
+// before the line, nor a library that text sources, names ROOT_DIR, and
+// laneReadable reads the lane only where the line runs whenever the lane
+// does, outside every branch, loop, group, function and list. The lane and
+// its libraries are then read with workcell_entry_root spelled ROOT_DIR, as
+// both hold the root wherever a read of either may run, with
+// laneEntryAssigned for the line.
+func laneEntryPinned(root *os.File, body, stripped string) (bool, string, []laneLibrary, error) {
+	lines := strings.Split(stripped, "\n")
+	assigned := slices.Index(lines, laneEntryRoot)
+	before := stripped
+	if assigned >= 0 {
+		before, lines[assigned] = strings.Join(lines[:assigned], "\n"), ""
+	}
+	if named, opaque := namesShellVariable(before, laneRootNamed.MatchString); named || opaque {
+		return false, body, nil, nil
+	}
+	if _, pinned, err := laneRootLibraries(root, laneEntrySpelled(before), true, true); !pinned || err != nil {
+		return false, body, nil, err
+	}
+	text := laneEntrySpelled(strings.Join(lines, "\n"))
+	libraries, pinned, err := laneRootLibraries(root, text, true, false)
+	if !pinned || err != nil || strings.Contains(text, laneEntryAssigned) {
+		return false, body, nil, err
+	}
+	if assigned >= 0 {
+		lines = strings.Split(text, "\n")
+		lines[assigned] = laneEntryAssigned
+		text = strings.Join(lines, "\n")
+	}
+	return true, text, libraries, nil
+}
+
+// laneRootLibraries returns each repository library that text sources, and
+// whether text and every such library leave ROOT_DIR pinned: none names
+// ROOT_DIR other than in an expansion that only reads it, as
+// laneRootReadOnly reads text, and each is a library this reader can open
+// under the root. A library is read past its own entry guard, for its own
+// path, as laneEntryStripped blanks it. For an entry guard's lane, each
+// library is read with workcell_entry_root spelled ROOT_DIR, no spelling of
+// workcell_entry_root may be left, and with early no library's own text may
+// name ROOT_DIR at all.
+func laneRootLibraries(root *os.File, text string, entry, early bool) ([]laneLibrary, bool, error) {
+	names := laneRootReadOnly
+	if entry {
+		names = func(text string) bool { return laneRootReadOnly(text) || laneEntryNamed.MatchString(text) }
+	}
+	pinned := func(text string) (bool, error) {
+		if named, opaque := namesShellVariable(text, names); opaque {
+			return false, errLaneBraces
+		} else if named {
+			return false, nil
+		}
+		return true, nil
+	}
+	if ok, err := pinned(text); !ok {
+		return nil, false, err
 	}
 	var libraries []laneLibrary
 	seen := map[string]bool{}
-	for pending := []string{body}; len(pending) > 0; pending = pending[1:] {
+	for pending := []string{text}; len(pending) > 0; pending = pending[1:] {
 		parts, complete := libraryParts(pending[0])
 		if !complete {
-			return false, nil, fmt.Errorf("lane wiring is unreadable: a lane nests function definitions deeper than this reader parses")
+			return nil, false, fmt.Errorf("lane wiring is unreadable: a lane nests function definitions deeper than this reader parses")
 		}
 		for _, part := range parts {
 			for _, words := range part.commands {
@@ -457,27 +566,30 @@ func laneRootPinned(root *os.File, rel, body string) (bool, []laneLibrary, error
 				seen[library] = true
 				parent, err := rootio.OpenDirAtNoFollow(root, path.Dir(library))
 				if err != nil {
-					return false, nil, nil
+					return nil, false, nil
 				}
 				content, err := rootio.ReadFileAtNoFollow(parent, path.Base(library), "lane library", 1<<20)
 				_ = parent.Close()
 				if err != nil {
-					return false, nil, nil
+					return nil, false, nil
 				}
-				read, err := laneEntryLibrary(string(content), library, body)
-				if err != nil {
-					return false, nil, err
+				read, _ := laneEntryStripped(string(content), library)
+				if early {
+					if named, opaque := namesShellVariable(read, laneRootNamed.MatchString); named || opaque {
+						return nil, false, nil
+					}
 				}
-				if named, opaque := namesLaneRoot(read); opaque {
-					return false, nil, errLaneBraces
-				} else if named {
-					return false, nil, nil
+				if entry {
+					read = laneEntrySpelled(read)
+				}
+				if ok, err := pinned(read); !ok {
+					return nil, false, err
 				}
 				libraries, pending = append(libraries, laneLibrary{library, read}), append(pending, read)
 			}
 		}
 	}
-	return true, libraries, nil
+	return libraries, true, nil
 }
 
 // lanePart is the commands of one part of a text: outside every function,
@@ -528,10 +640,10 @@ func laneCommands(texts ...string) [][][]string {
 	return commands
 }
 
-// namesLaneRoot reports whether text names ROOT_DIR other than in an
-// expansion that only reads it, as namesShellVariable reads text.
-func namesLaneRoot(text string) (named, opaque bool) {
-	return namesShellVariable(text, func(text string) bool { return laneRootNamed.MatchString(laneRootPlain.ReplaceAllString(text, "")) })
+// laneRootReadOnly reports whether text names ROOT_DIR other than in an
+// expansion that only reads it, which namesShellVariable applies to text.
+func laneRootReadOnly(text string) bool {
+	return laneRootNamed.MatchString(laneRootPlain.ReplaceAllString(text, ""))
 }
 
 // namesShellVariable reports whether names holds for text: for its own text,

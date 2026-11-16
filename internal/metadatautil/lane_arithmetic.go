@@ -647,8 +647,25 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 			push("(") // an array assignment whose elements run on to a later line
 		}
 	}
-	if len(words) > 0 && strings.HasSuffix(words[len(words)-1].syntax, ")") && innermost() == "(" {
+	if len(words) > 0 && strings.HasSuffix(words[len(words)-1].syntax, ")") && innermost() == "(" && !laneArrayClosed(words) {
 		pop(")")
 	}
 	return scopes, nesting.lost
 }
+
+// laneArrayClosed reports whether a command's words hold an array assignment
+// and as many ) as (, as a=(/) and g=(-perm -020) do, so its last ) ends the
+// array and closes no subshell or substitution around it. A word's syntax
+// masks its quoted bytes, so only the parentheses bash reads count.
+func laneArrayClosed(words []word) bool {
+	var syntax strings.Builder
+	array := false
+	for _, each := range words {
+		syntax.WriteString(each.syntax)
+		array = array || laneArrayStart.MatchString(each.syntax)
+	}
+	return array && strings.Count(syntax.String(), "(") == strings.Count(syntax.String(), ")")
+}
+
+// laneArrayStart is the start of an array assignment, as g=( or g+=( is.
+var laneArrayStart = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\+?=\(`)

@@ -278,8 +278,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 	var exitActions []string // the action of each EXIT trap
 	opened := map[int]bool{} // whether the command that opens each scope runs whenever its body does
 	var own *laneOwnCase     // the lane script's cases on its own $1
+	assigned := false        // the lane has assigned ROOT_DIR the entry guard's root
 
-	var covers []laneEventPatch // each command only an event case's branch runs
+	var covers []laneEventPatch // each command only a branch on the event name runs
 	if site.lane {
 		own = &laneOwnCase{}
 	}
@@ -340,7 +341,10 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 		var lapsed []laneGuard             // the guards past laneGuardLimit, which no longer count
 		var pending *laneGuard             // a test for digits the next command may make a guard
 		heading := map[int]bool{}          // the if scopes whose condition the reader is in, which runs whenever the if does
-		cases := laneCases{env: site.env, events: site.events, run: body, own: own, top: at == 0}
+		cases := laneCases{env: site.env, events: site.events, run: body, own: own, top: at == 0,
+			reads: regexp.MustCompile(`\$\{?(?:` + strings.Join(append(slices.Clone(site.reads), "GITHUB_EVENT_NAME"), "|") + `)\b`)}
+		eventIfs := map[int]*laneEventIf{} // each if scope's branches on the event name
+		ifDepths := map[int]*laneEventIf{} // the if open at each depth of scopes
 		for _, each := range scanned {
 			args := each.args
 			held := len(nesting.scopes) // the scopes open before the command
@@ -372,11 +376,43 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 			}
 			if len(scopes) > 0 {
 				last := scopes[len(scopes)-1]
-				if _, seen := opened[last]; !seen && firstOf(words) == "if" {
+				_, seen := opened[last]
+				if !seen && firstOf(words) == "if" {
 					heading[last] = true
 				}
 				if firstOf(words) == "then" {
 					heading[last] = false
+				}
+				first, touched := firstOf(words), map[*laneEventIf]bool{}
+				opener := slices.IndexFunc(scopes, func(scope int) bool { _, seen := opened[scope]; return !seen }) // the first scope the command opens
+				if opener < 0 {
+					opener = len(scopes)
+				}
+				if state := eventIfs[scopes[max(opener, 1)-1]]; first == "then" && opener > 0 && state != nil {
+					touched[state] = true
+					cases.branch(state, false)
+				}
+				for index := opener; index < len(scopes); index++ {
+					switch scope := scopes[index]; {
+					case nesting.kinds[scope] != "if":
+					case index == opener && (first == "else" || first == "elif") && ifDepths[index] != nil: // the next branch of the if at its depth
+						eventIfs[scope], touched[ifDepths[index]] = ifDepths[index], true
+						if first == "else" {
+							cases.branch(eventIfs[scope], true)
+						} else {
+							cases.heading(eventIfs[scope], args[1:], true)
+						}
+					default: // the command opens an if, as if, then if and else if do
+						eventIfs[scope] = &laneEventIf{all: cases.events, judged: true}
+						ifDepths[index], touched[eventIfs[scope]] = eventIfs[scope], true
+						cases.heading(eventIfs[scope], args[slices.IndexFunc(args, func(each word) bool { return !each.quoted && each.text == "if" })+1:], true)
+					}
+				}
+				for _, scope := range scopes { // a later command of a condition
+					if state := eventIfs[scope]; state != nil && state.tests > 0 && !touched[state] {
+						touched[state] = true
+						cases.heading(state, args, false)
+					}
 				}
 			}
 			for _, scope := range scopes { // a group the command opens runs only when the command would, as cmd || { exit 1; } does
@@ -385,6 +421,12 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 				}
 			}
 			command := laneCommand(laneLeading(laneUnredirected(texts(run))))
+			if strings.Join(command, " ") == laneEntryAssigned { // the line that assigns ROOT_DIR the entry guard's root
+				if at != 0 || len(scopes) > 0 || each.conditional || each.nested || each.piped || lost {
+					return false, fmt.Errorf("lane wiring is unreadable: a %s assigns ROOT_DIR the entry guard's root where the assignment may not run whenever the lane does, so ROOT_DIR may keep a value it inherits", where)
+				}
+				assigned = true
+			}
 			if function == 0 {
 				cases.shift(command, scopes, certain)
 			}
@@ -399,12 +441,18 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 				case !each.conditional: // where the reader lost track, any command may run
 					named, branch := cases.condition(function)
 					top.placed = lost || !slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] != "{" || !opened[scope] })
+					var ifs []*laneEventIf // the ifs on the event name whose branch the command runs in
+					for _, scope := range inside {
+						if state := eventIfs[scope]; !lost && state != nil && state.tests == 0 && (state.judged || state.opaque) {
+							ifs, state.ran = append(ifs, state), append(state.ran, state.taken...)
+						}
+					}
 					free := lost || !slices.ContainsFunc(inside, func(scope int) bool {
-						return !opened[scope] || nesting.kinds[scope] == "(" || nesting.kinds[scope] == "if" && !heading[scope]
+						return !opened[scope] || nesting.kinds[scope] == "(" || nesting.kinds[scope] == "if" && !heading[scope] && !slices.Contains(ifs, eventIfs[scope])
 					})
 					top.may = free && len(named) == 0
-					if free && len(named) > 0 && !slices.ContainsFunc(named, func(c *laneCase) bool { return !c.event }) {
-						covers = append(covers, laneEventPatch{key, len(ends.tops[key]), named}) // an event case may run a branch on every event
+					if free && len(named)+len(ifs) > 0 && !slices.ContainsFunc(named, func(c *laneCase) bool { return !c.event }) {
+						covers = append(covers, laneEventPatch{key, len(ends.tops[key]), named, ifs}) // a branch on the event name may run on every event
 					}
 					if top.may && branch != nil { // a branch on $1 runs only where a caller selects it
 						own.patches, top.may = append(own.patches, laneOwnPatch{key, len(ends.tops[key]), branch}), false
@@ -530,6 +578,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 				counted = append(counted, laneCall{words, part.function})
 			}
 		}
+		if at == 0 && strings.Contains(text, laneEntryAssigned) && !assigned {
+			return false, fmt.Errorf("lane wiring is unreadable: a %s assigns ROOT_DIR the entry guard's root where the assignment may not run whenever the lane does, so ROOT_DIR may keep a value it inherits", where)
+		}
 		if at == 0 {
 			for _, words := range laneCommands(body)[0] { // the lane runs its own commands as EveryShellCommand reads them
 				calls = append(calls, laneCall{words: words})
@@ -551,7 +602,8 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 		}
 	}
 	for _, patch := range covers {
-		ends.tops[patch.key][patch.index].may = !slices.ContainsFunc(patch.cases, func(c *laneCase) bool { return !c.covered() })
+		ends.tops[patch.key][patch.index].may = !slices.ContainsFunc(patch.cases, func(c *laneCase) bool { return !c.covered() }) &&
+			!slices.ContainsFunc(patch.ifs, func(state *laneEventIf) bool { return !state.covered() })
 	}
 	reading.unsetsListed()
 	outputs, err := reading.outputs(calls, stable)
@@ -1484,12 +1536,13 @@ type laneEnds struct {
 }
 
 // laneEventPatch is a command that runs only in a branch of each of some
-// event cases: its top's place among its body's tops, and the cases. It may
-// end the body when each case is covered.
+// event cases and ifs on the event name: its top's place among its body's
+// tops, the cases and the ifs. It may end the body when each is covered.
 type laneEventPatch struct {
 	key   string
 	index int
 	cases []*laneCase
+	ifs   []*laneEventIf
 }
 
 // laneTop is one command a body runs, and where it stands.
