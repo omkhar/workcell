@@ -462,7 +462,8 @@ runner holds there. The new shell runs the script from its first line, so
 each later command still runs.
 
 The `exec` must stand in a function that the script and its libraries
-define once. That function must first run
+define once. The check counts definitions as bash parses them, with each `\`
+newline joined. That function must first run
 `((BASH_VERSINFO[0] >= 4)) && return 0` as a list of its own. The line takes
 no redirection and stands outside any branch or loop. Under bash 4 or newer
 the function returns there, so the `exec` runs only under an older bash. An
@@ -472,11 +473,11 @@ lane.
 This counts only where `$0`, the arguments and the directory stay as they
 were. No `cd`, `shift`, `set` of the parameters, `eval`, `trap`, call of a
 function or `BASH_ARGV0` may come first. The script must call the function
-as `f "$@"` at its top level and name it nowhere else. The script word may
-also be a variable whose every write is `"$0"`, or
-`"${ROOT_DIR}/scripts/${0##*/}"` for a script in `scripts/`. A step's text
-never runs itself again this way, since a new bash does not take the options
-of the step's shell.
+as `f "$@"` at its top level and name it nowhere else. That holds for its
+text as spelled and with each `\` newline joined. The script word may also be
+a variable whose every write is `"$0"`, or `"${ROOT_DIR}/scripts/${0##*/}"`
+for a script in `scripts/`. A step's text never runs itself again this way,
+since a new bash does not take the options of the step's shell.
 
 A `case` branch is a condition only when each of its patterns is a literal
 word and no `;&` or `;;&` runs it (`internal/metadatautil/lane_cases.go`). Its
