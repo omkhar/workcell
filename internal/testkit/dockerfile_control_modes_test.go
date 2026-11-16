@@ -21,7 +21,6 @@ const (
 var executableControlScripts = []string{
 	"/usr/local/libexec/workcell/home-control-plane.sh",
 	"/usr/local/libexec/workcell/public-node-guard.mjs",
-	"/usr/local/libexec/workcell/provider-policy.sh",
 }
 
 // splitControlScriptModes cuts the runtime-builder permission block into the
