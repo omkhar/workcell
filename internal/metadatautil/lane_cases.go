@@ -41,6 +41,7 @@ type laneCases struct {
 	empty   bool              // the command before was empty
 	follows string            // the operator in front of the command before
 	env     map[string]string // a step's own env, or nil in a lane script
+	events  int               // how many events the step's workflow runs on
 	run     string            // a step's text
 	own     *laneOwnCase      // a lane script's, shared by its libraries
 	top     bool              // the body is the lane script's own text
@@ -111,7 +112,7 @@ func (cases *laneCases) read(each command, nesting *laneNesting) (scopes []int, 
 		if at+2 < len(body) && body[at+2].text == "in" {
 			c.subject = body[at+1].text
 		}
-		c.named = laneCaseNamed(c.subject, cases.env, cases.run)
+		c.named = laneCaseNamed(c.subject, cases.env, cases.run, cases.events)
 		if c.own = cases.top && function == 0 && laneOwnSubject.MatchString(c.subject); c.own && cases.own != nil {
 			cases.own.cases++
 			cases.own.changed = cases.own.changed || cases.own.cases > 1
@@ -273,20 +274,26 @@ var laneOwnSubject = regexp.MustCompile(`^\$(?:1|\{1\})$`)
 // name, by reading each caller's arguments as the case on $1 reads them in a
 // loop: each argument it reaches must be a literal word that a literal
 // pattern of an earlier branch than any other matches, and that branch's one
-// shift drops the arguments it reads. It marks each branch an argument
-// selects.
-func (own *laneOwnCase) safe(calls [][]string) bool {
+// shift drops the arguments it reads, each of which bash must keep one word.
+// It marks each branch an argument selects.
+func (own *laneOwnCase) safe(calls []laneCaller) bool {
 	if own.changed || len(calls) == 0 {
 		return false
 	}
-	for _, args := range calls {
-		for at := 0; at < len(args); {
+	for _, call := range calls {
+		if !call.read {
+			return false
+		}
+		for at, args := 0, call.args; at < len(args); {
+			if !laneLiteralPiece(args[at].raw) {
+				return false
+			}
 			var chosen *laneOwnBranch
 			for _, branch := range own.branches {
 				if !branch.literal {
 					return false
 				}
-				if slices.Contains(branch.patterns, args[at]) {
+				if slices.Contains(branch.patterns, args[at].text) {
 					chosen = branch
 					break
 				}
@@ -298,23 +305,39 @@ func (own *laneOwnCase) safe(calls [][]string) bool {
 			if chosen.shift < 1 {
 				return false
 			}
+			for _, skipped := range args[at+1 : min(at+chosen.shift, len(args))] {
+				if !laneOneWord(skipped) {
+					return false
+				}
+			}
 			at += chosen.shift
 		}
 	}
 	return true
 }
 
+// laneOneWord reports whether bash keeps a word one argument: it has no
+// unquoted expansion, brace or pattern, which may split it or make more of
+// it, and no @, as "$@" has.
+func laneOneWord(each word) bool {
+	return !strings.ContainsAny(each.syntax, "$`*?[]{}~") && !strings.Contains(each.raw, "@")
+}
+
 // laneCaseNamed reports whether a case subject is one expansion of a variable
-// whose value no lane can fix: a step's env sets it to a github context
-// value, bash sets no variable by its name, and the step's text names it only
-// to expand it. A step sources no file, which this reader refuses.
-func laneCaseNamed(subject string, env map[string]string, run string) bool {
+// whose value no lane can fix: a step's env sets it to a github context value
+// that differs from run to run, bash sets no variable by its name, and the
+// step's text names it only to expand it. A step sources no file, which this
+// reader refuses. The values that differ are the sha and the head_ref, and
+// the event_name of a workflow that more than one event runs. Others, as the
+// repository or the workflow, stay the same from run to run.
+func laneCaseNamed(subject string, env map[string]string, run string, events int) bool {
 	match := laneCaseVariable.FindStringSubmatch(subject)
 	if match == nil {
 		return false
 	}
 	name := match[1] + match[2]
-	if !laneGithubValue.MatchString(env[name]) || laneBashNames.MatchString(name) {
+	value := laneGithubValue.FindStringSubmatch(env[name])
+	if value == nil || value[1] == "event_name" && events < 2 || laneBashNames.MatchString(name) {
 		return false
 	}
 	read := regexp.MustCompile(`\$(?:` + name + `\b|\{` + name + `\})`)
@@ -323,6 +346,6 @@ func laneCaseNamed(subject string, env map[string]string, run string) bool {
 
 var (
 	laneCaseVariable = regexp.MustCompile(`^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$`)
-	laneGithubValue  = regexp.MustCompile(`^\$\{\{ *github\.[A-Za-z0-9_.-]+ *\}\}$`)
+	laneGithubValue  = regexp.MustCompile(`^\$\{\{ *github\.(event_name|head_ref|sha) *\}\}$`)
 	laneBashNames    = regexp.MustCompile(`^(?:BASH.*|COMP_.*|GITHUB_.*|RUNNER_.*|LINENO|PWD|OLDPWD|UID|EUID|PPID|RANDOM|SRANDOM|SECONDS|SHLVL|HOSTNAME|HOSTTYPE|OSTYPE|MACHTYPE|GROUPS|FUNCNAME|OPTIND|OPTARG|OPTERR|REPLY|PIPESTATUS|EPOCHSECONDS|EPOCHREALTIME|HISTCMD|COLUMNS|LINES|DIRSTACK|SHELLOPTS|IFS|PATH|ENV|PS4)$`)
 )

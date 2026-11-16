@@ -4,6 +4,7 @@
 package metadatautil_test
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -869,7 +870,7 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 	}
 	gated := func(text, env string) string { return step(text+"\n./scripts/gate.sh", env) }
 	runs := func(args string) string { return step("./scripts/ci/job-a.sh"+args, "") }
-	type row struct{ name, top, job, steps, lane, library, validate, want string }
+	type row struct{ name, on, top, job, steps, lane, library, validate, want string }
 	rows := []row{
 		{name: "an env value from the github context", steps: gated("case \"${E}\" in\n  issues)\n    exit 0\n    ;;\n  issue_comment) ;;\n  *)\n    exit 1\n    ;;\nesac", event), want: "wired"},
 		{name: "a literal pattern list", steps: gated("case $E in a | b) exit 0;; esac", event), want: "wired"},
@@ -961,12 +962,55 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a lane script whose function's case is called with -h", steps: runs(""), lane: "f() {\n  case \"$1\" in\n" + flags + "  esac\n}\nf -h\n./scripts/gate.sh\n", want: ended},
 		row{name: "a lane script whose library reads the arguments it is sourced with", steps: runs(""), lane: jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\" -h\n./scripts/gate.sh\n", library: "case \"$1\" in\n" + flags + "esac\n", want: ended},
 		row{name: "a lane script only validate-repo.sh runs", steps: step("true", ""), validate: laneRoot + "\n\"${ROOT_DIR}/scripts/ci/job-a.sh\"\n", lane: "./scripts/gate.sh\n", want: "unwired"},
+		row{name: "a case that closes a substitution", steps: gated("x=$(case x in x) echo;; esac)\nexit 0", ""), want: ended},
+		row{name: "a case that closes a quoted substitution", steps: gated("x=\"$(case x in x) echo;; esac)\"\nexec true", ""), want: ended},
+		row{name: "a case that closes a process substitution", steps: gated("cat <(case x in x) echo;; esac)\nexit 0", ""), want: ended},
+		row{name: "a case that closes a substitution in a lane script", steps: runs(""), lane: "x=$(case x in x) echo;; esac)\nexit 0\n./scripts/gate.sh\n", want: ended},
+		row{name: "a substitution that runs a word starting with case", steps: gated("x=\"$(caser)\"\nexit 0", ""), want: ended},
+		row{name: "a substitution with case as an argument", steps: gated("x=\"$(echo case)\"\nexit 0", ""), want: ended},
+		row{name: "a case that closes a substitution before the gate", steps: gated("x=$(case x in x) echo;; esac)\ny=1", ""), want: "wired"},
+		row{name: "an env value from the repository", steps: gated("case \"$V\" in o/r) exit 0;; esac", "        env:\n          V: ${{ github.repository }}\n"), want: ended},
+		row{name: "an env value from the workflow name", steps: gated("case \"$V\" in w) exit 0;; esac", "        env:\n          V: ${{ github.workflow }}\n"), want: ended},
+		row{name: "an env value from the event of a workflow one event runs", on: "push", steps: gated("case $E in push) exit 0;; esac", event), want: ended},
+		row{name: "an env value from the head ref", steps: gated("case $E in main) exit 0;; esac", "        env:\n          E: ${{ github.head_ref }}\n"), want: "wired"},
+		row{name: "a lane script run with a brace", steps: runs(" --profile {x,--help}"), lane: lane, want: ended},
+		row{name: "a lane script run with an unquoted expansion", steps: step("./scripts/ci/job-a.sh --profile $X", "        env:\n          X: x --help\n"), lane: lane, want: ended},
+		row{name: "a lane script run with an unquoted substitution", steps: runs(" --profile $(echo x --help)"), lane: lane, want: ended},
+		row{name: "a lane script run with $IFS", steps: runs(" --profile x$IFS--help"), lane: lane, want: ended},
+		row{name: "a lane script run with \"$@\"", steps: runs(" --profile \"$@\""), lane: lane, want: ended},
+		row{name: "a lane script run with a quoted option", steps: runs(" \"--profile\" x"), lane: lane, want: ended},
+		row{name: "a lane script run after an assignment and before a redirection", steps: step("X=1 ./scripts/ci/job-a.sh --profile x 2>&1", ""), lane: lane, want: "wired"},
+		row{name: "a lane script run with a quoted option value", steps: runs(" --profile 'x y'"), lane: lane, want: "wired"},
+		row{name: "a lane script run with a matrix value", job: "    strategy:\n      matrix:\n        p: ['x --help']\n", steps: runs(" --profile ${{matrix.p}}"), lane: lane, want: "unwired"},
+		row{name: "a lane script xargs runs", steps: step("echo --help | xargs ./scripts/ci/job-a.sh", ""), lane: lane, want: ended},
+		row{name: "a lane script run as itself and by xargs", steps: step("./scripts/ci/job-a.sh\necho --help | xargs ./scripts/ci/job-a.sh", ""), lane: lane, want: ended},
+		row{name: "a lane script whose selected branch does not shift", steps: runs(" --a --a"), lane: strings.Replace(lane, "    --profile)", "    --a)\n      ;;\n    --profile)", 1), want: ended},
+		row{name: "a step after one that writes GITHUB_PATH", steps: step("echo /tmp/b >> \"$GITHUB_PATH\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that writes another directory to ${GITHUB_PATH}", steps: step("echo /tmp/b >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after one that adds its tool directory to GITHUB_PATH", steps: step("echo \"${RUNNER_TEMP}/bin\" >> \"${GITHUB_PATH}\"", "") + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a job env that sets PATH", job: "    env:\n      PATH: /tmp/b:/usr/bin:/bin\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step env that sets PATH", steps: gated("true", "        env:\n          PATH: /tmp/b:/usr/bin:/bin\n"), want: "unwired"},
+		row{name: "a step after an action no review lists", steps: "      - uses: actions/github-script@v7\n        with:\n          script: x\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a local action", steps: "      - uses: ./.github/actions/a\n" + step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step after a reviewed action", steps: "      - uses: actions/checkout@v4\n" + step("./scripts/gate.sh", ""), want: "wired"},
+		row{name: "a step of a job in a container whose env sets SHELLOPTS", job: "    container:\n      image: debian\n      env:\n        SHELLOPTS: noexec\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step of a job in a container", job: "    container: debian\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step env name with an expression", steps: gated("true", "        env:\n          ${{ 'SHELLOPTS' }}: noexec\n"), want: "unwired"},
+		row{name: "a step whose body has an expression", steps: gated("echo ${{ matrix.c }}", ""), want: "unwired"},
+		row{name: "a step whose if is false", steps: gated("true", "        if: false\n"), want: "unwired"},
+		row{name: "a step whose if is a false expression", steps: gated("true", "        if: ${{ 1 == 2 }}\n"), want: "unwired"},
+		row{name: "a job whose if is false", job: "    if: ${{ false }}\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a step whose if calls a status function", steps: gated("true", "        if: always()\n"), want: "wired"},
+		row{name: "a step whose if reads a context", steps: gated("true", "        if: github.event_name == 'push'\n"), want: "wired"},
+		row{name: "a workflow only a run by hand starts", on: "workflow_dispatch", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a workflow no event starts", on: "{}", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "a workflow a push or a run by hand starts", on: "[push, workflow_dispatch]", steps: step("./scripts/gate.sh", ""), want: "wired"},
 	)
 	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			files := map[string]string{"scripts/validate-repo.sh": "true\n", "scripts/ci/job-a.sh": tc.lane, ".github/workflows/w.yml": tc.top + "jobs:\n  j:\n    runs-on: ubuntu-latest\n" + tc.job + "    steps:\n" + tc.steps}
+			files := map[string]string{"scripts/validate-repo.sh": "true\n", "scripts/ci/job-a.sh": tc.lane, ".github/workflows/w.yml": "on: " + cmp.Or(tc.on, "[issues, issue_comment]") + "\n" + tc.top + "jobs:\n  j:\n    runs-on: ubuntu-latest\n" + tc.job + "    steps:\n" + tc.steps}
 			if tc.library != "" {
 				files["scripts/lib/l.sh"] = tc.library
 			}

@@ -335,7 +335,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 		var lapsed []laneGuard             // the guards past laneGuardLimit, which no longer count
 		var pending *laneGuard             // a test for digits the next command may make a guard
 		heading := map[int]bool{}          // the if scopes whose condition the reader is in, which runs whenever the if does
-		cases := laneCases{env: site.env, run: body, own: own, top: at == 0}
+		cases := laneCases{env: site.env, events: site.events, run: body, own: own, top: at == 0}
 		for _, each := range scanned {
 			args := each.args
 			held := len(nesting.scopes) // the scopes open before the command
