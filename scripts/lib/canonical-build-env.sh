@@ -42,16 +42,23 @@ _workcell_canonical_env_is_passive_go_toolcache_alias() {
 
 workcell_require_modern_privileged_bash() {
   local candidate=""
+  local self="$0"
 
   if [[ "$-" != *p* ]]; then
     echo "Canonical entrypoint requires privileged Bash mode; execute the script directly." >&2
     return 2
   fi
   ((BASH_VERSINFO[0] >= 4)) && return 0
+  # Re-run the caller from the physical root that its entry guard checked, not
+  # from $0, whose directories a symlink could have moved since. Every caller
+  # sits directly in scripts/.
+  if [[ -n "${workcell_entry_root:-}" ]]; then
+    self="${workcell_entry_root}/scripts/${0##*/}"
+  fi
   for candidate in /opt/homebrew/bin/bash /usr/local/bin/bash; do
     [[ -x "${candidate}" ]] || continue
     if "${candidate}" -p -c '((BASH_VERSINFO[0] >= 4))' </dev/null; then
-      exec "${candidate}" -p "$0" "$@"
+      exec "${candidate}" -p "${self}" "$@"
     fi
   done
   echo "Canonical entrypoint requires Bash 4 or newer at a trusted absolute path." >&2
