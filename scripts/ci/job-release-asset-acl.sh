@@ -9,21 +9,19 @@ set -euo pipefail
 ROOT_DIR="${workcell_entry_root}"
 
 # This bounded Bash bootstrap runs before a Go binary is available, so it cannot use a Go helper.
+# awk compares the parts, not bash arithmetic, which would evaluate a part read
+# from a path as an expression.
 toolchain_version_is_newer() {
-  local left="$1"
-  local right="$2"
-  local left_major left_minor left_patch
-  local right_major right_minor right_patch
-
-  IFS=. read -r left_major left_minor left_patch <<<"${left}"
-  IFS=. read -r right_major right_minor right_patch <<<"${right}"
-  if ((10#${left_major} != 10#${right_major})); then
-    ((10#${left_major} > 10#${right_major}))
-  elif ((10#${left_minor} != 10#${right_minor})); then
-    ((10#${left_minor} > 10#${right_minor}))
-  else
-    ((10#${left_patch} > 10#${right_patch}))
-  fi
+  awk -v left="$1" -v right="$2" 'BEGIN {
+    split(left, l, ".")
+    split(right, r, ".")
+    for (i = 1; i <= 3; i++) {
+      if (l[i] + 0 != r[i] + 0) {
+        exit !(l[i] + 0 > r[i] + 0)
+      }
+    }
+    exit 1
+  }'
 }
 
 expected_toolchain="$(awk '$1 == "toolchain" { print $2; exit }' "${ROOT_DIR}/go.mod")"

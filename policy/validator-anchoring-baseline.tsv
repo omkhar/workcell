@@ -248,9 +248,10 @@ internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review 
 internal/metadatautil	rebindsCommand	419dfc3d	the = test tells an alias definition from an alias listing among parsed command words
 internal/metadatautil	laneBodyRuns	5c5a7961,d861d4ec	the checks read the words a closed reader returns for a library function body: a forwarding "$@" word, and each command word against fixed builtin lists; they parse words, not free text
 internal/metadatautil	laneChildNamesRoot	623ba690	fails closed: a child shell whose program text names ROOT_DIR makes the lane unreadable
-internal/metadatautil	laneDeclaration	1eba7c5a	fails closed: a declared name it cannot match makes the lane unreadable
+internal/metadatautil	laneDeclaration	1eba7c5a,72f9179d	fails closed: a declared name it cannot match makes the lane unreadable
 internal/metadatautil	laneExpands	4d870f23	fails closed: a word with an expansion is read as one this reader cannot spell
 internal/metadatautil	laneInnerText	7a693089	the checks read the command words laneCommand returns for an eval operand with an expansion and a trap option; they parse words, not free text
+internal/metadatautil	laneLeading	5521dc8a	the check reads one word a closed reader returns for the shape of an assignment, to tell it from a case pattern; it parses a word, not free text
 internal/metadatautil	laneLiteralOptions	337d65e9,a4f48ac8,b76466b5,ea7ffe16	fails closed: an option word with an expansion makes the lane unreadable
 internal/metadatautil	laneOption	63c8cdd6,e5e919d3	fails closed: an option word with a letter that changes what runs makes the lane unreadable
 internal/metadatautil	laneOutputName	0dd42f68,6537f911	fails closed: a name that is not a plain identifier, or names a variable bash reads or ROOT_DIR, makes the lane unreadable
@@ -262,7 +263,18 @@ internal/metadatautil	laneReading.outputs	ad697d63,c5f63017	the checks read the 
 internal/metadatautil	laneScanWrites	85220f63,e285c2fb	the checks read laneScan command words for an assignment and a local of a positional parameter; they parse words, not free text
 internal/metadatautil	laneUnquotedRisk	531ecaa8,d5d66042	fails closed: a word with an unquoted expansion or glob is read as one bash may split
 internal/metadatautil	laneUnredirected	4b6e734b	the check reads one command word for a redirection operator; it parses words, not free text
-internal/metadatautil	laneWrites	16e67208,4a3c19dd,60783146,bf2e822d,d3dab433	the checks read the operands of one command for the names declare, read, printf -v and their kin assign; they parse words, not free text
+internal/metadatautil	laneWrites	115a8587,16e67208,278ff4ec,4a3c19dd,60783146,bf2e822d,d3dab433	the checks read the operands of one command for the names declare, read, printf -v and their kin assign; they parse words, not free text
+internal/metadatautil	arithmeticReason	d7825f0f	fails closed: an arithmetic operand it cannot match as a number or a variable whose every write is a number makes the lane unreadable
+internal/metadatautil	laneArithmetic.add	1d768bae,82ce0f99	the checks read the words a closed reader returns for an arithmetic expression; an expression it cannot close runs to the end of the lane and fails closed
+internal/metadatautil	laneArithmetic.parameter	0dd07588,b0eb04fa	the checks read one ${...} expansion of a closed reader word for a subscript, an offset and a length; they parse a word, not free text
+internal/metadatautil	laneArithmetic.read	67e0b804	the checks read the command words a closed reader returns for ((, let, unset, [[ and their number operands; they parse words, not free text
+internal/metadatautil	laneArithmetic.word	51a7739b,7376251a,82eb0315,91d0ad3e,ad1e38ba,cc72e3c4,e50d2b93	the checks read one closed reader word for $((, $[, ${ and an assigned element; an expansion it cannot close fails closed
+internal/metadatautil	laneArithmeticOperand	52af8613	the pattern splits one arithmetic expression into operands; an operand it cannot class as a number fails closed
+internal/metadatautil	laneMentions	bcb8d3c3	the pattern reads the identifiers in the words of one command to find the first mention of an array; a mention it misses only keeps an array indexed, which fails closed
+internal/metadatautil	laneNesting.read	9fb62694,aec07487	fails closed: a closer that does not match the innermost opener marks the nesting lost, so no array counts as associative
+internal/metadatautil	laneNumberWrite	41ecb704,44ade9bb,5a6df017,b8ed9651,f79fcb20	fails closed: a write it cannot match as a number leaves the variable out of the numbers arithmetic may read
+internal/metadatautil	laneOperatorReason	15af6a92,b70a76ff	fails closed: a ${...@X} operator outside a fixed inert list makes the lane unreadable
+internal/metadatautil	laneSubscripts	df9e7966	the pattern reads the subscript of one unset operand that a closed reader returns; it parses a word, not free text
 internal/metadatautil	refsRoot	8c451e37	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rejectInstallScriptAptPackages	30b19070,7ae83b67	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	renderDiscoverabilitySurface	e9d7ffc7	the prefix checks a surface name from the decoded contract
@@ -329,7 +341,7 @@ internal/metadatautil	shellFailOpenReadsOwnStatus	5394aec0,ac82f6b1,e65dcc10	unr
 internal/metadatautil	shellFailOpenReadsStatus	df096ef4,e38318ae	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellFailOpenRunsFirst	55b36551	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellListOperands	7cedd069	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	shellProgram	01691dfb,0dede830,19b61cf5,3726acb9,3ceb6305,3ceb6305,7caa62b8,916bd6f6,916bd6f6,9b12b4ba,be5c2d65	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellProgram	0dede830,19b61cf5,3726acb9,3ceb6305,3ceb6305,3f5e2870,7caa62b8,916bd6f6,916bd6f6,be5c2d65	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellRedirect	969f347e	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellStartupEnv	05490f0a	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellSubstCall	71a05f21,a834ac89,b3fc7705	unreviewed debt: review the subject, then port or justify
@@ -341,7 +353,7 @@ internal/metadatautil	shellToolName	e24ee91d	unreviewed debt: review the subject
 internal/metadatautil	shellToolSubsts	57e83a94	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellUnnamedCommand	d1bb2d49	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shellUnwrapped	363b4721,9f7cfd86,fd36e9b8	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	shellWords	03c76f35,52951b4a,5e1c3157,a0ae5e55,d0dc3f09	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	shellWords	03c76f35,0f0950e1,52951b4a,5e1c3157,a0ae5e55,d0dc3f09	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	spelledProgram	d6917967	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	startupFileStep	f69b73c9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	stepCondition	05fe93c8,0cfb9063,1251aa19,60ede516,a8e4f0a4,c9b391af,cc4b3040,ebe07d86	unreviewed debt: review the subject, then port or justify

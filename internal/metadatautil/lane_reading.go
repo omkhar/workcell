@@ -45,10 +45,7 @@ var laneModeled = map[string]func(args []string, read map[string]bool) string{
 		if slices.ContainsFunc(args, laneExpands) {
 			return "sets options or parameters an expansion spells"
 		}
-		if laneOption(args, "n") || slices.Contains(args, "noexec") {
-			return "stops bash running any later command, as set -n does"
-		}
-		return ""
+		return laneStopsReason(args)
 	},
 	"shopt": func(args []string, _ map[string]bool) string {
 		if slices.ContainsFunc(args, laneExpands) {
@@ -56,6 +53,9 @@ var laneModeled = map[string]func(args []string, read map[string]bool) string{
 		}
 		if laneOption(args, "s") && slices.Contains(args, "extdebug") {
 			return "lets a DEBUG trap skip a later command, as shopt -s extdebug does"
+		}
+		if laneOption(args, "o") && (slices.Contains(args, "noexec") || slices.Contains(args, "onecmd")) {
+			return "stops bash running a later command, as shopt -so noexec does"
 		}
 		return ""
 	},
@@ -100,6 +100,15 @@ var laneInert = strings.Fields(`: [ true false echo test pwd exit return break c
 	jobs times wait type unset cd pushd popd dirs exec caller help logout disown bg fg getopts let builtin
 	command time if then else elif fi case esac for select while until do done in function { } ! [[ ]] coproc`)
 
+// laneStopsReason returns why a set may stop bash running a later command,
+// as set -n, set -t, set -o noexec and set -o onecmd do, or "".
+func laneStopsReason(args []string) string {
+	if laneOption(args, "nt") || slices.Contains(args, "noexec") || slices.Contains(args, "onecmd") {
+		return "stops bash running a later command, as set -n or set -t does"
+	}
+	return ""
+}
+
 // laneDeclaration reads declare, typeset, local, export and readonly: each
 // option must be literal, a nameref is unreadable, since every write through
 // it assigns the name it holds, and each name must be one this reader can
@@ -110,6 +119,11 @@ func laneDeclaration(args []string, _ map[string]bool) string {
 	}
 	if laneOption(args, "n") {
 		return "declares a nameref, through which a write assigns the name it holds"
+	}
+	if slices.ContainsFunc(args, func(arg string) bool {
+		return len(arg) > 1 && (arg[0] == '-' || arg[0] == '+') && strings.Contains(arg, "i")
+	}) {
+		return "declares an integer variable, whose every assignment bash evaluates as arithmetic"
 	}
 	for _, arg := range args {
 		if name, _, _ := strings.Cut(arg, "="); arg[0] != '-' && arg[0] != '+' && !laneDeclaredName.MatchString(name) {
@@ -203,12 +217,11 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		bodies, reading.read[library.path] = append(bodies, library.text), true
 	}
 	var calls []laneCall
+	var arithmetic []*laneArithmetic // each body's
+	var scannedBodies [][][]word
 	stable, forwarders := map[string]bool{}, map[string]bool{}
 	for at, text := range bodies {
-		where := "lane"
-		if at > 0 {
-			where = "library a lane sources"
-		}
+		where := laneWhere(at)
 		scanned, children, complete := laneScan(text)
 		if !complete {
 			return false, fmt.Errorf("lane wiring is unreadable: a %s nests eval, trap or child shell text more than eight deep, or holds more text than this reader parses", where)
@@ -225,6 +238,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 				reading.functions[name] = true
 			}
 		}
+		if reason := laneOperatorReason(text); reason != "" {
+			return false, fmt.Errorf("lane wiring is unreadable: a %s %s", where, reason)
+		}
 		if laneArithmeticAssigns.MatchString(strings.ReplaceAll(text, "\\\n", "")) {
 			return false, fmt.Errorf("lane wiring is unreadable: a %s assigns in arithmetic to a variable whose name this reader cannot spell, or that bash reads to decide what runs", where)
 		}
@@ -234,7 +250,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		case named:
 			return false, fmt.Errorf("lane wiring is unreadable: a %s names BASH_CMDS or BASH_ALIASES, which may rebind the scripts it runs", where)
 		}
+		arithmetic, scannedBodies = append(arithmetic, newLaneArithmetic(len(text))), append(scannedBodies, scanned)
 		for _, args := range scanned {
+			arithmetic[at].read(args)
 			words := texts(args)
 			for _, each := range args {
 				reading.split[each.text] = reading.split[each.text] || laneUnquotedRisk(each)
@@ -282,6 +300,20 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 	if err != nil {
 		return false, err
 	}
+	numbers, associative := laneNumbers(reading.writes), laneAssociative(scannedBodies)
+	for at, each := range arithmetic {
+		if each.budget < 0 {
+			return false, fmt.Errorf("lane wiring is unreadable: a %s nests more expansions in a word than this reader parses", laneWhere(at))
+		}
+		for _, expression := range each.remaining() {
+			if associative[expression.array] {
+				continue // bash reads the subscript of an associative array as a string
+			}
+			if reason := arithmeticReason(expression.text, numbers); reason != "" {
+				return false, fmt.Errorf("lane wiring is unreadable: a %s %s", laneWhere(at), reason)
+			}
+		}
+	}
 	for _, call := range calls {
 		if slices.Equal(call.words, shellReadBound) {
 			return false, fmt.Errorf("lane wiring is unreadable: a lane runs %q, which stands for text past what the shell reader reads", strings.Join(call.words, " "))
@@ -304,6 +336,14 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool) (startup bo
 		}
 	}
 	return startup, nil
+}
+
+// laneWhere names the body a reader reads: the lane, at 0, or a library.
+func laneWhere(at int) string {
+	if at > 0 {
+		return "library a lane sources"
+	}
+	return "lane"
 }
 
 // laneCall is one command a lane or a library may run, with the library
@@ -460,8 +500,9 @@ func (reading laneReading) callReason(command []string) string {
 // use leaves unquoted and that expands a variable the lane writes, is
 // unreadable. Otherwise a word with a slash outside its expansions is a path,
 // which bash never runs as a builtin or a function, and a word that is one
-// expansion of a variable runs a program when its default and every value
-// the lane writes to it is a literal program name. A pinned ROOT_DIR holds
+// expansion of a variable runs a program when the lane assigns it, since an
+// inherited value runs past any default, and its default and every value the
+// lane writes to it is a literal program name. A pinned ROOT_DIR holds
 // an absolute path, so a word that starts with it is a path too.
 func (reading laneReading) expandedReason(name string) string {
 	if reading.pinned && laneRootStart.MatchString(name) {
@@ -481,10 +522,14 @@ func (reading laneReading) expandedReason(name string) string {
 	if variable == nil || variable[1]+variable[2] == "_" {
 		return "runs a command whose name this reader cannot spell"
 	}
-	for _, write := range append([]laneWrite{{value: variable[3], literal: true}}, reading.writes[variable[1]+variable[2]]...) {
+	writes := reading.writes[variable[1]+variable[2]]
+	for _, write := range append([]laneWrite{{value: variable[3], literal: true}}, writes...) {
 		if !write.literal || !laneProgramWord(write.value, reading.functions) {
 			return fmt.Sprintf("may run %q, which is not a program this reader can name", write.value)
 		}
+	}
+	if !slices.ContainsFunc(writes, func(write laneWrite) bool { return !write.shaped }) {
+		return fmt.Sprintf("runs %s, a variable the lane never assigns, which may hold any program it inherits", variable[1]+variable[2])
 	}
 	return ""
 }
@@ -630,7 +675,8 @@ var laneLeadingWords = append(slices.Clone(shellKeywords), "}", "fi", "done", "e
 
 // laneLeading returns words from the first assignment or command word, past
 // the reserved words, group openers and case patterns in front of it, and a
-// function definition's name, so the words of f() { x=1; } start at x=1.
+// function definition's name, so the words of f() { x=1; } start at x=1. A
+// word that ends in ) is a case pattern unless it assigns, as y=$((x)) does.
 func laneLeading(words []string) []string {
 	for len(words) > 0 {
 		switch {
@@ -640,7 +686,7 @@ func laneLeading(words []string) []string {
 			words = words[2:]
 		case len(words) > 2 && words[1] == "(" && words[2] == ")":
 			words = words[3:]
-		case slices.Contains(laneLeadingWords, words[0]) || isCommandPrefixWord(words[0]) || strings.HasSuffix(words[0], ")"):
+		case slices.Contains(laneLeadingWords, words[0]) || isCommandPrefixWord(words[0]) || strings.HasSuffix(words[0], ")") && !laneAssignmentWord.MatchString(words[0]):
 			words = words[1:]
 		default:
 			return words
@@ -686,8 +732,13 @@ func laneScanWrites(args []word) (writes []laneWrite, computed []string, opaque 
 		for _, variant := range variants {
 			if match := laneAssignmentWord.FindStringSubmatch(variant); match != nil {
 				value := variant[len(match[0]):]
-				writes = append(writes, laneWrite{name: match[1], value: value, literal: match[2] == "" && !laneExpands(value)})
+				writes = append(writes, laneWrite{name: match[1], value: value, literal: match[2] == "" && !laneExpands(value), shaped: true})
 			}
+		}
+	}
+	for at, each := range args {
+		if !each.quoted && each.text == "coproc" && at+2 < len(args) { // coproc NAME { ...; } assigns NAME and NAME_PID
+			writes = append(writes, laneWrite{name: args[at+1].text}, laneWrite{name: args[at+1].text + "_PID"})
 		}
 	}
 	for at := range writes {
@@ -727,6 +778,8 @@ type laneWrite struct {
 	name, value string
 	literal     bool // the command assigns value, spelled with no expansion
 	parameter   bool // a local assigns a positional parameter, as local name="$2" does
+	integer     bool // the command assigns a number it computes, as let does
+	shaped      bool // a word has the shape of an assignment, which bash may not make
 }
 
 // laneDefaultAssign is an expansion that assigns a default, as ${name:=value}
@@ -744,6 +797,10 @@ var laneDefaultAssign = regexp.MustCompile(`\$\{(!?)([^}:=+?#%/^,-]*):?=([^}]*)\
 func laneWrites(words []string) (writes []laneWrite, computed []string) {
 	add := func(word string, assigns bool) {
 		name, value, _ := strings.Cut(word, "=")
+		if !assigns && !laneExpands(name) && !laneVariableName.MatchString(strings.TrimSuffix(name, "+")) {
+			computed = append(computed, name) // read P{A,X}TH or printf -v P[A]TH assigns a name bash expands
+			return
+		}
 		appends := strings.HasSuffix(name, "+")
 		name = strings.TrimSuffix(name, "+")
 		if at := strings.IndexByte(name, '['); at > 0 {
@@ -828,11 +885,15 @@ func laneWrites(words []string) (writes []laneWrite, computed []string) {
 	case "let":
 		for _, arg := range command[1:] {
 			if name, _, found := strings.Cut(arg, "="); found {
-				add(strings.TrimRight(name, "-+*/%&|^<> ")+"=", false)
+				before := len(writes)
+				add(strings.TrimRight(name, "-+*/%&|^<> ")+"=", true)
+				for at := before; at < len(writes); at++ {
+					writes[at].literal, writes[at].integer = false, true // let assigns the number it computes
+				}
 			}
 		}
 	case "for", "select":
-		if len(command) > 1 {
+		if len(command) > 1 && !strings.HasPrefix(command[1], "((") { // a for (( )) header is arithmetic, which laneArithmetic reads
 			if len(command) > 2 && command[2] == "in" {
 				for _, value := range command[3:] {
 					add(command[1]+"="+value, true)
