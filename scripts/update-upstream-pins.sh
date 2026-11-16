@@ -729,7 +729,10 @@ require_image_pin "${target_runtime_rust_toolchain_image}" rust "Rust toolchain 
 require_image_pin "${target_buildkit_image}" moby/buildkit "BuildKit image"
 require_image_pin "${target_qemu_image}" tonistiigi/binfmt "QEMU binfmt image"
 
-provider_summary="$("${ROOT_DIR}/scripts/update-provider-pins.sh")"
+provider_summary="$("${ROOT_DIR}/scripts/update-provider-pins.sh")" || {
+  echo "Unable to compute provider bump summary." >&2
+  exit 1
+}
 provider_plan_status=0
 provider_plan_json="$("${ROOT_DIR}/scripts/update-provider-pins.sh" --json)" || provider_plan_status=$?
 if [[ "${provider_plan_status}" -ne 0 ]]; then
