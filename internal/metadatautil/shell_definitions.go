@@ -62,6 +62,7 @@ func shellLines(text string, budget *int, each func(command) bool) bool {
 	}
 	var joined strings.Builder
 	clean := true
+	var carried command // the operator that ended the last line: its && or || decides, and its | pipes, the next command
 	for line := range strings.Lines(text) {
 		line = strings.TrimSuffix(line, "\n")
 		continues, stillClean, ok := shellContinues(joined.String(), line, clean, budget)
@@ -80,7 +81,16 @@ func shellLines(text string, budget *int, each func(command) bool) bool {
 		}
 		joined.Reset()
 		clean = true
-		for _, command := range splitCommands(words) {
+		commands := splitCommands(words)
+		if len(words) > 0 {
+			commands[0].conditional = commands[0].conditional || carried.conditional
+			commands[0].piped = commands[0].piped || carried.piped
+			carried = command{}
+			if last := commands[len(commands)-1]; len(commands) > 1 && len(last.args) == 0 {
+				carried = last
+			}
+		}
+		for _, command := range commands {
 			if !each(command) {
 				return false
 			}

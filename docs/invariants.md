@@ -410,8 +410,12 @@ assign `PATH`. The reader reads `((`, `$((`, `let`, a `[[` number test, a
 subscript, a substring offset and the body of an expanded heredoc. Each operand
 must be a number, or a variable whose every write is a number
 (`internal/metadatautil/lane_arithmetic.go`). A write counts only for a later
-read in the same branch, loop or function body. A `declare -i` and a `${x@P}`
-stop the check.
+read in the same branch, loop or function body. A `declare -i`, a `${x@P}`
+and `localvar_inherit` stop the check.
+
+Only a plain assignment, a declaration with a value and a `for` loop count as
+writes. None counts in a pipeline or a background job, which run in a
+subshell, or in the text an `eval` runs.
 
 The name that `unset` or `-v` reads, and the name in `${!x}`, must be literal.
 It may also be a variable that holds only names from a literal list or a
