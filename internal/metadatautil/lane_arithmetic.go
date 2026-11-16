@@ -535,6 +535,8 @@ type laneNesting struct {
 	opened int            // the index among the words read last of the case it opened, or -1
 	kinds  map[int]string // the opener of each number, or function for a function body
 	names  map[int]string // the name of each function body
+	held   []int          // the first number of each opener still open, which a new branch keeps
+	at     []int          // held as read reports scopes
 }
 
 // kind records the opener of a scope number.
@@ -567,6 +569,7 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 	}
 	push := func(opener string) {
 		nesting.open, nesting.scopes = append(nesting.open, opener), append(nesting.scopes, number())
+		nesting.held = append(nesting.held, *nesting.next)
 		nesting.kind(*nesting.next, opener)
 	}
 	header, name := false, "" // the word before was a function's name()
@@ -588,6 +591,7 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 			return
 		}
 		nesting.open, nesting.scopes = nesting.open[:len(nesting.open)-1], nesting.scopes[:len(nesting.scopes)-1]
+		nesting.held = nesting.held[:len(nesting.held)-1]
 	}
 	words := args
 	nesting.opened = -1
@@ -637,7 +641,7 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 		}
 		words = words[1:]
 	}
-	scopes = slices.Clone(nesting.scopes)
+	scopes, nesting.at = slices.Clone(nesting.scopes), slices.Clone(nesting.held)
 	for _, each := range words {
 		if !each.quoted && strings.HasSuffix(each.text, "=(") {
 			push("(") // an array assignment whose elements run on to a later line
