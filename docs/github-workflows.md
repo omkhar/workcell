@@ -227,7 +227,7 @@ Both candidates can change `runtime/container/Dockerfile`, but they do not chang
 | Job | Environment | Token | Purpose |
 | --- | --- | --- | --- |
 | `refresh` | none | `contents: read`, `issues: write`, `pull-requests: read` | Builds the candidates and updates the tracking issue. |
-| `scope-guard` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-scope-guard.sh` on the `provider` patch. |
+| `scope-guard` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-scope-guard.sh` on the `provider` patch as a non-blocking step: its result decides whether the PR may auto-merge, and its failure does not fail the job. |
 | `publish` | `upstream-refresh` | GitHub App token | Opens the PRs with `scripts/ci/upstream-refresh-publish.sh`. |
 | `report` | none | none | Fails the run when a kind failed. |
 

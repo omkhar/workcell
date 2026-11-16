@@ -48,14 +48,27 @@ var (
 // spell, as eval "$x" does. A program word with no slash runs from PATH, not
 // from the working directory.
 func LaneScripts(rootDir string) ([]string, error) {
+	gates, _, err := LaneScriptClasses(rootDir)
+	return gates, err
+}
+
+// LaneScriptClasses returns the scripts LaneScripts reads a lane run, in two
+// sorted classes: the gates, which a lane runs where their failure fails it,
+// and the rest, which a lane runs but whose failure does not fail it. A run
+// gates where laneGates reads it so, in a workflow step that neither the
+// step's nor its job's continue-on-error lets fail, in scripts/validate-repo.sh,
+// or in a lane script that such a step runs as a gate. A lane script runs
+// where a step runs it whenever the step runs, at its top level, not after
+// && or ||.
+func LaneScriptClasses(rootDir string) (gates, ungated []string, err error) {
 	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(rootDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	root, err := rootio.OpenDirAtNoFollow(parent, filepath.Base(cleaned))
 	_ = parent.Close()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer root.Close()
 	type laneRun struct {
@@ -64,10 +77,12 @@ func LaneScripts(rootDir string) ([]string, error) {
 		pinned    bool          // ${ROOT_DIR} is the repository root
 		libraries []laneLibrary // the repository libraries a pinned lane sources
 		site      laneSite
-		rel       string // a lane script's path
+		rel       string  // a lane script's path
+		shell     [2]bool // errexit and pipefail as the step's shell starts
 	}
 	var runs []laneRun
 	var scripts []string
+	gated := map[string]bool{}
 	callers := map[string][]laneCaller{} // the arguments of each step's run of a lane script
 	for _, lane := range []struct{ dir, pattern string }{{"scripts", "validate-repo.sh"}, {"scripts/ci", "job-*.sh"}, {".github/workflows", ""}} {
 		matches := mustGlob(filepath.Join(rootDir, lane.dir, lane.pattern))
@@ -76,20 +91,28 @@ func LaneScripts(rootDir string) ([]string, error) {
 		}
 		files, err := readLaneFiles(root, lane.dir, matches)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for rel, body := range files {
 			if lane.pattern != "" {
 				pinned, libraries, err := laneRootPinned(root, rel, string(body))
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
-				runs = append(runs, laneRun{body: string(body), pinned: pinned, libraries: libraries, site: laneSite{lane: true}, rel: rel})
+				runs = append(runs, laneRun{body: string(body), pinned: pinned, libraries: libraries, site: laneSite{lane: true, gating: rel == "scripts/validate-repo.sh"}, rel: rel})
 				continue
 			}
 			var document workflowDocument
 			if err := yaml.Unmarshal(body, &document); err != nil {
-				return nil, fmt.Errorf("parse %s: %w", rel, err)
+				return nil, nil, fmt.Errorf("parse %s: %w", rel, err)
+			}
+			var extra struct {
+				Jobs map[string]struct {
+					ContinueOnError any `yaml:"continue-on-error"`
+				} `yaml:"jobs"`
+			}
+			if err := yaml.Unmarshal(body, &extra); err != nil {
+				return nil, nil, fmt.Errorf("parse %s: %w", rel, err)
 			}
 			events := laneEvents(document.On)
 			if document.On.Kind != 0 && (len(events) == 0 || slices.Equal(events, []string{"workflow_dispatch"})) {
@@ -103,13 +126,15 @@ func LaneScripts(rootDir string) ([]string, error) {
 					}
 					dir, err := stepWorkDir(document, job, step)
 					if err != nil {
-						return nil, fmt.Errorf("%s job %s: %w", rel, name, err)
+						return nil, nil, fmt.Errorf("%s job %s: %w", rel, name, err)
 					}
 					startup = startup || startupFileStep(document, job, step) || laneStartupStep(job, step)
 					if laneConstantIf(job.If) || laneConstantIf(step.If) {
 						continue // the step may never run, so it runs no gate
 					}
-					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: startup, site: laneSite{env: step.Env, events: len(events)}})
+					shell := map[string][2]bool{"": {true, false}, "bash": {true, true}, "sh": {true, false}}[stepShell(document, job, step)]
+					fails := laneFails(extra.Jobs[name].ContinueOnError) && laneFails(step.ContinueOnError)
+					runs = append(runs, laneRun{dir: dir, body: step.Run, moved: startup, shell: shell, site: laneSite{env: step.Env, events: len(events), gating: fails}})
 				}
 			}
 		}
@@ -124,22 +149,28 @@ func LaneScripts(rootDir string) ([]string, error) {
 		return 1
 	})
 	for _, run := range runs { // each step before each lane script, which counts only where a step runs it
-		if run.site.callers = callers[run.rel]; run.site.lane && run.rel != "scripts/validate-repo.sh" && len(run.site.callers) == 0 {
-			continue
+		run.site.callers = callers[run.rel]
+		if run.site.lane && run.rel != "scripts/validate-repo.sh" {
+			if !slices.ContainsFunc(run.site.callers, func(call laneCaller) bool { return call.runs }) {
+				continue
+			}
+			run.site.gating = slices.ContainsFunc(run.site.callers, func(call laneCaller) bool { return call.gated })
 		}
 		// A lane that assigns PATH, BASH_ENV or ENV may change the program each
 		// later command runs, a script's own #! interpreter included, so it
 		// wires no script.
 		startup, err := laneReadable(run.body, run.libraries, run.pinned, run.site)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if startup {
 			continue
 		}
 		if run.site.lane {
 			scripts = append(scripts, run.rel)
+			gated[run.rel] = gated[run.rel] || run.site.gating
 		}
+		gating := laneGates(run.body, run.shell[0], run.shell[1], run.libraries)
 		moved := run.moved || strings.Contains(run.dir, "${{") || path.IsAbs(run.dir)
 		called := map[string][][]string{} // the commands of this step that run each lane script, after the words its arguments follow
 		for _, words := range laneCommands(run.body)[0] {
@@ -165,17 +196,32 @@ func LaneScripts(rootDir string) ([]string, error) {
 			}
 			if laneScriptPath.MatchString(name) {
 				scripts = append(scripts, name)
+				fails, _ := gating.find(words)
+				gated[name] = gated[name] || run.site.gating && fails
 				if !run.site.lane {
 					called[name] = append(called[name], append(slices.Clone(words[:len(words)-len(args)]), append([]string{"\x00"}, args...)...))
 				}
 			}
 		}
 		for name, commands := range called {
-			callers[name] = append(callers[name], laneCallers(run.body, commands)...)
+			callers[name] = append(callers[name], laneCallers(run.body, commands, gating, run.site.gating)...)
 		}
 	}
 	slices.Sort(scripts)
-	return slices.Compact(scripts), nil
+	for _, script := range slices.Compact(scripts) {
+		if gated[script] {
+			gates = append(gates, script)
+		} else {
+			ungated = append(ungated, script)
+		}
+	}
+	return gates, ungated, nil
+}
+
+// laneFails reports whether a continue-on-error value lets a failure fail
+// the job: only when it is absent or false.
+func laneFails(value any) bool {
+	return value == nil || value == false
 }
 
 // laneStartupStep reports a step from which on a step's bash may not be the
@@ -248,8 +294,10 @@ var laneReviewedActions = map[string]string{
 // pair the command with one the step's text spells, as when xargs, find or
 // env runs the script.
 type laneCaller struct {
-	args []word
-	read bool
+	args  []word
+	read  bool
+	runs  bool // the step runs it whenever the step runs
+	gated bool // the step fails when it fails
 }
 
 // laneCallers returns the calls of a step's body that run a lane script, each
@@ -257,7 +305,7 @@ type laneCaller struct {
 // arguments. Each command of the body that spells one, past its assignments
 // and redirections, gives its own words; each command no such command
 // accounts for gives an unread call.
-func laneCallers(body string, commands [][]string) []laneCaller {
+func laneCallers(body string, commands [][]string, gating laneGating, fails bool) []laneCaller {
 	scanned, _, _ := laneScan(body)
 	var calls []laneCaller
 	for _, command := range commands {
@@ -268,10 +316,10 @@ func laneCallers(body string, commands [][]string) []laneCaller {
 			}
 		}
 		start := slices.Index(command, "\x00")
-		for _, each := range scanned {
+		for at, each := range scanned {
 			words := laneUnredirectedWords(each.args)
 			if words = words[assignmentPrefix(texts(words)):]; slices.Equal(texts(words), slices.Delete(slices.Clone(command), start, start+1)) {
-				calls = append(calls, laneCaller{args: words[start:], read: true})
+				calls = append(calls, laneCaller{args: words[start:], read: true, runs: gating.certain[at], gated: fails && gating.gates[at]})
 				matched++
 			}
 		}
@@ -284,12 +332,13 @@ func laneCallers(body string, commands [][]string) []laneCaller {
 
 // laneSite is where a body runs: a step, with its own env and the number of
 // events its workflow runs on, or a lane script, with the arguments each step
-// that runs it passes.
+// that runs it passes; and whether a failure of it fails the job.
 type laneSite struct {
 	env     map[string]string
 	events  int
 	callers []laneCaller
 	lane    bool
+	gating  bool // a failure of the body fails its job
 }
 
 // laneLibraryRoot is the ${ROOT_DIR}/ or $ROOT_DIR/ in front of a library path.
