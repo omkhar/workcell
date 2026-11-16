@@ -94,9 +94,9 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "path runtime/container/control-plane-manifest.json",
 		},
 		{
-			name:    "provider-policy.sh edit",
-			patch:   inScope + scopeGuardFilePatch("runtime/container/provider-policy.sh", "old", "new"),
-			wantErr: "path runtime/container/provider-policy.sh",
+			name:    "provider-wrapper.sh edit",
+			patch:   inScope + scopeGuardFilePatch("runtime/container/provider-wrapper.sh", "old", "new"),
+			wantErr: "path runtime/container/provider-wrapper.sh",
 		},
 		{
 			name:    "non-provider Dockerfile line",
