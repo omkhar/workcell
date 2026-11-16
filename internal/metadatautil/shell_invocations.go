@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"encoding/hex"
+	"fmt"
 	"maps"
 	"path"
 	"regexp"
@@ -96,6 +97,7 @@ type word struct {
 	quoted  bool
 	decoded bool
 	syntax  string
+	raw     string // the word as the line spells it, quotes and escapes included
 }
 
 // texts returns the words' text, for the tests that read a word as a name. A
@@ -171,7 +173,9 @@ func shellProgram(words []string, stdin string) (program string, runs bool, file
 	// Options come first, and -- may end them. c or s anywhere in a short
 	// cluster, as in -lc or -es, counts. Each o or O in a cluster, and
 	// --rcfile or --init-file, takes the next word as its value, as in
-	// -O extglob or -euo pipefail.
+	// -O extglob or -euo pipefail. Only the options in shellRunOptions, and
+	// the option names in shellRunNames, leave the shell running its program:
+	// any other, as -o noexec, -D or --version, may run none of it.
 	body, fromStdin, noExec := false, false, false
 	i := 1
 	for ; i < len(words); i++ {
@@ -186,13 +190,26 @@ func shellProgram(words []string, stdin string) (program string, runs bool, file
 		if !strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "+") {
 			break // the first operand
 		}
-		if !strings.HasPrefix(option, "--") {
-			body = body || strings.Contains(option[1:], "c")
-			fromStdin = fromStdin || strings.Contains(option[1:], "s")
-			if strings.Contains(option[1:], "n") {
-				noExec = option[0] == '-' // -n reads the program and runs nothing; +n runs it
+		if strings.HasPrefix(option, "--") {
+			if !slices.Contains([]string{"--norc", "--noprofile", "--noediting"}, option) {
+				return "", false, ""
 			}
-			i += strings.Count(option[1:], "o") + strings.Count(option[1:], "O")
+			continue
+		}
+		body = body || strings.Contains(option[1:], "c")
+		fromStdin = fromStdin || strings.Contains(option[1:], "s")
+		if strings.Contains(option[1:], "n") {
+			noExec = option[0] == '-' // -n reads the program and runs nothing; +n runs it
+		}
+		for _, letter := range option[1:] {
+			switch {
+			case letter == 'o' || letter == 'O':
+				if i++; i >= len(words) || !slices.Contains(shellRunNames[letter], words[i]) {
+					return "", false, ""
+				}
+			case !strings.ContainsRune(shellRunOptions, letter):
+				return "", false, ""
+			}
 		}
 	}
 	switch {
@@ -207,6 +224,18 @@ func shellProgram(words []string, stdin string) (program string, runs bool, file
 	}
 	return "", false, words[i] // the operand names a script file
 }
+
+// shellRunOptions are the short options a shell may take and still run its
+// program, c, s and n read apart, and shellRunNames the values -o and -O may
+// take: options that stop or end a program early, as noexec, onecmd or -D,
+// are in neither.
+var (
+	shellRunOptions = "euxvBHcsn"
+	shellRunNames   = map[rune][]string{
+		'o': {"errexit", "nounset", "pipefail", "posix", "xtrace", "verbose"},
+		'O': {"dotglob", "extglob", "globstar", "inherit_errexit", "lastpipe", "nocaseglob", "nocasematch", "nullglob"},
+	}
+)
 
 func commandBrace(each command) int {
 	args := each.args
@@ -426,6 +455,10 @@ func continuesLine(word string) bool {
 type command struct {
 	args        []word
 	conditional bool
+	orElse      bool   // it runs only when the command before it fails, after ||
+	piped       bool   // a pipeline stage or a background job, which runs in a subshell
+	nested      bool   // text an eval, a trap or a child shell runs, as the lane reader reads it
+	follows     string // the control operator in front of it on its line, as ;; or ;
 }
 
 // splitCommands cuts one logical line into the separate commands bash runs, at
@@ -453,7 +486,10 @@ func splitCommands(words []word) []command {
 			continue
 		}
 		if !each.quoted && isOperator(each.text) {
-			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||"})
+			piped := each.text == "|" || each.text == "|&"
+			last := &commands[len(commands)-1]
+			last.piped = last.piped || piped || each.text == "&"
+			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||", orElse: each.text == "||", piped: piped, follows: each.text})
 			continue
 		}
 		last := &commands[len(commands)-1]
@@ -533,13 +569,21 @@ type functionPart struct{ name, text string }
 // never closes: both read too much rather than too little. text holds no
 // heredoc body and no line that ends inside a quote.
 func functionBodies(text string) []functionPart {
-	var current strings.Builder
+	var current, outside strings.Builder // outside holds the last part's text while it has no name
 	parts := []functionPart{{}}
 	emit := func(name, text string) {
-		if last := &parts[len(parts)-1]; name == "" && last.name == "" {
-			last.text += text // keep a continued command in one part
-		} else {
-			parts = append(parts, functionPart{name, text})
+		last := &parts[len(parts)-1]
+		if name == "" && last.name == "" {
+			outside.WriteString(text) // keep a continued command in one part
+			return
+		}
+		if last.name == "" {
+			last.text = outside.String()
+			outside.Reset()
+		}
+		if parts = append(parts, functionPart{name, text}); name == "" {
+			parts[len(parts)-1].text = ""
+			outside.WriteString(text)
 		}
 	}
 	name, depth, definedAt, opened := "", 0, 0, false
@@ -612,6 +656,9 @@ func functionBodies(text string) []functionPart {
 		}
 	}
 	emit("", current.String())
+	if last := &parts[len(parts)-1]; last.name == "" {
+		last.text = outside.String()
+	}
 	return parts
 }
 
@@ -660,7 +707,18 @@ func blankBefore(text string, at int) bool {
 const openerJoinLimit = 64
 
 // heredocsAsHereStrings moves every heredoc body into the line that opens it, as the here-string heredocWord spells, so the command that reads it keeps it.
+// A body bash expands keeps its text, as heredocExpanded spells it, so each $( ... ) or ` ... ` in it is read as a command, as on any other line.
 func heredocsAsHereStrings(script string) string {
+	text, _ := rewriteHeredocsEnding(script)
+	return text
+}
+
+// rewriteHeredocsEnding is heredocsAsHereStrings, and why a body does not
+// end at a line this reader matches, or "" when every body does. A body that
+// does not, as one whose delimiter is unresolved or one the reader stops
+// joining lines to open, runs to the end of script, so whatever bash runs
+// after its real end is missing from the text.
+func rewriteHeredocsEnding(script string) (string, string) {
 	var out, body strings.Builder
 	var opened, pending []heredoc
 	var bodies []string
@@ -669,6 +727,7 @@ func heredocsAsHereStrings(script string) string {
 	var opener string // the opening line a backslash-newline continues, without it
 	var lines string  // the physical lines of that opening line, as written
 	var joins int     // the physical lines joined into that opening line so far
+	unended := "opens a heredoc whose end this reader cannot find"
 	var prefix string // the end of a quoted span the opening line starts with
 	var openQuote byte
 	var stack []byte
@@ -694,9 +753,10 @@ func heredocsAsHereStrings(script string) string {
 				body.WriteString(line)
 			default:
 				// bash expands an unquoted delimiter's body, so one with an
-				// expansion or an escape cannot be spelled.
-				if text := body.String(); !each.quoted && strings.ContainsAny(text, "$`\\") {
-					bodies = append(bodies, "<<<$_")
+				// expansion or an escape is read as a double-quoted word.
+				text := body.String()
+				if !each.quoted && strings.ContainsAny(text, "$`\\") {
+					bodies = append(bodies, heredocExpanded(text))
 				} else {
 					bodies = append(bodies, heredocWord(text))
 				}
@@ -737,6 +797,7 @@ func heredocsAsHereStrings(script string) string {
 			// the script as a body it cannot end, as for a delimiter it
 			// cannot resolve.
 			found = append(found, heredoc{unresolved: true, start: len(text), end: len(text)})
+			unended = fmt.Sprintf("continues a command over more than %d lines, past what this reader joins", openerJoinLimit)
 		}
 		joins = 0
 		whole, quoted := lines, prefix
@@ -754,10 +815,40 @@ func heredocsAsHereStrings(script string) string {
 		}
 		pending, held = opened, line
 	}
-	if len(pending) > 0 {
+	if len(pending) == 0 {
+		unended = ""
+	} else {
 		release()
 	}
 	out.WriteString(lines)
+	return out.String(), unended
+}
+
+// heredocExpanded is the here-string of a body bash expands, as it expands a
+// double-quoted word: each backslash that stays literal is doubled, each
+// double quote is escaped, a continued line is joined, and each line ends in a
+// space, so the reader reads the body as one word.
+func heredocExpanded(body string) string {
+	var out strings.Builder
+	out.WriteString(`<<<"`)
+	for at := 0; at < len(body); at++ {
+		switch c := body[at]; {
+		case c == '\\' && at+1 < len(body) && body[at+1] == '\n':
+			at++
+		case c == '\\' && at+1 < len(body) && strings.IndexByte("$`\\", body[at+1]) >= 0:
+			out.WriteString(body[at : at+2])
+			at++
+		case c == '\\':
+			out.WriteString(`\\`)
+		case c == '"':
+			out.WriteString(`\"`)
+		case c == '\n' || c == '\r':
+			out.WriteByte(' ')
+		default:
+			out.WriteByte(c)
+		}
+	}
+	out.WriteByte('"')
 	return out.String()
 }
 
@@ -777,16 +868,39 @@ func spelledProgram(program string) (string, bool) {
 
 // flattenSubstitutions moves each $( ... ) and ` ... ` onto lines before its command and leaves $_ in its place; a quoted ) or $( is left alone.
 func flattenSubstitutions(script string) string {
+	return flattenGrouped(script, false)
+}
+
+// flattenGrouped is flattenSubstitutions, and when grouped is set, it sets
+// each substitution it moves between a line of ( and a line of ), so a reader
+// of its writes reads it as the subshell it runs in.
+func flattenGrouped(script string, grouped bool) string {
+	flat, _ := flattenGroupedCases(script, grouped)
+	return flat
+}
+
+// flattenGroupedCases is flattenGrouped, and also reports whether a
+// substitution closed while its text held a case word with no esac after it.
+// The ) that ends a pattern list then closed it, since substitutionKeyword did
+// not read that case where a command starts, so the text after it is not what
+// bash runs.
+func flattenGroupedCases(script string, grouped bool) (string, bool) {
+	unended := false
+	open, closer := "\n", "\n"
+	if grouped {
+		open, closer = "\n(\n", "\n)\n"
+	}
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
 	// boundary, whether that text is inside double quotes, the byte that
-	// closes it, and how many unquoted parentheses inside it are open, so the
-	// ) of <(…) or of a subshell does not close a $( ).
+	// closes it, and a stack of the unquoted ( and case commands open inside
+	// it, innermost last, so the ) of <(…) or of a subshell does not close a
+	// $( ), and the ) that ends a pattern of the innermost case does not.
 	type frame struct {
 		text   strings.Builder
 		quoted bool
 		closer byte
-		parens int
+		nest   []byte // ( for a parenthesis, c for a case
 	}
 	frames := []*frame{{}}
 	single := false
@@ -837,14 +951,24 @@ func flattenSubstitutions(script string) string {
 				i++
 			}
 		case top.closer == ')' && !top.quoted && c == '(':
-			top.parens++
+			top.nest = append(top.nest, '(')
 			top.text.WriteByte(c)
-		case top.closer == ')' && !top.quoted && c == ')' && top.parens > 0:
-			top.parens--
+		case top.closer == ')' && !top.quoted && c == ')' && len(top.nest) > 0:
+			if top.nest[len(top.nest)-1] == '(' {
+				top.nest = top.nest[:len(top.nest)-1]
+			} // else the end of a pattern list of the innermost case
+			top.text.WriteByte(c)
+		case top.closer == ')' && !top.quoted && substitutionKeyword(script, i, top.text.String(), "case"):
+			top.nest = append(top.nest, 'c')
+			top.text.WriteByte(c)
+		case top.closer == ')' && !top.quoted && len(top.nest) > 0 && top.nest[len(top.nest)-1] == 'c' && substitutionKeyword(script, i, top.text.String(), "esac"):
+			top.nest = top.nest[:len(top.nest)-1]
 			top.text.WriteByte(c)
 		case c == top.closer && !top.quoted:
 			frames = frames[:len(frames)-1]
-			out.WriteString("\n" + top.text.String() + "\n")
+			out.WriteString(open + top.text.String() + closer)
+			words := substitutionCaseWords.FindAllStringSubmatch(top.text.String(), -1)
+			unended = unended || len(words) > 0 && words[len(words)-1][1] == "case"
 		case top.quoted:
 			top.text.WriteByte(markQuotedNewline(c))
 		default:
@@ -861,7 +985,43 @@ func flattenSubstitutions(script string) string {
 	for _, open := range slices.Backward(frames) {
 		out.WriteString("\n" + open.text.String())
 	}
-	return out.String()
+	return out.String(), unended
+}
+
+// substitutionCaseWords finds each case and esac word in a substitution's
+// text, in order: each stands alone between blanks or operators, wherever it
+// stands, so a case that is an argument counts too, which only fails closed.
+var substitutionCaseWords = regexp.MustCompile(`(?:^|[ \t\n;&|()])(case|esac)(?:[ \t\n;&|()]|$)`)
+
+// substitutionKeyword reports whether a reserved word starts at script[at]
+// where a command starts, after the text before it in a substitution: at its
+// start, after a newline, ;, &, |, ( or ), or after a run of reserved words
+// that another command follows, as { case, if ! case, time -p case, coproc
+// case and function f case are. Any other text before it, as an argument,
+// makes it no reserved word; flattenGroupedCases then reports the frame that
+// closes at its pattern's ), so a spelling this misses fails closed.
+func substitutionKeyword(script string, at int, before, keyword string) bool {
+	rest := script[at:]
+	if !strings.HasPrefix(rest, keyword) || len(rest) > len(keyword) && !strings.ContainsRune(" \t\n;&|)", rune(rest[len(keyword)])) {
+		return false
+	}
+	for {
+		before = strings.TrimRight(before, " \t")
+		if before == "" || strings.ContainsRune("\n;&|()", rune(before[len(before)-1])) {
+			return true
+		}
+		fields := strings.Fields(before)
+		last := fields[len(fields)-1]
+		before = before[:len(before)-len(last)]
+		switch {
+		case slices.Contains([]string{"then", "do", "else", "elif", "{", "!", "time", "if", "while", "until", "coproc"}, last):
+		case len(fields) > 1 && last == "-p" && fields[len(fields)-2] == "time": // time -p
+		case len(fields) > 1 && fields[len(fields)-2] == "function": // function NAME, whose body may be any compound command
+			before = strings.TrimSuffix(strings.TrimRight(before, " \t"), "function")
+		default:
+			return false
+		}
+	}
 }
 
 // markQuotedNewline turns a quoted newline into quotedNewline, so a word stays on one line; commandWords turns it back, so a shell program keeps its lines.
@@ -1237,7 +1397,7 @@ func shellWords(line string, stack []byte) (
 	// lose an invocation, never invent one. A stack that is already open says
 	// the line is the tail of such a substitution, so it donates none either.
 	substituted := len(stack) > 0
-	index, operatorAt := 0, 0
+	index, operatorAt, start := 0, 0, 0
 	flush := func() {
 		if !inWord {
 			return
@@ -1246,7 +1406,7 @@ func shellWords(line string, stack []byte) (
 			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved, quoted, operatorAt, index})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word{text.String(), quoted, decoded, syntax.String()})
+			words = append(words, word{text.String(), quoted, decoded, syntax.String(), line[start:min(index, len(line))]})
 		}
 		text.Reset()
 		syntax.Reset()
@@ -1254,6 +1414,9 @@ func shellWords(line string, stack []byte) (
 	}
 	for ; index < len(line); index++ {
 		character := line[index]
+		if !inWord {
+			start = index
+		}
 		switch {
 		case quote == '\'':
 			// A backslash is literal inside single quotes, and an escape bash
@@ -1287,6 +1450,16 @@ func shellWords(line string, stack []byte) (
 				emit(line[index], true)
 			case character == '"':
 				quote = 0
+			case strings.HasPrefix(line[index:], "$(("):
+				// An arithmetic expansion is not a command substitution: the
+				// quote stays open around it, so the line keeps its words.
+				arithmetic += 2
+				text.WriteString("$((")
+				syntax.WriteString("___")
+				index += 2
+			case arithmetic > 0 && (character == '(' || character == ')'):
+				arithmetic += map[bool]int{true: 1, false: -1}[character == '(']
+				emit(character, true)
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
 				// A command substitution resumes shell syntax inside the
 				// quotes. Suspend the quote rather than forget it, so that the
@@ -1330,7 +1503,8 @@ func shellWords(line string, stack []byte) (
 			decoded = decoded || ansiC
 			unresolved = unresolved || !ansiC
 			inWord, quoted = true, true
-		case character == ' ' || character == '\t':
+		case (character == ' ' || character == '\t') && arithmetic == 0:
+			// A space inside $(( )) is part of the expansion's one word.
 			flush()
 		case character == '#' && !inWord:
 			if substituted {
@@ -1338,17 +1512,17 @@ func shellWords(line string, stack []byte) (
 			}
 			return words, heredocs, 0, stack, false, line[index:]
 		case character == '$' && index+2 < len(line) && line[index+1] == '(' && line[index+2] == '(':
-			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
-			arithmetic++
+			// The << inside $((1 << 2)) is a shift, not a heredoc operator,
+			// and a ; or | inside it is an operator of the expression. The
+			// count is of the parentheses open, so $((1) ) closes too.
+			arithmetic += 2
 			text.WriteString(line[index : index+3])
 			syntax.WriteString(line[index : index+3])
 			index += 2
 			inWord = true
-		case arithmetic > 0 && character == ')' && index+1 < len(line) && line[index+1] == ')':
-			arithmetic--
-			text.WriteString("))")
-			syntax.WriteString("))")
-			index++
+		case arithmetic > 0 && (character == '(' || character == ')'):
+			arithmetic += map[bool]int{true: 1, false: -1}[character == '(']
+			emit(character, false)
 			inWord = true
 		case arithmetic == 0 && character == '<' && index+1 < len(line) && line[index+1] == '<':
 			flush()
@@ -1372,7 +1546,7 @@ func shellWords(line string, stack []byte) (
 			// A delimiter word ends at an operator, as in cat <<EOF; echo
 			// ready, where bash reads the delimiter EOF and runs the echo.
 			flush()
-		case strings.IndexByte(";&|", character) >= 0 &&
+		case arithmetic == 0 && strings.IndexByte(";&|", character) >= 0 &&
 			!(strings.IndexByte("&|", character) >= 0 && index > 0 &&
 				strings.IndexByte("<>", line[index-1]) >= 0) &&
 			!(character == '&' && index+1 < len(line) && line[index+1] == '>'):
@@ -1418,11 +1592,9 @@ func shellWords(line string, stack []byte) (
 		// the caller must skip it by the ANSI-C rules, not the plain ones.
 		quote = ansiCQuote
 	}
-	if len(stack) > 0 {
-		// A substitution is still open, so the logical line has not ended and
-		// the quote around it is not the caller's to skip.
-		return words, heredocs, 0, stack, continues, ""
-	}
+	// A quote still open is one the line opened outside any substitution or
+	// inside the innermost open one; the quote around a substitution waits in
+	// stack. Either way the next line starts inside it.
 	return words, heredocs, quote, stack, continues, ""
 }
 
@@ -1448,7 +1620,7 @@ var reviewedShellLibraries = map[string]reviewedLibrary{
 	"scripts/lib/launcher/host-exec.sh":          {digest: "475bfcf95c6e3d20631ba2aacd43261fa116323191b1898a47afbf35c96fbd50"},
 	"scripts/lib/sessionctl-shim.sh":             {digest: "b3e58dacb53bf7c9b7d398993a9ec8ced8bdd5499c1d24945bb5903b9fc7988e"},
 	"scripts/lib/shellproto.sh":                  {digest: "87149270a2ff536e552c9ea093e9db827d37892bb5f07b94c5629bcf621f487a"},
-	"scripts/lib/trusted-docker-client.sh":       {digest: "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674", forwarders: []string{"run_workcell_docker_client_command"}},
+	"scripts/lib/trusted-docker-client.sh":       {digest: "fe74966fb062c3e3ddf3b1cb5557c94ea76f48793bd97fe8ece6588562320a95", forwarders: []string{"run_workcell_docker_client_command"}},
 }
 
 // canonicalRootDir is the ROOT_DIR assignment that pins a script's root from
@@ -1944,17 +2116,43 @@ func shadowsByAlias(args []string, name string) bool {
 // as a script when the reader can spell them; otherwise the command stays,
 // for a lint to fail closed on. A function body is read after each call, with
 // the last definition before it, and a trap action runs once at the end.
+// Every text it reads, a body read again at each call, an eval's words and a
+// child shell's program included, is charged to one budget, shellReadLimit of
+// the script, so no script costs more than a fixed multiple of its length;
+// past it, each text it would read is shellReadBound instead.
 // PR 804's ShellCommandWords has a similar intent; merge the two when both land.
 func EveryShellCommand(script string) [][]string {
-	return everyShellCommand(script)
+	left := shellReadLimit(script)
+	return everyShellCommand(script, &left)
+}
+
+// shellReadLimit is the number of bytes the reader may read for text: a fixed
+// multiple of its length, and a floor for a short text.
+func shellReadLimit(text string) int {
+	return 64*len(text) + 1<<20
+}
+
+// shellReadBound is the command the reader returns in place of text past its
+// budget: an eval of text it cannot spell, which every lint of what may run
+// fails closed on.
+var shellReadBound = []string{"eval", "${_:?past the shell reader's work bound}"}
+
+// shellReadCharge charges text to the budget left and reports whether the
+// reader may still read it.
+func shellReadCharge(text string, left *int) bool {
+	*left -= len(text) + 1
+	return *left >= 0
 }
 
 // everyShellCommand is EveryShellCommand for a script a child shell runs, such
 // as a sh -c body, which has its own definitions and traps.
-func everyShellCommand(script string) [][]string {
+func everyShellCommand(script string, left *int) [][]string {
+	if !shellReadCharge(script, left) {
+		return [][]string{shellReadBound}
+	}
 	traps := trapState{map[string]string{}, map[string]bool{}}
 	bodies := map[string]string{}
-	found := readScript(flattenSubstitutions(heredocsAsHereStrings(script)), bodies, nil, traps)
+	found := readScript(flattenSubstitutions(heredocsAsHereStrings(script)), bodies, nil, traps, left)
 	// An action can set another trap, so read until every action is read.
 	for read := map[string]bool{}; ; {
 		for _, action := range traps.set {
@@ -1966,20 +2164,23 @@ func everyShellCommand(script string) [][]string {
 			return found
 		}
 		read[actions[at]] = true
-		found = append(found, expandCalls(flattenedCommands(actions[at]), bodies, nil, traps)...)
+		found = append(found, expandCalls(readCommands(actions[at], left), bodies, nil, traps, left)...)
 	}
 }
 
 // readScript returns the commands text runs. A function definition in text
 // runs nothing: it binds the name for the calls after it, as bash does.
-func readScript(text string, bodies map[string]string, calling []string, traps trapState) [][]string {
+func readScript(text string, bodies map[string]string, calling []string, traps trapState, left *int) [][]string {
+	if !shellReadCharge(text, left) {
+		return [][]string{shellReadBound}
+	}
 	var found [][]string
 	for _, part := range functionBodies(text) {
 		if part.name != "" {
 			bodies[part.name] = part.text
 			continue
 		}
-		found = append(found, expandCalls(flattenedCommands(part.text), bodies, calling, traps)...)
+		found = append(found, expandCalls(readCommands(part.text, left), bodies, calling, traps, left)...)
 	}
 	return found
 }
@@ -1996,7 +2197,7 @@ type trapState struct {
 // calls it, so a cd in the body moves the commands after the call. calling
 // holds the functions being expanded, so a recursive call is read once. Each
 // trap command updates traps.
-func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps trapState) [][]string {
+func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps trapState, left *int) [][]string {
 	var found [][]string
 	for _, words := range commands {
 		found = append(found, words)
@@ -2008,7 +2209,7 @@ func expandCalls(commands [][]string, bodies map[string]string, calling []string
 			}
 		}
 		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
-			found = append(found, readScript(body, bodies, append(calling, words[0]), traps)...)
+			found = append(found, readScript(body, bodies, append(calling, words[0]), traps, left)...)
 		}
 	}
 	return found
@@ -2046,6 +2247,15 @@ func setTrap(args []string, traps map[string]string) {
 
 // flattenedCommands returns the words of every command in text, which flattenSubstitutions has rewritten; a here-string is its command's stdin.
 func flattenedCommands(text string) [][]string {
+	left := shellReadLimit(text)
+	return readCommands(text, &left)
+}
+
+// readCommands is flattenedCommands within the budget left.
+func readCommands(text string, left *int) [][]string {
+	if !shellReadCharge(text, left) {
+		return [][]string{shellReadBound}
+	}
 	var found [][]string
 	var command []string
 	dropTarget, readStdin, stdin := false, false, "$_"
@@ -2070,11 +2280,11 @@ func flattenedCommands(text string) [][]string {
 		program, shell, _ := shellProgram(words, stdin)
 		script, spelled := spelledProgram(program)
 		if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
-			found = append(found, flattenedCommands(text)...) // eval runs its words as a script
+			found = append(found, readCommands(text, left)...) // eval runs its words as a script
 		} else if shell && spelled {
 			// A shell runs its program as a script in a child shell with its
 			// own definitions and traps, so an uncalled function in it runs nothing.
-			found = append(found, everyShellCommand(script)...)
+			found = append(found, everyShellCommand(script, left)...)
 		} else {
 			found = append(found, words)
 		}
@@ -2125,15 +2335,24 @@ func flattenedCommands(text string) [][]string {
 			dropTarget = shellRedirect.FindString(piece[at:]) == piece[at:]
 		}
 	}
-	joined, test, closer := "", false, ""
+	var joined strings.Builder
+	clean, test, closer := true, false, ""
 	for line := range strings.Lines(text) {
-		words, _, _, _, continues, _ := shellWords(joined+strings.TrimSuffix(line, "\n"), nil)
-		if continues {
-			joined += strings.TrimSuffix(line, "\n")
-			joined = joined[:len(joined)-1]
+		line = strings.TrimSuffix(line, "\n")
+		continues, stillClean, ok := shellContinues(joined.String(), line, clean, left)
+		if ok && continues {
+			joined.WriteString(line[:len(line)-1])
+			clean = stillClean
 			continue
 		}
-		joined = ""
+		joined.WriteString(line)
+		if !ok || !shellReadCharge(joined.String(), left) {
+			end()
+			return append(found, shellReadBound)
+		}
+		words, _, _, _, _, _ := shellWords(joined.String(), nil)
+		joined.Reset()
+		clean = true
 		for _, each := range words {
 			each.text = strings.ReplaceAll(each.text, string(quotedNewline), "\n")
 			// An array member, the words from name=( up to ), and an arithmetic

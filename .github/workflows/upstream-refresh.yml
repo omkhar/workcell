@@ -182,13 +182,16 @@ jobs:
             echo "- base ref: \`${GITHUB_REF}\`"
             echo "- base sha: \`$(git rev-parse HEAD)\`"
             for kind in provider toolchain; do
-              existing_pr_var="REFRESH_${kind^^}_PR"
+              case "${kind}" in
+                provider) existing_pr="${REFRESH_PROVIDER_PR-}" ;;
+                toolchain) existing_pr="${REFRESH_TOOLCHAIN_PR-}" ;;
+              esac
               metadata_path="${CANDIDATE_DIR}/${kind}/metadata.json"
               echo
               echo "## ${kind^} candidate"
               echo
-              if [[ -n "${!existing_pr_var}" ]]; then
-                echo "Skipped, because a ${kind} refresh PR is already open: ${!existing_pr_var}"
+              if [[ -n "${existing_pr}" ]]; then
+                echo "Skipped, because a ${kind} refresh PR is already open: ${existing_pr}"
                 continue
               fi
               if [[ " ${REFRESH_FAILED} " == *" ${kind} "* ]]; then
@@ -240,11 +243,11 @@ jobs:
               --json number,state
           )"
           issue_count="$(jq 'length' <<<"${issues_json}")"
-          if [[ "${issue_count}" -gt 1 ]]; then
+          if [[ ! "${issue_count}" =~ ^[01]$ ]]; then
             echo "Expected at most one ${tracking_label} issue, found ${issue_count}." >&2
             exit 1
           fi
-          if [[ "${issue_count}" -eq 0 ]]; then
+          if [[ "${issue_count}" == 0 ]]; then
             gh issue create --title "${tracking_title}" --body-file "${issue_body}" --label "${tracking_label}" >/dev/null
             exit 0
           fi

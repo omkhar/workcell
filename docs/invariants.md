@@ -369,15 +369,369 @@ descriptors.
 
 `validate-repo.sh`, a CI job script or a workflow must run a cited
 `scripts/*.sh` path as a command. Thus a doc cannot cite a gate that nothing
-runs. The check reads every command that a lane can run, so a command after
-`false &&` or after an `exit` counts. A comment, a heredoc or an array member
-does not count. A workflow path starts from the working directory of its step,
-and a `cd` before it moves that directory.
+runs. The check reads every command that a lane can run, so a script after
+`false &&` counts as run. A comment, a heredoc or an array member does not count, but
+a substitution in an unquoted heredoc runs, so it counts. A workflow path starts
+from the working directory of its step, and a `cd` before it moves that
+directory.
 
-`internal/metadatautil/lane_scripts.go` reads the lanes. A lane fails the
-check when it can change what a later command runs. An `alias` does this, and
-so does a source of a path outside `${ROOT_DIR}`. A program name that the check
-cannot read also fails. The check does not follow a symlink to a lane file.
+A CI job script counts only when a step runs it by a path the check resolves.
+The step must run it whenever the step runs, so not behind `&&` or `||`.
+
+A step resolves no path when its `env`, at any level, sets `BASH_ENV`, `ENV`,
+`SHELLOPTS`, `BASHOPTS` or `PATH`, which picks the bash itself. The same holds
+for a `BASH_FUNC_` name or a name with `%%`, which bash imports as a function.
+It holds too for a name with a `${{` expression, which may spell any of these.
+Each later step of the job resolves none either
+(`internal/metadatautil/workflow_refs.go`). A job script that such a step runs
+inherits that `env`, so the step does not count it.
+
+The same holds after a step whose body names `GITHUB_PATH`, since that may put
+another bash first on `PATH`. The one write that does not count adds the job's
+own `${RUNNER_TEMP}/bin` after a `sha256sum -c`. It must use the exact
+`install` and `tar` forms of the release and security workflows. It counts only where no
+`env` sets `RUNNER_TEMP`, the body does not assign it and no `cd` comes first.
+
+Any other mention of `${RUNNER_TEMP}/bin` counts. So does a `::add-path::` or
+`::set-env` workflow command and a write to the runner's
+`_runner_file_commands` files. An `env` that sets
+`ACTIONS_ALLOW_UNSECURE_COMMANDS` counts as one that sets `PATH`.
+
+The check reads a step's writes by redirection, `tee`, `sed -i`, `cp`, `mv`,
+`install`, `ln`, `rsync`, `dd`, `curl -o`, `wget -O`, `tar -C` and `unzip -d`
+(`internal/metadatautil/lane_steps.go`). A write to a literal `scripts/` path
+makes that step and each later step resolve no path, since it may rewrite a
+gate. So does a write to a target the check cannot spell, which may also reach
+the file that `GITHUB_PATH` names.
+
+It holds after a `uses` step too, unless a reviewed list names its action at
+its exact commit (`internal/metadatautil/lane_scripts.go`). Any other action
+may set these names or add to `PATH`. A reviewed checkout of another
+`repository` counts as well. So does a download or cache restore to a path in
+`${{ runner.temp }}/bin`, or outside both `${{ runner.temp }}` and `dist/`.
+
+A step whose body holds a `${{` expression resolves no path, since GitHub pastes
+its value into the text before bash reads it. No step of a job with a
+`container` resolves a path, since its image sets the env and the bash.
+
+Some steps and jobs never run on a run whose steps pass, so they resolve no
+path. One such has an `if` that, with its quoted strings dropped, names no
+context and calls no status function, as `if: false` does. The same holds for
+an `if` that calls `failure()` or `cancelled()` with no `!` in front. So does
+one with a bare `false` or `0` as an operand of `&&`.
+
+A workflow resolves no path either when no event starts it on its own. That
+holds with no `on`, or an `on` that lists no event or only
+`workflow_dispatch`. It holds for one that only `workflow_call` starts, unless
+a workflow that an event starts on its own calls it.
+
+A gate counts only where its failure fails the lane
+(`internal/metadatautil/lane_gates.go`). It must run under errexit, be the
+lane's last command, or run under `exec`. It must not run under `!`, in a
+condition, before `&&`, `||` or `&`, or in a pipe without pipefail. A call of a
+function must gate in the same way. A substitution gates only through a plain
+assignment that gates.
+
+A `set` or `shopt` that may turn errexit or pipefail off turns it off from
+there on. So does a `source` of a file other than the libraries. A step or job
+with `continue-on-error` gates nothing. A script that a lane runs only
+elsewhere is listed as run but not gating. A doc that cites it hits
+`ungated-script`.
+
+An `exit` or an `exec` of a program that always runs stops the check when any
+command follows it. So does a call, a `source` or an `eval` whose body or text
+always runs one (`internal/metadatautil/lane_reading.go`). An `exit` whose
+status may be 0 stops the check in a loop, a `case` branch or an `if`
+condition too, since those may run. One in an `if` branch or behind `||` or
+`&&` does not stop it, as a lane's failed check does not.
+
+Such an `exit` still ends the lane where it runs in the lane's shell, unless
+the check proves that it never runs. An `exec` of a program there does the
+same, and so does a call, a `source` or an `eval` that may run either. A
+script that the lane runs after it counts as run but not gating, since the
+lane may have ended with 0 first. An `exec` of the gate itself still gates,
+and an `exit` in a subshell ends nothing.
+
+A lane script that runs itself again under another bash ends nothing either.
+It does so by an `exec` of a `bash` with `-p "$0" "$@"`, as the canonical
+build library does for `scripts/validate-repo.sh` under an old bash. The
+`bash` is `/bin/bash`, `/usr/bin/bash`, `/usr/local/bin/bash` or
+`/opt/homebrew/bin/bash`, or a variable whose every value is one of them. The
+check trusts that path by its name alone, since it cannot read what the
+runner holds there. The new shell runs the script from its first line, so
+each later command still runs.
+
+The `exec` must stand in a function that the script and its libraries
+define once. The check counts definitions as bash parses them, with each `\`
+newline joined. That function must first run
+`((BASH_VERSINFO[0] >= 4)) && return 0` as a list of its own. The line takes
+no redirection and stands outside any branch or loop. Under bash 4 or newer
+the function returns there, so the `exec` runs only under an older bash. An
+`exec` in the script's own body has no `return` to guard it, so it ends the
+lane.
+
+This counts only where `$0`, the arguments and the directory stay as they
+were. No `cd`, `shift`, `set` of the parameters, `eval`, `trap`, call of a
+function or `BASH_ARGV0` may come first. The script must call the function
+as `f "$@"` at its top level and name it nowhere else. That holds for its
+text as spelled and with each `\` newline joined. The script word may also be
+a variable whose every write is `"$0"`, or `"${ROOT_DIR}/scripts/${0##*/}"`
+for a script in `scripts/`. A step's text never runs itself again this way,
+since a new bash does not take the options of the step's shell.
+
+A `case` branch is a condition only when each of its patterns is a literal
+word and no `;&` or `;;&` runs it (`internal/metadatautil/lane_cases.go`). Its
+subject must also be a value that no lane fixes.
+
+One such value is a variable that a step's own `env` sets to a `github` value
+that differs from run to run. These are the `sha` and the `event_name`. The
+`head_ref` does not count, since the author of a pull request picks it. A value
+such as `github.repository` stays the same, so it does not count either. The
+step must name that variable only to expand it. Neither counts after an
+earlier step of the job writes `GITHUB_ENV`.
+
+The `event_name` counts only in a workflow that no `workflow_call` starts.
+Its patterns are read against the events that start the workflow on their own,
+so not `workflow_dispatch`. Of those, the check keeps each event on which the
+job's `if` and the step's `if` may both hold. It reads each `if` with the event
+name set to that event and each other operand unknown
+(`internal/metadatautil/lane_events.go`). A `case` whose exiting branches name
+each event it keeps always exits.
+
+A step that no such event can reach runs on no automatic event, so it wires
+nothing. The check drops it when its `if` and its job's `if` hold on none of
+those events. That holds for `if: github.event_name == 'pull_request'` in a
+workflow that only `push` starts, with a `needs` or without.
+
+GitHub compares strings with no regard to case, and the check reads an `if`
+in the same way. A bash pattern or test may run under `nocasematch`, so the
+check reads it to match more. A branch that names an event in any case may run
+on that event. A `!=` test takes each event that differs from its word at all.
+
+The check must be sure that each event it keeps can reach the step, or the
+`event_name` does not count. It reads the event name only in a test with `==`
+or `!=` against a quoted literal. Any other use, `fromJSON`, `format` or an
+`if` it cannot parse voids the subject. So does an operand that may copy the
+event name, as the whole `github` context or a value of `env`, `matrix`,
+`needs`, `steps` or `jobs`. So do two operands that read one value, or one
+value inside the other, since they may contradict. So does a `!` in front of a
+comparison with no parentheses round it.
+
+The check names each operand by its text, with each name in any case but each
+string as spelled. So `hashFiles('A')` and `hashFiles('a')` are two operands,
+since the files they read may differ. Dropping an event assumes that the
+events the check keeps over-count those that reach the step. Two operands
+read as one could hide an event, and an exit on it could then end the lane
+with 0 before its gates.
+
+An `if` with more than 12 operands voids the subject too, since the check
+tries every value of each. A job that `needs` another keeps no event either.
+It runs only on the events that reach the job it needs, and the check does not
+follow that chain.
+
+A bash `if` on the variable is read in the same way. Each heading is one
+`[[ ]]` or `[ ]` test of the variable against a literal word. The test uses
+`=`, `==` or `!=`. When the branches that run a command take each event the
+check keeps, an `exit` in any of them counts as one that always runs. A
+heading that reads the event name in any other way, as through a pattern or
+`GITHUB_EVENT_NAME`, has the same result. A chain with a heading that does not
+read the event name is read as any other `if`.
+
+An `exit` in the heading of an `elif` stops the check, as one in the heading
+of an `if` does.
+
+The other such value is the `$1` of a CI job script, read against the
+arguments that each step passes.
+
+The check reads those arguments as a `case` loop on `$1` reads them. Each
+argument it reaches must be a literal word that a literal branch matches before
+any other branch does. That branch must run one `shift`, which skips the values
+it reads, so `--base "$X"` passes. Each value it skips must stay one word, so
+it holds no unquoted expansion, brace or pattern, and no `@`. A branch that an
+argument selects runs.
+
+A second `case` on `$1`, a `shift` outside a branch or a `set` of the
+parameters makes every branch run. So does a step that runs the script
+through `xargs`, `find` or `env`, since the check cannot pair those arguments
+with the step's text.
+
+A `set` sets the parameters with any operand but an option, as `-` and `--`
+are, even right after `-o`: `set -o -- x` does. Only a lower-case word after
+`-o` reads as the option's name.
+
+Under any other subject every branch counts as running, as under a literal
+word, `$LINENO` or a function's `$1`. So does every branch of a `case` that an
+`eval` or a child shell opens, and every command of a function a branch
+defines.
+
+Some residuals remain. The check reads each operand of an `if` but the event
+name as unknown. Such an operand, as `github.base_ref` or a value of the event
+payload, may hold only on some events or never. So a step or job whose `if`
+never holds may still count its gates. The check does not follow `needs`
+either, so a job that needs one that never runs may count its gates too. When
+the check keeps an event that never reaches the step, more of its exits may
+run, so fewer gates count.
+
+The check counts a workflow as started whatever branch, path or schedule
+filter its `on` sets, though a filter may never match. It does not read a
+write that an interpreter such as `python`, `perl` or `awk` makes, so such a
+step may still rewrite a gate. It does not follow a status that a lane saves
+and returns later, as through `PIPESTATUS` or `$?`, and it reads
+`if ! X; then exit 1; fi` as a condition. So a gate that either guards counts
+as run but not gating.
+
+The check does not follow an event name that a step writes to `GITHUB_ENV`.
+So a bash `if` on such a variable in a later step counts as any other `if`.
+
+A call stops the check when its body may exit with 0 before a `return` that
+always runs. A `return` in a branch or a loop does not count, since the body
+may skip it. In the body itself, an `exit` that a later command follows stops
+the check even after a `return`. A `return` in a subshell, a pipeline, a
+`coproc` or the background returns from nothing, so it does not count. When
+the reader loses track of the nesting, as after a named `coproc` of a subshell,
+any later `exit` stops the check. A command substitution that holds a `case`
+with no `esac` after it stops the check too, since a pattern's `)` may end it
+early.
+
+An `EXIT` trap stops the check when its action, or a function it calls, may
+replace the status the lane ends with. An `exit` whose status may be 0, a bare
+`exit` after another command, an `exec` of a program and a `source` all can.
+Such a trap can turn a failure before the gate into success.
+
+`internal/metadatautil/lane_scripts.go` reads the lanes, and
+`internal/metadatautil/lane_reading.go` reads what a lane and each library it
+sources may run. The reader models a fixed list of bash features. Anything
+outside that list stops the check with an error that names it, so a new shell
+trick cannot keep a script wired. The check does not follow a symlink to a
+lane file.
+
+The reader models these features (`internal/metadatautil/lane_reading.go`).
+A command word may be a literal program name or a function that the lane or a
+library defines. It may be a path, which a literal slash outside its
+expansions makes it. It may be one expansion of a variable that the lane
+writes, whose every write is a single literal program name. A write by `+=`, `read`, a substitution or a
+positional parameter leaves the variable unspelled.
+
+A builtin counts only when the reader models it: `set`, `shopt`, `hash`, the
+declarations, `read`, `printf`, `mapfile`, `compgen`, `eval`, `trap` and
+`source`. Each of these must spell its options and names with no expansion
+(`internal/metadatautil/lane_reading.go`). So `set -o $o` and `export P{A,X}TH=`
+stop the check. An inert builtin such as `cd` or `test` counts too. Every other
+builtin stops the check, as `alias`, `enable` and `fc` do.
+
+The check stops at `kill`, `pkill`, `killall`, `logout` and `suspend`, which
+may end the lane's shell. An `export -f`, a `declare -fx`, an `export` of a defined function's name and
+`set -a` stop the check too. A child bash calls an exported function in place
+of the program it names, so the gate would not run its own commands.
+
+The reader reads the literal text of an `eval`, a `trap` action and a child
+shell's program, at most eight deep, after any leading redirection. A source
+must name a fixed `${ROOT_DIR}/` library, which the reader then reads as part of
+the lane. A `hash -p`, a `mapfile -C` callback, `set -n`, `set -t`,
+`shopt -so noexec` and `shopt -s extdebug` stop the check. So does a `trap`
+that sets an action on a signal other than `EXIT`
+(`internal/metadatautil/lane_reading.go`). A child shell counts only with the
+options that run its file, such as `-e`, `-x` or `-o pipefail`
+(`internal/metadatautil/shell_invocations.go`).
+
+The reader reads `set -o` options only from `set`, so any `shopt -o` stops the
+check. So does `shopt -s lastpipe`, which runs a pipeline's last command, and
+any `exit` in it, in the lane's shell. A function that the text of an `eval` or
+a `trap` defines stops the check, since the reader does not read its body.
+
+Bash reads the value of a variable in arithmetic as an expression, which can
+assign `PATH`. The reader reads `((`, `$((`, `let`, a `[[` number test, a
+subscript, a substring offset and the body of an expanded heredoc. Each operand
+must be a number, or a variable whose every write is a number
+(`internal/metadatautil/lane_arithmetic.go`). A write counts only for a later
+read in the same branch, loop or function body. A `declare -i`, a `${x@P}`
+and `localvar_inherit` stop the check.
+
+Only a plain assignment, a declaration with a value and a `for` loop count as
+writes. None counts in a pipeline or a background job, which run in a
+subshell, or in the text an `eval` runs. A default such as `${v:=word}` counts
+wherever bash expands it, also in a redirection, a here-string or the body of
+an unquoted heredoc.
+
+A plain `local` at the top level of a function body gives the function its
+own copy of a name. A write in any function that does not declare that name
+local counts against every copy (`internal/metadatautil/lane_numbers.go`).
+A number or a program variable there reads the function's own writes and
+those outside writes.
+
+The test `[[ "$v" =~ ^[0-9]+$ ]] || continue` in a loop body proves that a
+local holds digits. So does that test with `|| return` in the function body.
+The proof lasts until a write to the name or the end of that body. An `eval`
+whose every expansion is such a number counts, and the reader reads each text
+it may run.
+
+The reader refuses a function named after a builtin or a reserved word
+(`internal/metadatautil/lane_reading.go`). Bash would call that function in
+place of the builtin. An `eval` counts only when it stands bare, with no
+wrapper, prefix or redirection, as in `eval "exec $fd<&-" 2>/dev/null`. Every
+other `eval` of the same text must count too. The reader counts each
+definition once, however often the lane calls it.
+
+An `unset` of a name counts as a write that may expose the copy a caller
+holds. That holds for a name it reads
+from a list as well. A `for` or `select` loop over the name counts as a write
+too.
+
+The name that `unset` or `-v` reads, and the name in `${!x}`, must be literal.
+It may also be a variable that holds only names from a literal list or a
+`${!PREFIX@}` listing.
+
+A `${ROOT_DIR}/` path counts only in a lane script that sets `ROOT_DIR` to the
+repository root first and makes it `readonly` on the next line. Bash then keeps
+that value for the rest of the lane. Any other line that names `ROOT_DIR`
+cancels the path, in the lane or in a library that the lane sources. A line
+that only reads it, as `${ROOT_DIR}` or `${#ROOT_DIR}` do, keeps it. A workflow
+step does not set `ROOT_DIR`, so the path does not count there.
+
+A lane may instead open with the entry guard of the launcher scripts, for its
+own path, and the guard's exact stop. The stop exits unless
+`workcell_entry_root` holds the root. The lane then sets
+`ROOT_DIR="${workcell_entry_root}"` on a line of its own that runs whenever
+the lane does, outside every branch, group, function and list
+(`internal/metadatautil/lane_scripts.go`). No line before it may name
+`ROOT_DIR`, nor a library that such a line sources. The check then reads
+`workcell_entry_root` as `ROOT_DIR`, and a library may open with its own guard.
+
+A child shell does not inherit the pinned value, so a child whose own program
+names `ROOT_DIR` stops the check. A program name without a slash runs from
+`PATH`, so it does not count. A lane that assigns `PATH`, `BASH_ENV` or `ENV`
+counts no path, and a library that assigns one stops the check
+(`internal/metadatautil/lane_reading.go`). A write to `PS4`, `SHELLOPTS` or
+`BASHOPTS` stops it in a lane or a library.
+
+A lane also stops the check when it defines a function with the name of a
+shell, a wrapper, a path, `trap` or `eval`. The definition counts in the lane's
+own text and in the text that an `eval` or a `trap` runs. The function then
+runs in place of the program (`internal/metadatautil/lane_reading.go`). A lane
+that names `BASH_CMDS` or `BASH_ALIASES` stops the check. So does an assignment
+in arithmetic to a name an expansion spells, or to `PATH`.
+
+A write to a variable whose name an expansion computes stops the check too, as
+`printf -v "${v}"`, a nameref or `${!x:=y}` write. One such write is read: a
+library function that writes the variable its caller names, through a `local`
+copy of a positional parameter. Each caller must then name a plain variable
+that bash does not read to decide what runs (`internal/metadatautil/lane_reading.go`).
+That variable then holds no literal program name.
+
+A library function forwards its arguments only in one form. Its body runs
+`"$@"` alone and quoted, and each other command runs a program, a function or a
+builtin that cannot change the positional parameters. A `shift`, a `set` or an
+`eval` in the body makes `"$@"` a command word the check cannot spell. The
+check reads each call as the command it forwards. That command must be a
+program, not a builtin or a function (`internal/metadatautil/lane_reading.go`).
+
+Each reader charges its parsing to a bound linear in the length of the text.
+Text past a bound stops the check with an error, so no lane costs more than a
+fixed multiple of its size (`internal/metadatautil/lane_scripts_test.go`). A
+lane that overwrites a library or a gate before it runs it is outside this
+model. So is a lane that plants a program in a `PATH` directory, or that runs
+its gate under `timeout`. The reader takes a write as made even when it sits in
+a branch or a function that never runs.
 
 A sentence that claims enforcement needs such a span within two lines, and
 it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger

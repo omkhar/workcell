@@ -364,9 +364,13 @@ done <<<"${scenario_test_listing}"
 # The list above is hand-maintained, so a new script can enter the tree
 # unlinted. Assert that the list covers every tracked bash script. Match on the
 # shebang, not on the file suffix: several linted scripts have no `.sh` name.
-declare -A linted_shell_files=()
+# Each path is matched against this list in a loop, not through an
+# associative array: the lane reader evaluates a computed subscript as
+# arithmetic. The list also takes every tracked path that is not a regular
+# file, below.
+excluded_shell_paths=()
 for file in "${shell_files[@]}"; do
-  linted_shell_files["${file#"${ROOT_DIR}/"}"]=1
+  excluded_shell_paths+=("${file#"${ROOT_DIR}/"}")
 done
 
 # Accept only the interpreter that the shebang actually selects. Testing every
@@ -480,15 +484,18 @@ if [[ "${shebang_read_status}" -gt 1 || -s "${SHEBANG_STDERR}" ]]; then
   exit 1
 fi
 
-declare -A tracked_shebangs=()
+tracked_shebang_count=0
+bash_shebang_paths=()
 while IFS= read -r -d '' shebang_path &&
   IFS= read -r -d '' shebang_lineno &&
   IFS= read -r shebang_line; do
   [[ "${shebang_lineno}" == "1" ]] || continue
-  tracked_shebangs["${shebang_path}"]="${shebang_line}"
+  tracked_shebang_count=$((tracked_shebang_count + 1))
+  is_bash_shebang "${shebang_line}" || continue
+  bash_shebang_paths+=("${shebang_path}")
 done <"${SHEBANG_STDOUT}"
 
-if [[ "${#tracked_shebangs[@]}" -eq 0 ]]; then
+if [[ "${tracked_shebang_count}" -eq 0 ]]; then
   echo "Tracked shebang inventory is empty; shell lint coverage is unverified" >&2
   exit 1
 fi
@@ -511,16 +518,21 @@ while IFS= read -r -d '' index_entry; do
   fi
   tracked_mode="${index_entry%% *}"
   tracked_path="${index_entry#*$'\t'}"
-  [[ "${tracked_mode}" == "100644" || "${tracked_mode}" == "100755" ]] || continue
-  [[ -n "${linted_shell_files[${tracked_path}]:-}" ]] && continue
-  is_bash_shebang "${tracked_shebangs[${tracked_path}]:-}" || continue
-  unlinted_shell_files+=("${tracked_path}")
+  [[ "${tracked_mode}" == "100644" || "${tracked_mode}" == "100755" ]] ||
+    excluded_shell_paths+=("${tracked_path}")
 done < <(git -C "${ROOT_DIR}" ls-files -sz && printf '\0')
 
 if [[ "${lint_inventory_completed}" -ne 1 ]]; then
   echo "Tracked file listing failed; shell lint coverage is unverified" >&2
   exit 1
 fi
+
+for shebang_path in "${bash_shebang_paths[@]}"; do
+  for excluded_path in "${excluded_shell_paths[@]}"; do
+    [[ "${shebang_path}" == "${excluded_path}" ]] && continue 2
+  done
+  unlinted_shell_files+=("${shebang_path}")
+done
 
 if [[ "${#unlinted_shell_files[@]}" -gt 0 ]]; then
   echo "Tracked bash scripts are missing from the validate-repo.sh lint list:" >&2
@@ -583,15 +595,10 @@ done
 shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
 "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
 
-declare -A shell_files_without_exec_bit=()
-for file in "${non_executable_shell_files[@]}"; do
-  shell_files_without_exec_bit["${file}"]=1
-done
-
 for file in "${shell_files[@]}"; do
-  if [[ -n "${shell_files_without_exec_bit[${file}]:-}" ]]; then
-    continue
-  fi
+  for non_executable_file in "${non_executable_shell_files[@]}"; do
+    [[ "${file}" == "${non_executable_file}" ]] && continue 2
+  done
   if [[ ! -x "${file}" ]]; then
     echo "Expected executable script: ${file}" >&2
     exit 1
@@ -601,7 +608,13 @@ done
 for scratch_dir in \
   "${ROOT_DIR}/adapters/codex/.codex/memories" \
   "${ROOT_DIR}/adapters/codex/.codex/tmp"; do
-  if find "${scratch_dir}" -mindepth 1 -print -quit 2>/dev/null | grep . >/dev/null; then
+  scratch_entries=()
+  if [[ -d "${scratch_dir}" ]]; then
+    shopt -s nullglob dotglob
+    scratch_entries=("${scratch_dir}"/*)
+    shopt -u nullglob dotglob
+  fi
+  if [[ "${#scratch_entries[@]}" -gt 0 ]]; then
     echo "Unexpected adapter scratch state present: ${scratch_dir}" >&2
     exit 1
   fi
@@ -716,7 +729,9 @@ else
 fi
 
 if [[ "${#markdown_files[@]}" -gt 0 ]]; then
-  "${MARKDOWNLINT_BIN}" "${markdown_files[@]}"
+  # The literal /markdownlint keeps the command word a path the lane wiring
+  # check can read, never a builtin or a function.
+  "${MARKDOWNLINT_BIN%/*}/markdownlint" "${markdown_files[@]}"
 fi
 
 validate_manpage
@@ -753,7 +768,7 @@ fi
 # declarations and type aliases, which end in `fn`/`(` rather than `{`.
 # rustfmt (enforced above) keeps each block opener on a single line.
 while IFS=: read -r extern_file extern_line _; do
-  if ! sed -n "$((extern_line - 1))p" "${extern_file}" | grep '// SAFETY:' >/dev/null; then
+  if ! awk -v line="${extern_line}" 'NR == line - 1' "${extern_file}" | grep '// SAFETY:' >/dev/null; then
     echo "unsafe extern block missing a preceding // SAFETY: comment at ${extern_file}:${extern_line}" >&2
     exit 1
   fi

@@ -20,12 +20,14 @@ import (
 // DocClaimHits reads one "doc<TAB>path" line per path a doc cites and writes
 // "doc<TAB>rule<TAB>path" for each path that anchors nothing: escaping-path
 // for a .. or symlink component, missing-path for a path that does not exist,
-// and unwired-script for a scripts/*.sh path that no lane runs. The probe
+// unwired-script for a scripts/*.sh path that no lane runs, and ungated-script
+// for one that a lane runs only where its failure does not fail the lane, as
+// LaneScriptClasses reads it. The probe
 // walks descriptors from rootDir without following a link, so a component
 // swapped for a symlink during the walk fails rather than passes. A symlinked
 // rootDir, or one with a symlinked parent, is an error.
 func DocClaimHits(rootDir string, cited io.Reader, hits io.Writer) error {
-	wired, err := LaneScripts(rootDir)
+	gates, ungated, err := LaneScriptClasses(rootDir)
 	if err != nil {
 		return err
 	}
@@ -45,7 +47,7 @@ func DocClaimHits(rootDir string, cited io.Reader, hits io.Writer) error {
 		if !found {
 			return fmt.Errorf("doc claim line has no tab: %q", lines.Text())
 		}
-		rule, err := docClaimRule(root, path, wired)
+		rule, err := docClaimRule(root, path, gates, ungated)
 		if err != nil {
 			return fmt.Errorf("probe %s cited in %s: %w", path, doc, err)
 		}
@@ -60,7 +62,7 @@ func DocClaimHits(rootDir string, cited io.Reader, hits io.Writer) error {
 
 // docClaimRule returns the rule path breaks, or the empty string. A ..
 // component fails before any probe, since it may leave the repository.
-func docClaimRule(root *os.File, path string, wired []string) (string, error) {
+func docClaimRule(root *os.File, path string, gates, ungated []string) (string, error) {
 	if slices.Contains(strings.Split(path, "/"), "..") {
 		return "escaping-path", nil
 	}
@@ -72,7 +74,10 @@ func docClaimRule(root *os.File, path string, wired []string) (string, error) {
 		return "missing-path", nil
 	case err != nil:
 		return "", err
-	case strings.HasPrefix(path, "scripts/") && strings.HasSuffix(path, ".sh") && !slices.Contains(wired, path):
+	case !strings.HasPrefix(path, "scripts/") || !strings.HasSuffix(path, ".sh") || slices.Contains(gates, path):
+	case slices.Contains(ungated, path):
+		return "ungated-script", nil
+	default:
 		return "unwired-script", nil
 	}
 	return "", nil
