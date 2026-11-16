@@ -330,11 +330,30 @@ such as `github.repository` stays the same, so it does not count either. The
 step must name that variable only to expand it. Neither counts after an
 earlier step of the job writes `GITHUB_ENV`.
 
-The `event_name` counts only in a workflow that no `workflow_call` starts,
-under a job and step whose `if` does not name it. Its patterns are read
-against the events that start the workflow on their own, so not
-`workflow_dispatch`. A `case` whose exiting branches name each of those events
-always exits.
+The `event_name` counts only in a workflow that no `workflow_call` starts.
+Its patterns are read against the events that start the workflow on their own,
+so not `workflow_dispatch`. Of those, the check keeps each event on which the
+job's `if` and the step's `if` may both hold. It reads each `if` with the event
+name set to that event and each other operand unknown
+(`internal/metadatautil/lane_events.go`). A `case` whose exiting branches name
+each event it keeps always exits.
+
+The check must be sure that each event it keeps can reach the step, or the
+`event_name` does not count. It reads the event name only in a test with `==`
+or `!=` against a quoted literal. Any other use, `fromJSON`, `format` or an
+`if` it cannot parse voids the subject. So does an operand that may copy the
+event name, as the whole `github` context or a value of `env`, `matrix`,
+`needs`, `steps` or `jobs`. So do two operands that read one value, or one
+value inside the other, since they may contradict. So does a `!` in front of a
+comparison with no parentheses round it.
+
+A bash `if` on the variable is read in the same way. Each heading is one
+`[[ ]]` or `[ ]` test of the variable against a literal word. The test uses
+`=`, `==` or `!=`. When the branches that run a command take each event the
+check keeps, an `exit` in any of them counts as one that always runs. A heading that reads the event
+name in any other way, as through a pattern or `GITHUB_EVENT_NAME`, has the
+same result. A chain with a heading that does not read the event name is read
+as any other `if`.
 
 The other such value is the `$1` of a CI job script, read against the
 arguments that each step passes.
@@ -364,6 +383,12 @@ makes, so such a step may still rewrite a gate. It does not follow a
 status that a lane saves and returns later, as through `PIPESTATUS` or `$?`, and
 it reads `if ! X; then exit 1; fi` as a condition. So a gate that either guards
 counts as run but not gating.
+
+The check also reads a value of the event payload as unknown, though it may
+hold only on some events. It does not follow an event name that a step writes
+to `GITHUB_ENV`. So a bash `if` on such a variable in a later step counts as
+any other `if`. An `exit` in the heading of an `elif` counts as a condition,
+though the events that no earlier test takes always reach it.
 
 A call stops the check when its body may exit with 0 before a `return` that
 always runs. A `return` in a branch or a loop does not count, since the body

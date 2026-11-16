@@ -43,7 +43,8 @@ type laneCases struct {
 	empty   bool              // the command before was empty
 	follows string            // the operator in front of the command before
 	env     map[string]string // the names of a step's env laneSubjects lets a case read, or nil in a lane script
-	events  []string          // the events other than workflow_dispatch and workflow_call that start the step's workflow
+	events  []string          // the events laneReachable finds may reach a step
+	reads   *regexp.Regexp    // an expansion of a variable whose value names the event name
 	run     string            // a step's text
 	own     *laneOwnCase      // a lane script's, shared by its libraries
 	top     bool              // the body is the lane script's own text
@@ -362,16 +363,15 @@ func laneCaseNamed(subject string, env map[string]string, run string) string {
 // laneSubjects returns the names of a step's env that a case may read as a
 // condition, each with the github value it holds: the sha, which differs from
 // run to run, and the event_name, unless the workflow runs on workflow_call,
-// where it is the caller's event, or the job's or the step's if names it,
-// which may pick the events the step runs on. A step after one that names
+// where it is the caller's event, or laneReachable cannot be sure which
+// events the job's and the step's if let reach it. A step after one that names
 // GITHUB_ENV gets none, since that step may set any of them. A value the
 // branch name sets, as the head_ref, is one the change's author picks.
-func laneSubjects(context laneStepContext, step workflowStep, call bool) map[string]string {
+func laneSubjects(context laneStepContext, step workflowStep, unsure bool) map[string]string {
 	subjects := map[string]string{}
 	for name, value := range step.Env {
 		match := laneGithubValue.FindStringSubmatch(value)
-		if match == nil || context.envWrites || match[1] == "event_name" && (call ||
-			strings.Contains(context.job.If.Value, "event_name") || strings.Contains(step.If.Value, "event_name")) {
+		if match == nil || context.envWrites || match[1] == "event_name" && unsure {
 			continue
 		}
 		subjects[name] = match[1]
@@ -384,3 +384,71 @@ var (
 	laneGithubValue  = regexp.MustCompile(`^\$\{\{ *github\.(event_name|sha) *\}\}$`)
 	laneBashNames    = regexp.MustCompile(`^(?:BASH.*|COMP_.*|GITHUB_.*|RUNNER_.*|LINENO|PWD|OLDPWD|UID|EUID|PPID|RANDOM|SRANDOM|SECONDS|SHLVL|HOSTNAME|HOSTTYPE|OSTYPE|MACHTYPE|GROUPS|FUNCNAME|OPTIND|OPTARG|OPTERR|REPLY|PIPESTATUS|EPOCHSECONDS|EPOCHREALTIME|HISTCMD|COLUMNS|LINES|DIRSTACK|SHELLOPTS|IFS|PATH|ENV|PS4)$`)
 )
+
+// laneEventReads returns the env names a step sees whose value names the event
+// name, from the step, its job or its workflow.
+func laneEventReads(context laneStepContext, step workflowStep) []string {
+	var names []string
+	for _, env := range []map[string]string{step.Env, context.job.Env, context.document.Env} {
+		for name, value := range env {
+			if strings.Contains(strings.ToLower(value), "event_name") {
+				names = append(names, regexp.QuoteMeta(name))
+			}
+		}
+	}
+	return names
+}
+
+// laneEventIf follows the branches of one if command whose headings test the
+// event name, as an event case's branches are followed.
+type laneEventIf struct {
+	all    []string // the events that may reach the step
+	taken  []string // the events the branch the reader is in takes
+	ran    []string // the events of each branch that runs a command
+	judged bool     // each heading so far is one test of the event name
+	opaque bool     // a heading reads the event name some other way
+	tests  int      // the commands of the heading the reader is in, or 0 past its then
+	test   func(string) bool
+}
+
+// covered reports whether the if runs a branch that runs a command on each
+// event, so each command in its branches runs as if it had no condition. An
+// if whose headings read the event name some other way always counts.
+func (state *laneEventIf) covered() bool {
+	return state.opaque || state.judged && !slices.ContainsFunc(state.all, func(event string) bool { return !slices.Contains(state.ran, event) })
+}
+
+// heading reads one command of an if's heading: the first, after the if or
+// elif, or a later one, from which the heading's status may come instead. A
+// heading that names the event name other than as the one test
+// [[ "$E" == word ]] or [ "$E" = word ], or != of either, is opaque.
+func (cases *laneCases) heading(state *laneEventIf, words []word, first bool) {
+	if first {
+		state.tests, state.test = 0, nil
+	}
+	state.tests++
+	if !slices.ContainsFunc(words, func(each word) bool { return cases.reads.MatchString(each.raw) }) {
+		return
+	}
+	t := texts(words)
+	if len(t) != 5 || !(t[0] == "[[" && t[4] == "]]" || t[0] == "[" && t[4] == "]") || !slices.Contains([]string{"=", "==", "!="}, t[2]) ||
+		laneCaseNamed(t[1], cases.env, cases.run) != "event_name" || !laneLiteralPiece(t[3]) {
+		state.opaque = true
+		return
+	}
+	literal, not := t[3], t[2] == "!="
+	state.test = func(event string) bool { return event == literal != not }
+}
+
+// branch starts the branch that a then, or with otherwise an else, opens. A
+// then takes each event its test holds on, though an earlier branch may take
+// one first, which only adds an event of a branch that runs, so fails closed.
+func (*laneCases) branch(state *laneEventIf, otherwise bool) {
+	if !otherwise {
+		state.opaque = state.opaque || state.tests > 1 && state.test != nil
+		state.judged = state.judged && state.test != nil
+	}
+	state.tests, state.taken = 0, slices.DeleteFunc(slices.Clone(state.all), func(event string) bool {
+		return !otherwise && (!state.judged || !state.test(event))
+	})
+}
