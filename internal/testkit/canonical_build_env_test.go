@@ -721,17 +721,31 @@ func stagedCanonicalEntrypoint(
 }
 
 func canonicalEntrypointOrder(text, relative, firstOperation string) bool {
-	anchors := []string{
-		`ROOT_DIR="$(CDPATH='' cd -- `,
+	rootAnchor := `ROOT_DIR="$(CDPATH='' cd -- `
+	sourceAnchor := `source "${BASH_SOURCE[0]%/*}/lib/canonical-build-env.sh"`
+	var guard []string
+	if strings.HasPrefix(text, "#!/bin/bash -p\nworkcell_entry_root=\"$(") {
+		// An entry-guarded script resolves its tree root on line 2, stops when
+		// that root is empty, and takes ROOT_DIR and its helpers from it.
+		guard = []string{`[[ -n "${workcell_entry_root}" ]] || {`}
+		rootAnchor = `ROOT_DIR="${workcell_entry_root}"`
+		sourceAnchor = `source "${workcell_entry_root}/scripts/lib/canonical-build-env.sh"`
+	}
+	anchors := append(guard,
+		rootAnchor,
 		`source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"`,
 		`workcell_require_modern_privileged_bash "$@"`,
 		"workcell_require_canonical_build_environment",
 		firstOperation,
-	}
+	)
 	if relative == "scripts/verify-github-hosted-controls.sh" {
-		anchors[0] = `source "${BASH_SOURCE[0]%/*}/lib/canonical-build-env.sh"`
-		anchors[1] = `workcell_require_modern_privileged_bash "$@"`
-		anchors[2] = `ROOT_DIR="$(CDPATH='' cd -- `
+		anchors = append(guard,
+			sourceAnchor,
+			`workcell_require_modern_privileged_bash "$@"`,
+			rootAnchor,
+			"workcell_require_canonical_build_environment",
+			firstOperation,
+		)
 	}
 	previous := -1
 	for _, anchor := range anchors {
