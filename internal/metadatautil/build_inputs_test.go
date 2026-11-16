@@ -44,6 +44,7 @@ func buildInputFixture(t *testing.T) string {
 		"internal/cliexit/cliexit.go", "internal/credbroker/broker.go", "internal/egressproxy/proxy.go",
 		"internal/injectionpolicy/endpoints.go", "internal/rootio/rootio.go",
 		"internal/tomlsubset/tomlsubset.go", "cmd/workcell-egress-proxy/main.go",
+		"internal/providerpolicy/providerpolicy.go", "cmd/workcell-provider-policy/main.go",
 		"tools/markdownlint/package.json", "internal/unrelated/example.go",
 	} {
 		writeBuildInputFixture(t, root, relative, []byte("initial fixture\n"))
@@ -87,6 +88,7 @@ func TestBuildInputManifestBindsBrokerSources(t *testing.T) {
 		"cmd/workcell-apt-broker-client/main.go", "cmd/workcell-apt-broker-server/main.go",
 		"internal/credbroker/broker.go", "internal/egressproxy/proxy.go",
 		"internal/injectionpolicy/endpoints.go", "cmd/workcell-egress-proxy/main.go",
+		"internal/providerpolicy/providerpolicy.go", "cmd/workcell-provider-policy/main.go",
 	} {
 		t.Run(relative, func(t *testing.T) {
 			if before.Runtime.Inputs[relative] != sha256HexString("initial fixture\n") {

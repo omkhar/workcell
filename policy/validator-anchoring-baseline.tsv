@@ -12,7 +12,6 @@ internal/adapters	TestLauncherRefusesUncertifiedOptionMisuse	4ba4808d	a test ass
 internal/adapters	TestManifestsMatchLauncherAgentDispatch	257a40f3,57540d48,57540d48,c71e9e89	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	TestRejectManifestArgsAllowsOnlyTheManifestAllowlist	7e026f3f	a test assertion on the refusal text or rendered output that the test itself produces
 internal/adapters	TestRejectManifestArgsFailsClosed	78d94112,f5fbbae8	a test assertion on the refusal text or rendered output that the test itself produces
-internal/adapters	TestRenderRuntimeShellUncertifiedTables	437be125,dd8c4006	a test assertion on the refusal text or rendered output that the test itself produces
 internal/adapters	TestRenderersFollowManifests	1d06f46e,2e17b808,33369dc3,52136e3f,5aa5ff73,a78322f5,ecdf292f	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	dockerfilePinnedArgs	0726d6e0,7663cdcd	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	endpointRowAbsent	bf67ade5	unreviewed debt in a test: review the subject, then port or justify
@@ -391,7 +390,6 @@ internal/testkit	TestCheckPRShapeIgnoresAmbientGitConfig	f21dd743	unreviewed deb
 internal/testkit	TestCheckPublicRepoHygieneAllowsPortableExamples	1c1e97a6	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCheckPublicRepoHygieneRejectsLeakedHomePaths	73ab8e93,a9e2a42f	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCheckRustVendorRejectsTamper	a2ce3ac1	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestCodexDeniesTunnelAndMCPServerSubcommands	34d7ef31	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCodexManagedConfigKeepsWorkspaceWriteOutsideBreakglass	4838b561,5e8bd789,a060796c	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCommitMsgHookKeepsCommentedBodyWhenNormalizing	4dff92b9	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestCommitMsgHookKeepsCommentedBodyWhenSubjectIsFirst	b308fb37	unreviewed debt in a test: review the subject, then port or justify

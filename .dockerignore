@@ -23,6 +23,10 @@
 !internal/tomlsubset/**
 !cmd/workcell-egress-proxy/
 !cmd/workcell-egress-proxy/**
+!internal/providerpolicy/
+!internal/providerpolicy/**
+!cmd/workcell-provider-policy/
+!cmd/workcell-provider-policy/**
 !adapters/
 !adapters/**
 !runtime/

@@ -46,7 +46,8 @@ type Manifest struct {
 
 // Flags classifies every option the pinned CLI prints in its help. The flag
 // inventory (scripts/check-flag-inventory.sh) fails on a fixture flag in neither
-// Allow nor Deny; the reject_unsafe_<id>_args parity test lands with the policy.
+// Allow nor Deny; TestFlagInventoryEntriesMatchProviderPolicy checks each entry
+// against the provider policy in internal/providerpolicy.
 type Flags struct {
 	Subcommands []string // allowed subcommands whose --help the inventory also reads
 	// OtherCommands names the remaining top-level commands of the CLI help. The
@@ -316,7 +317,7 @@ func validateManifest(m Manifest, schema int) error {
 	if err := validateFlags(m.Flags); err != nil {
 		return err
 	}
-	// reject_manifest_args passes an uncertified adapter's options only through
+	// The manifest policy passes an uncertified adapter's options only through
 	// [flags].allow, so an empty list would refuse every option or hide a typo.
 	if m.Tier == "uncertified" && len(m.Flags.Allow) == 0 {
 		return errors.New("an uncertified manifest needs a non-empty [flags] allow list")
