@@ -168,15 +168,19 @@ run_go_hostutil_preserve_exit() {
   local stderr_file=""
   local stderr_capture=""
   local rc=0
+  local read_status=0
+  local exit_status_pattern=$'(^|\n)exit status ([0-9]+)$'
 
   stderr_file="$(mktemp "${TMPDIR:-/tmp}/workcell-hostutil-stderr.XXXXXX")"
-  trap 'rm -f "${stderr_file}"' RETURN
+  # No RETURN trap removes the file: a RETURN trap runs text when a function
+  # returns, so it could redefine the command its caller runs next. Each path
+  # out below removes the file itself.
   go_hostutil "$@" 2>"${stderr_file}" || rc=$?
-  stderr_capture="$(cat "${stderr_file}")"
+  stderr_capture="$(cat "${stderr_file}")" || read_status=$?
   rm -f "${stderr_file}"
-  trap - RETURN
+  [[ "${read_status}" -eq 0 ]] || return "${read_status}"
 
-  if [[ "${stderr_capture}" =~ (^|$'\n')exit\ status\ ([0-9]+)$ ]]; then
+  if [[ "${stderr_capture}" =~ ${exit_status_pattern} ]]; then
     if [[ ${rc} -eq 1 ]]; then
       rc="${BASH_REMATCH[2]}"
     fi

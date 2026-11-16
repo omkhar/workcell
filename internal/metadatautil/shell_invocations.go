@@ -1326,8 +1326,21 @@ type reviewedLibrary struct {
 	forwarders []string // its functions that run their caller's words, as run() { "$@"; } does
 }
 
+// The keys are repository paths. The launcher libraries that
+// scripts/workcell sources are pinned here too, so an edit to one is a
+// reviewed change before a rule over the launcher can rely on them.
+// scripts/lib/go-run-env.sh runs resolved tool paths as expanded command
+// words, and scripts/lib/launcher/egress-endpoints.sh still holds a line the
+// gate reads as hidden, so neither is pinned yet.
 var reviewedShellLibraries = map[string]reviewedLibrary{
-	"trusted-docker-client.sh": {digest: "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674", forwarders: []string{"run_workcell_docker_client_command"}},
+	"runtime/container/assurance.sh":             {digest: "ac22300b7b15464744ca1403203313b4290bbcd8d1f246ed37d663e144707785"},
+	"scripts/lib/launcher/generated-adapters.sh": {digest: "198150364734c740f9b41f6c2335b329038b44284e46fb11367c10ae61e6f78c"},
+	"scripts/lib/launcher/go-hostutil.sh":        {digest: "db68469acea7ae1171a740d56b361bfec9d46b45dbcafc3a7aac229eb1a5994e"},
+	"scripts/lib/launcher/host-detect.sh":        {digest: "ff2d2b6f4728e3814fd2714f04ab71d00af0a4af583c26fa3e0fb7930b52a03a"},
+	"scripts/lib/launcher/host-exec.sh":          {digest: "475bfcf95c6e3d20631ba2aacd43261fa116323191b1898a47afbf35c96fbd50"},
+	"scripts/lib/sessionctl-shim.sh":             {digest: "b3e58dacb53bf7c9b7d398993a9ec8ced8bdd5499c1d24945bb5903b9fc7988e"},
+	"scripts/lib/shellproto.sh":                  {digest: "87149270a2ff536e552c9ea093e9db827d37892bb5f07b94c5629bcf621f487a"},
+	"scripts/lib/trusted-docker-client.sh":       {digest: "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674", forwarders: []string{"run_workcell_docker_client_command"}},
 }
 
 // canonicalRootDir is the one ROOT_DIR assignment that pins a script's root.
@@ -1377,7 +1390,7 @@ func namesRoot(logical string, commands []command) bool {
 // reviewed source runs: an error, the shell's exit, or a signal.
 var preludeTrapSignals = map[string]bool{"ERR": true, "EXIT": true, "0": true, "INT": true, "TERM": true, "HUP": true, "QUIT": true, "PIPE": true}
 
-var reviewedLibraryPath = regexp.MustCompile(`^\$\{?ROOT_DIR\}?/scripts/lib/([A-Za-z0-9_.-]+\.sh)$`)
+var reviewedLibraryPath = regexp.MustCompile(`^\$\{?ROOT_DIR\}?/((?:scripts/lib|scripts/lib/launcher|runtime/container)/[A-Za-z0-9_.-]+\.sh)$`)
 
 // reviewedLibrarySource returns the pinned library the words source by its
 // fixed path under ROOT_DIR, if any. Its text is reviewed, so the source is

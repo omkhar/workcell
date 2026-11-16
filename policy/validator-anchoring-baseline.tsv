@@ -233,6 +233,7 @@ internal/metadatautil	pinnedInputsCheck.validateValidatorBuildkit	3b54b641,7e8fd
 internal/metadatautil	pinnedInputsCheck.validateWorkflowPolicy	20114f66,729ab531,aa1b7dd5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	preloadAssignments	46f1dfca,cd8fdbb9,cd8fdbb9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	preludeSafe	7d62ff7e,85178304,c256efb6,e008b096	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	TestLauncherSetsNoReturnTrap	e64b7df9	the search lists the source lines of scripts/workcell to find the libraries it loads; the trap check itself reads parsed commands
 internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a line break in a token file
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify

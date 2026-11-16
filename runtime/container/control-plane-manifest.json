@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "246591b432c0c09e0ad7cdc75a1a5dd0787234b00fd9e0b2b1e13ac06db2cba1"
+      "sha256": "f90c42266cfac749137c216b6f5d1284953628ba8f471fd94998b0f7e4db241e"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/host-detect.sh",
-      "sha256": "6fb6b85339cba66db0df47243258b1ef6f9110e71f1883bc64e4e030d3ca055e"
+      "sha256": "ff2d2b6f4728e3814fd2714f04ab71d00af0a4af583c26fa3e0fb7930b52a03a"
     },
     {
       "repo_path": "scripts/lib/launcher/host-exec.sh",
@@ -22,11 +22,11 @@
     },
     {
       "repo_path": "scripts/lib/launcher/go-hostutil.sh",
-      "sha256": "fef47fc5734fd0400d21ee3f374ad6412caf30d071a03f388ca1a8df5e710acb"
+      "sha256": "db68469acea7ae1171a740d56b361bfec9d46b45dbcafc3a7aac229eb1a5994e"
     },
     {
       "repo_path": "scripts/lib/launcher/egress-endpoints.sh",
-      "sha256": "59979a22a8101d87e41223978054dedcafbd71d3495769d4d8bcdbd7a0b321de"
+      "sha256": "42e0acc079589bc0c8bea455d74363bc137218eaf3e4186d886f6de873f283d2"
     },
     {
       "repo_path": "scripts/lib/launcher/generated-adapters.sh",
