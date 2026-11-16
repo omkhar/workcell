@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1112,7 +1113,12 @@ func TestInstallDevToolsEnforcesLockedMarkdownlintNodeRanges(t *testing.T) {
 	if !ok {
 		t.Fatalf("%s is missing markdownlint_node_install_hint", scriptPath)
 	}
-	probe := filepath.Join(t.TempDir(), "node-range-probe.sh")
+	// The probe sits at the script's own path in a private tree, where the
+	// entry guard of a Workcell script accepts it.
+	probe := filepath.Join(t.TempDir(), "scripts", "install-dev-tools.sh")
+	if err := os.MkdirAll(filepath.Dir(probe), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeExecFile(t, probe, []byte(prefix+"version=\"$(node_version)\"\nmarkdownlint_node_compatible \"${version}\"\n"), 0o700)
 
 	for _, tc := range []struct {
@@ -2089,4 +2095,41 @@ func extractShellFunction(tb testing.TB, script, name string) string {
 	}
 	tb.Fatalf("script shell function %s has no closing brace", name)
 	return ""
+}
+
+// TestReleaseArchivesPinTarUmask covers every git archive command in the
+// tracked scripts and workflows. Git writes each file with mode 0777 or 0666
+// less tar.umask, whose default is 0002, so an unpinned archive holds
+// group-writable files. A bundle that root extracts then fails the entry
+// guard, which refuses group write for any group but the user's own, so each
+// archive pins tar.umask to 0022.
+func TestReleaseArchivesPinTarUmask(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	listing, err := exec.Command("git", "-C", root, "ls-files", "-z", "--", "scripts", "tests", ".github", ".githooks", "verify").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// git, then any options with their values, then the archive subcommand.
+	archive := regexp.MustCompile(`\bgit(\s+(-[cC]\s+("[^"]*"|\S+)|--[a-z-]+(=\S+)?))*\s+archive\b`)
+	found := 0
+	for _, rel := range strings.Split(strings.TrimSuffix(string(listing), "\x00"), "\x00") {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for number, line := range strings.Split(string(data), "\n") {
+			if !archive.MatchString(line) {
+				continue
+			}
+			found++
+			if !strings.Contains(line, " -c tar.umask=0022 ") {
+				t.Errorf("%s:%d: git archive without -c tar.umask=0022: %s", rel, number+1, strings.TrimSpace(line))
+			}
+		}
+	}
+	if found == 0 {
+		t.Error("found no git archive command; the search no longer matches how the scripts call it")
+	}
 }

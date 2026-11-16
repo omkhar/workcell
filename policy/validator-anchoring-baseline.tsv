@@ -466,6 +466,7 @@ internal/testkit	TestPublishUpstreamRefreshPRRequiresCleanWorktree	f5bf42c7,f82b
 internal/testkit	TestReadTrackedFileRefusesASymlinkedPath	dd833e3a	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestReleaseAssetACLValidationRejectsDynamicToolchainMismatch	46eb26fe	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestReleaseAssetACLValidationToolcacheSelectionCases	01d0560c	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestReleaseArchivesPinTarUmask	3fc6dc86,7a451c61	the search finds the git archive lines in every tracked script and workflow, which a shell reader cannot reach inside a YAML block
 internal/testkit	TestRepoPrePushChainsToFastChecks	ffb6c32a	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestRepoPrePushGatesPushedBranchAfterSignatureWalk	eac43190	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestRunCodespellPrintsOffendingLines	e39abc3c	unreviewed debt in a test: review the subject, then port or justify
@@ -512,7 +513,7 @@ internal/testkit	TestValidatorImageOwnershipPreservesFailureStatus	32862dc7	unre
 internal/testkit	TestValidatorPasswdFailsClosedWhenTheLookupErrors	6a0f0d1d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidatorPasswdRefusesAColonInTheHomeField	d38fa2c0	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestValidatorPasswdRefusesSymlinkedWorkspaceTmp	40890f51,46122120	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestValidatorRunnersRequireWorkspaceMountPreflight	02ca0b49,2b82f19c,32d2af0e,6c75d6a8,6e1e2546,752c8310,b2d4f803	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestValidatorRunnersRequireWorkspaceMountPreflight	02ca0b49,2b82f19c,6c75d6a8,6e1e2546,752c8310,b2d4f803,d3ab94c0	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestVerifyInvariantsUsesDedicatedSanitizedEntrypoint	1bc188ca	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestVerifyPinnedPackageTree	4327f336	the search checks the output of a stubbed lib run, not script text
 internal/testkit	TestVerifyReleaseArtifactAcceptsCorrectlySignedArtifact	06e02a86	unreviewed debt in a test: review the subject, then port or justify
