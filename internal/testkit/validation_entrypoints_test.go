@@ -678,7 +678,7 @@ func TestVerifyInvariantsUsesDedicatedSanitizedEntrypoint(t *testing.T) {
 		"#!/bin/bash -p",
 		"WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT",
 		`exec /usr/bin/env -i \`,
-		`/bin/bash -p "$0" "$@"`,
+		`/bin/bash -p "${workcell_entry_root}/scripts/verify-invariants.sh" "$@"`,
 		"unset BASH_ENV ENV",
 	} {
 		if !strings.Contains(script, want) {
