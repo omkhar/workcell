@@ -275,7 +275,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 	stable, forwarders := map[string]bool{}, map[string]bool{}
 	var counted []laneCall          // each command once per definition that holds it, which the eval count reads
 	bodied := map[string][]string{} // each function's body texts
-	ends := laneEnds{tops: map[string][]laneTop{}, where: map[string]string{}, sourced: sourced, functions: reading.functions, forked: map[string]bool{}}
+	ends := laneEnds{tops: map[string][]laneTop{}, where: map[string]string{}, sourced: sourced, functions: reading.functions, forked: map[string]bool{}, defined: map[string]int{}}
 	var exitActions []string // the action of each EXIT trap
 	opened := map[int]bool{} // whether the command that opens each scope runs whenever its body does
 	var own *laneOwnCase     // the lane script's cases on its own $1
@@ -601,6 +601,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 		}
 		if at == 0 && strings.Contains(text, laneEntryAssigned) && !assigned {
 			return false, fmt.Errorf("lane wiring is unreadable: a %s assigns ROOT_DIR the entry guard's root where the assignment may not run whenever the lane does, so ROOT_DIR may keep a value it inherits", where)
+		}
+		for _, name := range nesting.names {
+			ends.defined[name]++
 		}
 		if at == 0 {
 			for _, words := range laneCommands(body)[0] { // the lane runs its own commands as EveryShellCommand reads them
@@ -1563,6 +1566,7 @@ type laneEnds struct {
 	functions map[string]bool
 	memo      map[string]bool
 	forked    map[string]bool // the bodies that pipe or background a group or compound command, whose returns this reader does not place
+	defined   map[string]int  // the definitions of each function name the reader parses, after it joins continued lines
 }
 
 // rerunning marks each lane script's exec that reruns the script, which
@@ -1581,10 +1585,11 @@ type laneEnds struct {
 //   - the lane never names BASH_ARGV0, so $0 is the script, and -p keeps the
 //     new shell from reading functions, BASH_ENV or SHELLOPTS it inherits;
 //   - the exec stands in a function the lane's body calls, with no branch,
-//     loop, subshell or group around the call, as NAME "$@", and the lane
-//     and its libraries define that function once and name it nowhere but
-//     in that definition and those calls, so no trap, eval, other call or
-//     other definition runs it;
+//     loop, subshell or group around the call, as NAME "$@", the lane and
+//     its libraries define that function once as the reader parses them,
+//     and they name it nowhere but in that definition and those calls,
+//     whether their text is read as spelled or with each \ newline joined,
+//     so no trap, eval, other call or other definition runs it;
 //   - the function's body runs ((BASH_VERSINFO[0] >= 4)) && return 0 before
 //     the exec, spelled so, with no redirection, nothing after it in its
 //     list, and no branch, loop, subshell or group around it, so under a
@@ -1621,11 +1626,11 @@ func (ends *laneEnds) rerunning(reading laneReading, bodies []string, rooted boo
 						calls = append(calls, at)
 					}
 				}
-				mentions, definitions := 0, 0
+				spelled, joined := 0, 0 // the mentions as the text spells them, and with each \ newline joined as bash joins it
 				for _, text := range bodies {
-					mentions, definitions = mentions+laneMentions(text, name), definitions+len(laneDefinition(name).FindAllStringIndex(text, -1))
+					spelled, joined = spelled+laneMentions(text, name), joined+laneMentions(strings.ReplaceAll(text, "\\\n", ""), name)
 				}
-				ends.tops[key][index].reruns = len(calls) > 0 && definitions == 1 && mentions == definitions+len(calls) &&
+				ends.tops[key][index].reruns = len(calls) > 0 && ends.defined[name] == 1 && spelled == ends.defined[name]+len(calls) && joined == spelled &&
 					slices.ContainsFunc(ends.tops[key][:index], func(top laneTop) bool { return top.guard }) &&
 					settled(slices.Delete(slices.Clone(ends.tops[key]), index, index+1)) &&
 					!slices.ContainsFunc(calls, func(at int) bool {
@@ -1791,12 +1796,6 @@ func laneMentions(text, name string) int {
 			count++
 		}
 	}
-}
-
-// laneDefinition matches a definition of a function name, as name() or
-// function name spells it.
-func laneDefinition(name string) *regexp.Regexp {
-	return regexp.MustCompile(`(?:^|[^A-Za-z0-9_:.-])(?:function[ \t]+` + regexp.QuoteMeta(name) + `|` + regexp.QuoteMeta(name) + `[ \t]*\(\s*\))`)
 }
 
 // laneEventPatch is a command that runs only in a branch of each of some
