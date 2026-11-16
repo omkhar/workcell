@@ -28,6 +28,7 @@
 --last
 --local-provider
 --model
+--network-only
 --no-alt-screen
 --no-color
 --no-daemon
@@ -44,6 +45,7 @@
 --summary
 --thread-source
 --title
+--trust
 --uncommitted
 --version
 --with-access-token
