@@ -34,7 +34,7 @@ endpoints = [
   "github.com:443",
 ]
 
-# Classifies tests/fixtures/flags/copilot.txt as reject_unsafe_copilot_args decides.
+# Classifies tests/fixtures/flags/copilot.txt as the copilot policy in internal/providerpolicy decides.
 # other_commands names the remaining top-level commands.
 [flags]
 subcommands = [

@@ -78,7 +78,9 @@ if grep -Fq -- "copilot-github-token.txt" "${TMP_DIR}/session.stdout"; then
 fi
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
-sed -i.bak "s|^ROOT_DIR=.*|ROOT_DIR=\"${ROOT_DIR}\"|" "${WORKCELL_FUNCTIONS_COPY}"
+# The copy is not scripts/workcell, so its entry guard would refuse it: give
+# it the tree root that this script already uses instead.
+sed -i.bak -e "s|^workcell_entry_root=.*|workcell_entry_root=\"${ROOT_DIR}\"|" -e "s|^ROOT_DIR=.*|ROOT_DIR=\"${ROOT_DIR}\"|" "${WORKCELL_FUNCTIONS_COPY}"
 rm -f "${WORKCELL_FUNCTIONS_COPY}.bak"
 bash -lc '
   set -euo pipefail

@@ -1051,101 +1051,11 @@ go_verify_citools workcell-config-safety "${ROOT_DIR}" || exit 1
 # internal/metadatautil/codex_config_test.go.
 go_verify_citools workcell-codex-toml-invariants "${ROOT_DIR}" || exit 1
 
-# Codex subcommand-namespace COMPLETENESS check.
-#
-# reject_unsafe_codex_args (runtime/container/provider-policy.sh) is deny-by-default
-# over the SUBCOMMAND NAMESPACE: a first bare token that is NOT a known subcommand is
-# permitted as [PROMPT] text, so the design only holds if EVERY real subcommand is
-# classified ALLOW or DENY. This asserts every name in the checked-in fixture
-# (tests/fixtures/codex-subcommands.txt, derived from the clap `enum Subcommand`
-# source) appears as an EXACT case label in the gate. That subset check is VACUOUS on
-# a STALE fixture (a CODEX_VERSION bump that skips fixture regen leaves the new name
-# absent and uncompared), so the fixture carries a `# codex-version:` stamp this check
-# FIRST asserts EQUALS the Dockerfile `ARG CODEX_VERSION` before the subset check.
-CODEX_POLICY_FILE="${ROOT_DIR}/runtime/container/provider-policy.sh"
-CODEX_SUBCOMMAND_FIXTURE="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"
-CODEX_DOCKERFILE="${ROOT_DIR}/runtime/container/Dockerfile"
-
-# Bind the fixture to the pinned Codex version: parse `ARG CODEX_VERSION=<v>` from the
-# Dockerfile and the `# codex-version: <v>` stamp from the fixture, assert EQUAL, and
-# fail closed with regeneration instructions on mismatch.
-codex_dockerfile_version="$(
-  sed -n 's/^ARG CODEX_VERSION=\([^ ]*\).*/\1/p' "${CODEX_DOCKERFILE}" | head -n 1
-)"
-codex_fixture_version="$(
-  sed -n 's/^#[[:space:]]*codex-version:[[:space:]]*\([^[:space:]]*\).*/\1/p' "${CODEX_SUBCOMMAND_FIXTURE}" | head -n 1
-)"
-if [[ -z "${codex_dockerfile_version}" ]]; then
-  echo 'Codex subcommand completeness check FAILED: could not parse ARG CODEX_VERSION from runtime/container/Dockerfile.' >&2
-  exit 1
-fi
-if [[ -z "${codex_fixture_version}" ]]; then
-  echo 'Codex subcommand completeness check FAILED: tests/fixtures/codex-subcommands.txt is missing the "# codex-version: <v>" stamp.' >&2
-  echo 'Add a "# codex-version: <CODEX_VERSION>" header line matching runtime/container/Dockerfile ARG CODEX_VERSION.' >&2
-  exit 1
-fi
-if [[ "${codex_dockerfile_version}" != "${codex_fixture_version}" ]]; then
-  echo "Codex subcommand completeness check FAILED: fixture is stale versus the pinned Codex version." >&2
-  echo "  Dockerfile ARG CODEX_VERSION: ${codex_dockerfile_version}" >&2
-  echo "  fixture # codex-version:      ${codex_fixture_version}" >&2
-  echo 'A CODEX_VERSION bump MUST regenerate tests/fixtures/codex-subcommands.txt from the new pinned' >&2
-  echo 'codex-rs/cli/src/main.rs clap "enum Subcommand" source (include paren-less unit variants, aliases,' >&2
-  echo 'and hidden "#[clap(hide = true)]" tokens), reclassify any new name in runtime/container/provider-policy.sh,' >&2
-  echo "and bump the fixture's \"# codex-version:\" stamp to ${codex_dockerfile_version}. Otherwise a new upstream" >&2
-  echo 'subcommand falls through the deny-by-default gate as prompt text.' >&2
-  exit 1
-fi
-
-# Extract the exact case-label tokens the gate classifies. The case statement lives
-# strictly between the unique `DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE` comment
-# and the unique `Not a known subcommand` fall-through comment. Inside that window
-# only case-LABEL lines (`<tok>[ | <tok> ...])`, possibly `\`-continued) are parsed;
-# comments and case bodies are skipped, so prose cannot be mistaken for a match.
-codex_classified_tokens="$(
-  awk '
-    /DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE/ { inblock = 1; next }
-    inblock && /Not a known subcommand/ { inblock = 0 }
-    !inblock { next }
-    /^[[:space:]]*#/ { next }
-    {
-      label = $0
-      # A case label either ends the pattern with `)` or is a `\`-continued
-      # multi-line pattern (the ALLOW and DENY sets span two lines). Keep only
-      # the pattern portion up to `)`; for a continuation line there is no `)`
-      # yet, so keep the whole line. Lines with neither `)` nor a trailing `\`
-      # are case bodies/actions and are skipped.
-      if (label ~ /\)/) {
-        sub(/\).*/, "", label)
-      } else if (label !~ /\\[[:space:]]*$/) {
-        next
-      }
-      gsub(/[|\\]/, " ", label)
-      m = split(label, toks, /[ \t]+/)
-      for (i = 1; i <= m; i++) {
-        t = toks[i]
-        if (t ~ /^[a-z][a-z-]*$/) {
-          print t
-        }
-      }
-    }
-  ' "${CODEX_POLICY_FILE}" | sort -u
-)"
-
-codex_fixture_tokens="$(
-  grep -vE '^[[:space:]]*(#|$)' "${CODEX_SUBCOMMAND_FIXTURE}" | sort -u
-)"
-
-# Every fixture (pinned real) subcommand must be classified. `comm -23` prints
-# fixture names absent from the classified set: any output => an unclassified
-# subcommand that would leak through as prompt text.
-codex_unclassified="$(comm -23 <(printf '%s\n' "${codex_fixture_tokens}") <(printf '%s\n' "${codex_classified_tokens}"))"
-if [[ -n "${codex_unclassified}" ]]; then
-  echo 'Codex subcommand completeness check FAILED: the pinned Codex exposes subcommand(s) that reject_unsafe_codex_args does not classify as ALLOW or DENY.' >&2
-  echo 'Unclassified (would leak through the deny-by-default gate as prompt text):' >&2
-  printf '  %s\n' "${codex_unclassified}" >&2
-  echo 'Classify each in runtime/container/provider-policy.sh (ALLOW or DENY set) or, if a pin bump removed it, regenerate tests/fixtures/codex-subcommands.txt from the pinned clap enum Subcommand source.' >&2
-  exit 1
-fi
+# The Codex subcommand-namespace completeness check is the Go test
+# TestCodexSubcommandFixtureIsClassified in internal/providerpolicy: the
+# "# codex-version:" stamp of tests/fixtures/codex-subcommands.txt must equal
+# the Dockerfile ARG CODEX_VERSION, and each fixture name must be in exactly
+# one of the Codex allow, GUI or deny subcommand sets.
 
 # scripts/workcell host-launcher hardening invariants: run_host_colima
 # restores the real host HOME, the shebang clears the host environment,

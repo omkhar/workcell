@@ -59,8 +59,8 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
 - `~/.codex/rules/` is read-only by default; it becomes a session-local writable
   copy only in explicit lower-assurance cases (see
   [../../docs/adapter-control-planes.md](../../docs/adapter-control-planes.md#codex-rules-mutability)).
-- `reject_unsafe_codex_args` denies unapproved subcommands by default. See
-  `runtime/container/provider-policy.sh`.
+- The Codex policy in `internal/providerpolicy/codex.go` denies unapproved
+  subcommands by default.
 - The allowed set contains the reviewed read-only and session commands. The
   fixture `tests/fixtures/codex-subcommands.txt` binds this set to the Codex
   version.

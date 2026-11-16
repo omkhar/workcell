@@ -18,16 +18,17 @@
 # token NOT on this list is Codex's [PROMPT] argument, not a command.
 #
 # The completeness check asserts EVERY name below is classified by
-# reject_unsafe_codex_args (runtime/container/provider-policy.sh) as ALLOW, GUI-gated
+# the Codex policy (internal/providerpolicy/codex.go) as ALLOW, GUI-gated
 # (app-server, AGENT_UI=gui only), or DENY. A pin bump MUST regenerate this list from
 # the new clap Subcommand enum (unit variants, aliases, hidden tokens), classify any
-# new name in provider-policy.sh, AND bump the stamp above, or the build stays red.
+# new name in internal/providerpolicy/codex.go, AND bump the stamp above, or the build stays red.
 # The reviewed provider updater advances the stamp automatically only when the exact
 # authoritative token set is unchanged; any addition or removal fails before pin
 # mutation and requires an explicit classification change.
 # A reviewed classification may land ahead of the pin: a name that the next
-# release adds is listed here once provider-policy.sh classifies it, so the
-# updater's exact-set check passes for that release and advances the stamp.
+# release adds is listed here once internal/providerpolicy/codex.go classifies
+# it, so the updater's exact-set check passes for that release and advances the
+# stamp.
 # One name per line; blank/`#` lines are ignored.
 agents
 tcp-tunnel
