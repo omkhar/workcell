@@ -623,9 +623,14 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 		case strings.HasPrefix(text, "("):
 			push("(")
 			leading = text == "("
+			if text != "(" && strings.HasSuffix(words[0].syntax, ")") {
+				pop(")") // a subshell of one word, as (echo) is
+			}
 		case text == "function" && len(words) > 1:
 			words = words[1:]
-		case slices.Contains([]string{"then", "do", "!", "time"}, text):
+		case text == "coproc" && len(words) > 2 && words[2].text == "{", text == "time" && len(words) > 1 && words[1].text == "-p":
+			words = words[1:] // the coproc's name or time's -p
+		case slices.Contains([]string{"then", "do", "!", "time", "coproc"}, text):
 		default:
 			leading = false
 			continue
@@ -638,7 +643,7 @@ func (nesting *laneNesting) read(args []word) (scopes []int, lost bool) {
 			push("(") // an array assignment whose elements run on to a later line
 		}
 	}
-	if len(words) > 0 && !words[len(words)-1].quoted && strings.HasSuffix(words[len(words)-1].text, ")") && innermost() == "(" {
+	if len(words) > 0 && strings.HasSuffix(words[len(words)-1].syntax, ")") && innermost() == "(" {
 		pop(")")
 	}
 	return scopes, nesting.lost
