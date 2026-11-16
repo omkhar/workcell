@@ -87,13 +87,16 @@ func TestLaneScriptsReadsTheRootAndShadowingFunctions(t *testing.T) {
 	cases := []struct {
 		name, lane, library, want string // want: wired, unwired, or an error substring
 	}{
-		// A readonly root holds: bash refuses every later write to it, so a
-		// computed name needs no reading. Without readonly it may be moved.
+		// A readonly root holds: bash refuses every later write to it.
+		// Without readonly it may be moved. A computed name fails closed
+		// all the same, since it may name BASH_CMDS, PATH or ENV.
 		{"root not readonly", laneAssignedRoot + "\n" + gate, "", "unwired"},
 		{"root made readonly by declare -r", laneAssignedRoot + "\ndeclare -r ROOT_DIR\n" + gate, "", "wired"},
 		{"readonly root after another line", laneAssignedRoot + "\n:\nreadonly ROOT_DIR\n" + gate, "", "unwired"},
-		{"arithmetic computed name without readonly", laneAssignedRoot + "\nv=ROOT_; [[ 1 -eq ${v}DIR=1 ]]\n" + gate, "", "unwired"},
-		{"arithmetic computed name with readonly", laneRoot + "\nv=ROOT_; [[ 1 -eq ${v}DIR=1 ]]; (( ${v}DIR=1 )); a[${v}DIR=1]=x\n" + gate, "", "wired"},
+		{"arithmetic computed name without readonly", laneAssignedRoot + "\nv=ROOT_; [[ 1 -eq ${v}DIR=1 ]]\n" + gate, "", "assigns in arithmetic"},
+		{"arithmetic computed name in a test", laneRoot + "\nv=BASH_; [[ 1 -eq ${v}ENV=1 ]]\n" + gate, "", "assigns in arithmetic"},
+		{"arithmetic computed name", laneRoot + "\nv=BASH_; (( ${v}ENV=1 ))\n" + gate, "", "assigns in arithmetic"},
+		{"arithmetic computed name in a subscript", laneRoot + "\nv=BASH_; a[${v}ENV=1]=x\n" + gate, "", "assigns in arithmetic"},
 		{"wait -p computed name with readonly", laneRoot + "\nv=ROOT_; sleep 0 & wait -n -p \"${v}DIR\"\n" + gate, "", "wired"},
 		{"library rebinds a positional with readonly", laneRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\nclaim x OUT\n" + gate, "claim() {\n  local v=\"$2\"\n  v=${n}DIR\n  shift\n  read -r v <<<\"$v\"\n  printf -v \"${v}\" /tmp\n}\n", "wired"},
 		{"canonical root", laneRoot + "\n" + gate, "", "wired"},
@@ -268,9 +271,11 @@ func TestLaneScriptsBoundsPathologicalText(t *testing.T) {
 	}
 }
 
-// Where this reader cannot read eval or trap text, or reads past its work
-// bound, it fails closed with an error that names it, and a definition in the
-// text an eval or a trap runs, quoted or escaped eval included, counts.
+// Where this reader cannot model what a lane or a library runs it fails
+// closed, with an error that names the construct: deep or unread eval and trap
+// text, a quoted eval, a definition in a trap action, a program variable or a
+// forwarder that may run a builtin, a child shell that reads its own ROOT_DIR,
+// a computed or startup write, and builtins that change what bash runs.
 func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 	t.Parallel()
 	const (
@@ -278,13 +283,14 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		source  = "source \"${ROOT_DIR}/scripts/lib/l.sh\"\n"
 		library = "scripts/lib/l.sh"
 		shadows = "defines a function named"
+		named   = "name this reader cannot spell"
 	)
 	cases := []struct {
 		name, lane string
 		files      map[string]string
 		want       string // wired, unwired, or an error substring
 	}{
-		{"chained command eval", strings.Repeat("command eval ", 32) + "true\n" + gate, nil, "nests eval or trap text"},
+		{"chained command eval", strings.Repeat("command eval ", 32) + "true\n" + gate, nil, "nests eval, trap or child shell text"},
 		{"eval within a command eval", "command eval command eval 'bash() { :; }'\n" + gate, nil, shadows},
 		{"eval after then", "if true; then eval 'bash() { :; }'; fi\n" + gate, nil, shadows},
 		{"escaped eval", "\\eval 'bash() { :; }'\n" + gate, nil, shadows},
@@ -294,8 +300,31 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		{"builtin trap -- defines a function", "builtin trap -- 'bash() { :; }' ERR\n" + gate, nil, shadows},
 		{"library trap defines a function", source + gate, map[string]string{library: "trap 'bash() { :; }' DEBUG\n"}, shadows},
 		{"exit trap action of an expansion", "trap 'rm -f \"${tmp}\"' EXIT\n" + gate, nil, "wired"},
+		{"child shell reads the root from a heredoc", "bash <<'EOS'\n\"${ROOT_DIR}/scripts/gate.sh\"\nEOS\n", nil, "child shell"},
+		{"child shell -s reads the root", "bash -s <<<'\"${ROOT_DIR}/scripts/gate.sh\"'\n", nil, "child shell"},
+		{"child shell -c reads the root", "bash -c '\"${ROOT_DIR}/scripts/gate.sh\"'\n", nil, "child shell"},
+		{"child shell reads the root from /dev/stdin", "bash /dev/stdin <<'EOS'\n\"${ROOT_DIR}/scripts/gate.sh\"\nEOS\n", nil, "child shell"},
+		{"PS4", "PS4='$(bash() { :; })'\nset -x\n" + gate, nil, "assigns PS4"},
+		{"library PS4", source + gate, map[string]string{library: "f() { local PS4=x; }\n"}, "assigns PS4"},
+		{"BASHOPTS", "BASHOPTS=extdebug bash \"${ROOT_DIR}/scripts/gate.sh\"\n", nil, "assigns BASHOPTS"},
+		{"arithmetic assigns PATH with spaces", "(( PATH = 1 ))\n" + gate, nil, "assigns in arithmetic"},
+		{"process substitution", "read -r x < <(printf '%s\\n' \"${y}\")\n" + gate, nil, "wired"},
+		{"library sets PATH", source + gate, map[string]string{library: "PATH=/tmp/x:$PATH\n"}, "assigns PATH"},
+		{"library exports BASH_ENV", source + gate, map[string]string{library: "f() { export BASH_ENV=/tmp/e.sh; }\n"}, "assigns BASH_ENV"},
+		{"lane sets PATH", "PATH=/tmp/x:$PATH\n" + gate, nil, "unwired"},
+		{"lane sets PATH for one command", "PATH=/tmp/x " + gate, nil, "unwired"},
+		{"lane runs env PATH=", "env PATH=/tmp/x " + gate, nil, "unwired"},
+		{"lane reads ENV", "read -r ENV </dev/null\n" + gate, nil, "unwired"},
+		{"root length keeps the root", "echo \"${#ROOT_DIR}\"\n" + gate, nil, "wired"},
+		{"long word without a group keeps the root", "echo " + strings.Repeat("x", 5000) + "\n" + gate, nil, "wired"},
 		{"long library substitution", source + gate, map[string]string{library: "x=\"$(printf %s " + strings.Repeat("y", 5000) + ")\"\n"}, "wired"},
+		{"long word with a group", "echo {a,b}" + strings.Repeat("x", 5000) + "\n" + gate, nil, "brace expansion is too large"},
+		{"groups that make more words than the bound", "echo " + strings.Repeat("{a,b}", 9) + "\n" + gate, nil, "brace expansion is too large"},
+		{"many groups in a short word", "echo " + strings.Repeat("{a,b}", 800) + "\n" + gate, nil, "brace expansion is too large"},
+		{"a long quoted run of continued lines in a library", source + gate, map[string]string{library: "x=\"" + strings.Repeat("a \\\n", 20000) + "b\"\n"}, "than this reader parses"},
+		{"hash table in a process substitution", "cat <(hash -p /bin/true bash; bash \"${ROOT_DIR}/scripts/gate.sh\")\n", nil, "unreadable"},
 		{"a long quoted run of continued lines", "echo \"" + strings.Repeat("a \\\n", 20000) + "b\"\n" + gate, nil, "than this reader parses"},
+		{"deeply nested library definitions", source + gate, map[string]string{library: strings.Repeat("f() {\n", 5000) + strings.Repeat("}\n", 5000)}, "nests function definitions deeper"},
 		{"a long run of continued lines", "echo " + strings.Repeat("a \\\n", 20000) + "b\n" + gate, nil, "wired"},
 		{"eval after a redirection", ">/dev/null eval 'bash() { :; }'\n" + gate, nil, shadows},
 		{"eval after a redirection and its target", "> /dev/null 2>&1 eval 'bash() { :; }'\n" + gate, nil, shadows},
@@ -304,6 +333,9 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 		// eight chained ones reads the long tail 2^8 times, past the bound.
 		{"eight chained command evals", strings.Repeat("command eval ", 8) + "true " + strings.Repeat("x", 4000) + "\n" + gate, nil, "wired"},
 		{"calls that fan out past the reader's bound", fanOut(20) + gate, nil, "past the shell reader's work bound"},
+		// Twenty nested definitions are shallow, but each nested body is read
+		// again on its own, so a wide innermost body runs past the bound.
+		{"shallow nested library definitions over a wide body", source + gate, map[string]string{library: strings.Repeat("f() {\n", 20) + "echo " + strings.Repeat("x", 100000) + "\n" + strings.Repeat("}\n", 20)}, "nests function definitions deeper"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -352,9 +384,13 @@ func TestLaneScriptsFailsClosedOnUnmodeledText(t *testing.T) {
 // exceed the ratio.
 func TestLaneScriptsWorkGrowsLinearly(t *testing.T) {
 	shapes := map[string]func(n int) (lane, library string){
-		"command eval":    func(n int) (string, string) { return strings.Repeat("command eval ", n) + "true\n", "" },
-		"then eval":       func(n int) (string, string) { return strings.Repeat("if true; then eval ", n) + "true\n", "" },
-		"trap in trap":    func(n int) (string, string) { return strings.Repeat("trap ", n) + "true DEBUG\n", "" },
+		"command eval":       func(n int) (string, string) { return strings.Repeat("command eval ", n) + "true\n", "" },
+		"then eval":          func(n int) (string, string) { return strings.Repeat("if true; then eval ", n) + "true\n", "" },
+		"trap in trap":       func(n int) (string, string) { return strings.Repeat("trap ", n) + "true DEBUG\n", "" },
+		"nested definitions": func(n int) (string, string) { return strings.Repeat("f() {\n", n) + strings.Repeat("}\n", n), "" },
+		"nested library definitions": func(n int) (string, string) {
+			return "source \"${ROOT_DIR}/scripts/lib/l.sh\"\n", strings.Repeat("f() {\n", n) + strings.Repeat("}\n", n)
+		},
 		"continued lines": func(n int) (string, string) { return "echo " + strings.Repeat("a \\\n", n) + "b\n", "" },
 		"quoted continued lines": func(n int) (string, string) {
 			return "echo \"" + strings.Repeat("a \\\n", n) + "b\"\n", ""

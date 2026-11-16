@@ -379,19 +379,37 @@ check when it can change what a later command runs. An `alias` does this, and
 so does a source of a path outside `${ROOT_DIR}`. A program name that the check
 cannot read also fails. The check does not follow a symlink to a lane file.
 
-A `${ROOT_DIR}/` path counts only in a lane script that sets `ROOT_DIR` to the
-repository root first and makes it `readonly` on the next line. Bash then
-keeps that value for the rest of the lane. Any other line that names `ROOT_DIR`
-cancels the path, in the lane or in a library that the lane sources. A
-workflow step does not set `ROOT_DIR`, so the path does not count there. A
-program name without a slash runs from `PATH`, so it does not count.
+`internal/metadatautil/lane_reading.go` reads what a lane and each library it
+sources may run. It reads the literal text of an `eval`, a `trap` action and a
+child shell's program. It reads them at most eight deep, after any leading
+redirection.
 
-A lane also fails when it defines a function with the name of a shell, a
-wrapper, a path, `trap` or `eval`. The function then runs in place of the
-program. It fails when it names `BASH_CMDS` or `BASH_ALIASES`, or runs an
-`eval` of an expansion. See `internal/metadatautil/lane_scripts.go`. A sourced
-library fails the same way when it runs an `alias`, a `hash -p` or a source
-that the check cannot read.
+A `${ROOT_DIR}/` path counts only in a lane script that sets `ROOT_DIR` to the
+repository root first and makes it `readonly` on the next line. Bash then keeps
+that value for the rest of the lane. Any other line that names `ROOT_DIR`
+cancels the path, in the lane or in a library that the lane sources. A line
+that only reads it, as `${ROOT_DIR}` or `${#ROOT_DIR}` do, keeps it. A workflow
+step does not set `ROOT_DIR`, so the path does not count there.
+
+A child shell does not inherit the pinned value, so a child whose own program
+names `ROOT_DIR` stops the check. A program name without a slash runs from
+`PATH`, so it does not count. A lane that assigns `PATH`, `BASH_ENV` or `ENV`
+counts no path, and a library that assigns one stops the check
+(`internal/metadatautil/lane_reading.go`). A write to `PS4`, `SHELLOPTS` or
+`BASHOPTS` stops it in a lane or a library.
+
+A lane also stops the check when it defines a function with the name of a
+shell, a wrapper, a path, `trap` or `eval`. The definition counts in the lane's
+own text and in the text that an `eval` or a `trap` runs. The function then
+runs in place of the program (`internal/metadatautil/lane_reading.go`). A lane
+that names `BASH_CMDS` or `BASH_ALIASES` stops the check. So does an assignment
+in arithmetic to a name an expansion spells, or to `PATH`.
+
+Each reader charges its parsing to a bound linear in the length of the text.
+Text past a bound stops the check with an error, so no lane costs more than a
+fixed multiple of its size (`internal/metadatautil/lane_scripts_test.go`). A
+lane that overwrites a library or a gate before it runs it is outside this
+model. So is arithmetic on a value that the lane reads at run time.
 
 A sentence that claims enforcement needs such a span within two lines, and
 it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger
