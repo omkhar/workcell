@@ -278,6 +278,8 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 	var exitActions []string // the action of each EXIT trap
 	opened := map[int]bool{} // whether the command that opens each scope runs whenever its body does
 	var own *laneOwnCase     // the lane script's cases on its own $1
+
+	var covers []laneEventPatch // each command only an event case's branch runs
 	if site.lane {
 		own = &laneOwnCase{}
 	}
@@ -397,9 +399,13 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 				case !each.conditional: // where the reader lost track, any command may run
 					named, branch := cases.condition(function)
 					top.placed = lost || !slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] != "{" || !opened[scope] })
-					top.may = lost || !named && !slices.ContainsFunc(inside, func(scope int) bool {
+					free := lost || !slices.ContainsFunc(inside, func(scope int) bool {
 						return !opened[scope] || nesting.kinds[scope] == "(" || nesting.kinds[scope] == "if" && !heading[scope]
 					})
+					top.may = free && len(named) == 0
+					if free && len(named) > 0 && !slices.ContainsFunc(named, func(c *laneCase) bool { return !c.event }) {
+						covers = append(covers, laneEventPatch{key, len(ends.tops[key]), named}) // an event case may run a branch on every event
+					}
 					if top.may && branch != nil { // a branch on $1 runs only where a caller selects it
 						own.patches, top.may = append(own.patches, laneOwnPatch{key, len(ends.tops[key]), branch}), false
 					}
@@ -543,6 +549,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 		for _, patch := range own.patches {
 			ends.tops[patch.key][patch.index].may = !safe || !patch.branch.literal || patch.branch.selected
 		}
+	}
+	for _, patch := range covers {
+		ends.tops[patch.key][patch.index].may = !slices.ContainsFunc(patch.cases, func(c *laneCase) bool { return !c.covered() })
 	}
 	reading.unsetsListed()
 	outputs, err := reading.outputs(calls, stable)
@@ -1472,6 +1481,15 @@ type laneEnds struct {
 	functions map[string]bool
 	memo      map[string]bool
 	forked    map[string]bool // the bodies that pipe or background a group or compound command, whose returns this reader does not place
+}
+
+// laneEventPatch is a command that runs only in a branch of each of some
+// event cases: its top's place among its body's tops, and the cases. It may
+// end the body when each case is covered.
+type laneEventPatch struct {
+	key   string
+	index int
+	cases []*laneCase
 }
 
 // laneTop is one command a body runs, and where it stands.

@@ -388,17 +388,42 @@ inherits that `env`, so the step does not count it.
 
 The same holds after a step whose body names `GITHUB_PATH`, since that may put
 another bash first on `PATH`. The one write that does not count adds the job's
-own `${RUNNER_TEMP}/bin`. It holds after a `uses` step too, unless a reviewed
-list names its action (`internal/metadatautil/lane_scripts.go`). Any other
-action may set these names or add to `PATH`.
+own `${RUNNER_TEMP}/bin` after a `sha256sum -c`. It must use the exact
+`install` and `tar` forms of the release and security workflows. It counts only where no
+`env` sets `RUNNER_TEMP`, the body does not assign it and no `cd` comes first.
+
+Any other mention of `${RUNNER_TEMP}/bin` counts. So does a `::add-path::` or
+`::set-env` workflow command and a write to the runner's
+`_runner_file_commands` files. An `env` that sets
+`ACTIONS_ALLOW_UNSECURE_COMMANDS` counts as one that sets `PATH`.
+
+The check reads a step's writes by redirection, `tee`, `sed -i`, `cp`, `mv`,
+`install`, `ln`, `rsync`, `dd`, `curl -o`, `wget -O`, `tar -C` and `unzip -d`
+(`internal/metadatautil/lane_steps.go`). A write to a literal `scripts/` path
+makes that step and each later step resolve no path, since it may rewrite a
+gate. So does a write to a target the check cannot spell, which may also reach
+the file that `GITHUB_PATH` names.
+
+It holds after a `uses` step too, unless a reviewed list names its action at
+its exact commit (`internal/metadatautil/lane_scripts.go`). Any other action
+may set these names or add to `PATH`. A reviewed checkout of another
+`repository` counts as well. So does a download or cache restore to a path in
+`${{ runner.temp }}/bin`, or outside both `${{ runner.temp }}` and `dist/`.
 
 A step whose body holds a `${{` expression resolves no path, since GitHub pastes
 its value into the text before bash reads it. No step of a job with a
 `container` resolves a path, since its image sets the env and the bash.
 
-A step or job whose `if` names no context and calls no status function, as
-`if: false` does, may never run, so it resolves no path. A workflow whose `on`
-lists no event, or only `workflow_dispatch`, resolves none either.
+Some steps and jobs never run on a run whose steps pass, so they resolve no
+path. One such has an `if` that, with its quoted strings dropped, names no
+context and calls no status function, as `if: false` does. The same holds for
+an `if` that calls `failure()` or `cancelled()` with no `!` in front. So does
+one with a bare `false` or `0` as an operand of `&&`.
+
+A workflow resolves no path either when no event starts it on its own. That
+holds with no `on`, or an `on` that lists no event or only
+`workflow_dispatch`. It holds for one that only `workflow_call` starts, unless
+a workflow that an event starts on its own calls it.
 
 A gate counts only where its failure fails the lane
 (`internal/metadatautil/lane_gates.go`). It must run under errexit, be the
@@ -425,11 +450,20 @@ word and no `;&` or `;;&` runs it (`internal/metadatautil/lane_cases.go`). Its
 subject must also be a value that no lane fixes.
 
 One such value is a variable that a step's own `env` sets to a `github` value
-that differs from run to run. These are the `sha`, the `head_ref` and the
-`event_name` of a workflow that more than one event starts. A value such as
-`github.repository` stays the same, so it does not count. The step must name
-that variable only to expand it. The other is the `$1` of a CI job script, read
-against the arguments that each step passes.
+that differs from run to run. These are the `sha` and the `event_name`. The
+`head_ref` does not count, since the author of a pull request picks it. A value
+such as `github.repository` stays the same, so it does not count either. The
+step must name that variable only to expand it. Neither counts after an
+earlier step of the job writes `GITHUB_ENV`.
+
+The `event_name` counts only in a workflow that no `workflow_call` starts,
+under a job and step whose `if` does not name it. Its patterns are read
+against the events that start the workflow on their own, so not
+`workflow_dispatch`. A `case` whose exiting branches name each of those events
+always exits.
+
+The other such value is the `$1` of a CI job script, read against the
+arguments that each step passes.
 
 The check reads those arguments as a `case` loop on `$1` reads them. Each
 argument it reaches must be a literal word that a literal branch matches before
@@ -448,13 +482,11 @@ word, `$LINENO` or a function's `$1`. So does every branch of a `case` that an
 `eval` or a child shell opens, and every command of a function a branch
 defines.
 
-Some residuals remain. The patterns of a `case` on `github.event_name` may
-match every event that starts the workflow. The check takes a step's own `env`
-to win over a value that an earlier step writes to `GITHUB_ENV`. It does not
-work out an `if` that names a context, which may still never hold.
-
-The check does not model file writes either. So a step may put another `bash`
-on `PATH`, or rewrite a gate, before a later step runs it. It does not follow a
+Some residuals remain. The check does not work out an `if` that names a
+context, which may still never hold. It counts a workflow as started whatever
+branch, path or schedule filter its `on` sets, though a filter may never match.
+It does not read a write that an interpreter such as `python`, `perl` or `awk`
+makes, so such a step may still rewrite a gate. It does not follow a
 status that a lane saves and returns later, as through `PIPESTATUS` or `$?`, and
 it reads `if ! X; then exit 1; fi` as a condition. So a gate that either guards
 counts as run but not gating.

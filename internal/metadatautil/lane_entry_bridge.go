@@ -97,6 +97,21 @@ func laneBridgeRead(text, root string) string {
 	return strings.ReplaceAll(strings.Join(lines, "\n"), "workcell_entry_root", "ROOT_DIR")
 }
 
+// laneClaudeMentionPin is the sha256 of main's claude-mention.yml, whose
+// laneClaudeMentionStep exits 0 in a case on the event name, which this
+// reader reads as an exit that always runs; lint-ratchets-3h judges the case
+// and wires nothing there. Other bytes are read as any workflow is. The merge
+// of lint-ratchets-3h removes this pin.
+const (
+	laneClaudeMentionPin  = "303045f66dc83361f44dac921cfc6f92d58b924e88a34331caacd6254f1d8029"
+	laneClaudeMentionStep = "Refuse pull requests the owner did not open here"
+)
+
+// laneStepPinned reports whether step name of workflow rel is the pinned step.
+func laneStepPinned(rel string, file []byte, name string) bool {
+	return rel == ".github/workflows/claude-mention.yml" && name == laneClaudeMentionStep && laneBridgeDigest(string(file)) == laneClaudeMentionPin
+}
+
 // laneBridgeDigest returns the hex sha256 of text.
 func laneBridgeDigest(text string) string {
 	sum := sha256.Sum256([]byte(text))

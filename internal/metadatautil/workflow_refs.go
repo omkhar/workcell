@@ -72,12 +72,14 @@ func setsStartupFile(env map[string]string) bool {
 }
 
 // startupEnvName reports a name bash reads from its env to set options or to
-// import a function, or PATH, which picks the bash itself, in any case, which
-// only fails closed. A name with an expression may be any of these.
+// import a function, or PATH, which picks the bash itself, or
+// ACTIONS_ALLOW_UNSECURE_COMMANDS, under which the runner reads ::add-path::
+// and ::set-env from a step's output, in any case, which only fails closed. A
+// name with an expression may be any of these.
 func startupEnvName(name string) bool {
 	name = strings.ToUpper(name)
-	return name == "SHELLOPTS" || name == "BASHOPTS" || name == "PATH" || strings.HasPrefix(name, "BASH_FUNC_") ||
-		strings.Contains(name, "%%") || strings.Contains(name, "${{")
+	return name == "SHELLOPTS" || name == "BASHOPTS" || name == "PATH" || name == "ACTIONS_ALLOW_UNSECURE_COMMANDS" ||
+		strings.HasPrefix(name, "BASH_FUNC_") || strings.Contains(name, "%%") || strings.Contains(name, "${{")
 }
 
 // githubHostedPosix matches the GitHub-hosted labels a shell-less step surely runs bash on.
