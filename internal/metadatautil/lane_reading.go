@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -256,7 +257,7 @@ type laneEval struct {
 // command, as written, of the lane, its libraries and the text each runs, for
 // the functions they define, the variables they write and the child shells
 // they run, and then each call as EveryShellCommand reads it.
-func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSite) (startup bool, err error) {
+func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSite, cut *int) (startup bool, err error) {
 	bodies := []string{body}
 	reading := laneReading{read: map[string]bool{}, functions: map[string]bool{}, writes: map[string][]laneWrite{}, split: map[string]bool{}, computed: map[string]string{}, pinned: pinned,
 		local: map[string][]laneWrite{}, global: map[string][]laneWrite{}, spelled: map[string]bool{}, programs: map[string][]int{}, open: map[string]bool{},
@@ -334,6 +335,9 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 		case named:
 			return false, fmt.Errorf("lane wiring is unreadable: a %s names localvar_inherit, under which a local keeps a value no write this reader counts assigned", where)
 		}
+		if at == 0 {
+			*cut = len(scanned) // past the last command, until a command that may end the shell with 0 comes first
+		}
 		arithmetic = append(arithmetic, newLaneArithmetic(len(text)))
 		nesting := laneNesting{next: &numbered}
 		locals := map[int]map[string]int{} // the names each function body declares local, in order
@@ -345,7 +349,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 			reads: regexp.MustCompile(`\$\{?(?:` + strings.Join(append(slices.Clone(site.reads), "GITHUB_EVENT_NAME"), "|") + `)\b`)}
 		eventIfs := map[int]*laneEventIf{} // each if scope's branches on the event name
 		ifDepths := map[int]*laneEventIf{} // the if open at each depth of scopes
-		for _, each := range scanned {
+		for index, each := range scanned {
 			args := each.args
 			held := len(nesting.scopes) // the scopes open before the command
 			scopes, lost, run, parsed := cases.read(each, &nesting)
@@ -377,7 +381,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 			if len(scopes) > 0 {
 				last := scopes[len(scopes)-1]
 				_, seen := opened[last]
-				if !seen && firstOf(words) == "if" {
+				if !seen && (firstOf(words) == "if" || firstOf(words) == "elif") { // an elif's heading is read as an if's, which runs whenever the if does
 					heading[last] = true
 				}
 				if firstOf(words) == "then" {
@@ -432,7 +436,22 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 			}
 			if len(command) > 0 && !each.nested { // each command the body runs, which may follow one that ends it
 				inside := scopes[slices.Index(scopes, function)+1:]
-				top := laneTop{command: command}
+				top := laneTop{command: command, index: index, level: len(inside) == 0}
+				top.child = !lost && slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] == "(" })
+				if site.lane { // a lane script's command, read as a rerun or a forward only where its words are exactly one
+					top.program, top.script = laneRerunProgram(run)
+					top.forward = len(run) == 2 && run[1].raw == `"$@"`
+				}
+				if alone && command[0] != "return" { // it may run in this shell, unless the reader proves its branch never runs
+					never, branch := cases.never(function, lost)
+					top.possible = lost || !never && !slices.ContainsFunc(inside, func(scope int) bool {
+						state := eventIfs[scope]
+						return nesting.kinds[scope] == "(" || state != nil && state.tests == 0 && state.never()
+					})
+					if branch != nil {
+						own.patches = append(own.patches, laneOwnPatch{key, len(ends.tops[key]), branch, true})
+					}
+				}
 				switch {
 				case !alone:
 				case command[0] == "return": // a body may return before any exit after it, but not from a subshell
@@ -443,7 +462,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 					top.placed = lost || !slices.ContainsFunc(inside, func(scope int) bool { return nesting.kinds[scope] != "{" || !opened[scope] })
 					var ifs []*laneEventIf // the ifs on the event name whose branch the command runs in
 					for _, scope := range inside {
-						if state := eventIfs[scope]; !lost && state != nil && state.tests == 0 && (state.judged || state.opaque) {
+						if state := eventIfs[scope]; state != nil && state.tests == 0 && (state.judged || state.opaque) {
 							ifs, state.ran = append(ifs, state), append(state.ran, state.taken...)
 						}
 					}
@@ -455,7 +474,7 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 						covers = append(covers, laneEventPatch{key, len(ends.tops[key]), named, ifs}) // a branch on the event name may run on every event
 					}
 					if top.may && branch != nil { // a branch on $1 runs only where a caller selects it
-						own.patches, top.may = append(own.patches, laneOwnPatch{key, len(ends.tops[key]), branch}), false
+						own.patches, top.may = append(own.patches, laneOwnPatch{key, len(ends.tops[key]), branch, false}), false
 					}
 				}
 				if ends.tops[key] == nil {
@@ -598,7 +617,12 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 	if own != nil {
 		safe := own.safe(site.callers)
 		for _, patch := range own.patches {
-			ends.tops[patch.key][patch.index].may = !safe || !patch.branch.literal || patch.branch.selected
+			top := &ends.tops[patch.key][patch.index]
+			if run := !safe || !patch.branch.literal || patch.branch.selected; patch.possible {
+				top.possible = top.possible && run
+			} else {
+				top.may = run
+			}
 		}
 	}
 	for _, patch := range covers {
@@ -671,6 +695,10 @@ func laneReadable(body string, libraries []laneLibrary, pinned bool, site laneSi
 	}
 	if key, command := ends.ended(); command != nil {
 		return false, fmt.Errorf("lane wiring is unreadable: a %s runs %q, which ends the lane's shell before a later command", key, strings.Join(command, " "))
+	}
+	ends.rerunning(reading, bodies, pinned && path.Dir(site.script) == "scripts")
+	if at := slices.IndexFunc(ends.tops["0"], func(top laneTop) bool { return top.possible && !top.reruns && ends.possibly(top.command) }); at >= 0 {
+		*cut = ends.tops["0"][at].index
 	}
 	for _, action := range exitActions {
 		if laneMasks(action, bodied, map[string]bool{}) {
@@ -1535,6 +1563,219 @@ type laneEnds struct {
 	forked    map[string]bool // the bodies that pipe or background a group or compound command, whose returns this reader does not place
 }
 
+// rerunning marks each lane script's exec that reruns the script, which
+// mayEnd and the cut then read as no end: the shell runs the script again
+// from its first line, with the same $0, arguments and directory, so each
+// command the reader reads after the exec runs in the new shell whenever the
+// exec runs, as validate-repo.sh's call workcell_require_modern_privileged_bash
+// "$@" reruns it under a newer bash. It marks an exec "$P" -p "$S" "$@" of a
+// program P that is a bash and a script S that is the lane, where:
+//
+//   - P is an absolute path whose last part is bash, or one expansion of a
+//     variable that bashProgram proves holds such a path or the empty
+//     string, whose exec fails the shell;
+//   - S is $0, or one expansion of a variable that scriptVariable proves
+//     holds $0 or, where rooted, ${ROOT_DIR}/scripts/${0##*/};
+//   - the lane never names BASH_ARGV0, so $0 is the script, and -p keeps the
+//     new shell from reading functions, BASH_ENV or SHELLOPTS it inherits;
+//   - the exec stands in the lane's body with no branch, loop, subshell or
+//     group around it, or in a function the lane's body calls, with no
+//     branch, loop, subshell or group around the call, as NAME "$@", and the
+//     lane and its libraries name that function nowhere but in those calls
+//     and its definitions, so no trap, eval or other call runs it;
+//   - no command before the exec or the call in the lane's body, nor any
+//     command of that function's body but the exec, as settled reads it,
+//     may change the lane's arguments, $0 or directory.
+//
+// A step's text runs under the options of the step's shell, which a new
+// bash does not take, so only a lane script's exec reruns.
+func (ends *laneEnds) rerunning(reading laneReading, bodies []string, rooted bool) {
+	if slices.ContainsFunc(bodies, func(text string) bool {
+		named, opaque := namesShellVariable(text, laneArgvZero.MatchString)
+		return named || opaque
+	}) {
+		return
+	}
+	settled := func(tops []laneTop) bool {
+		return !slices.ContainsFunc(tops, func(top laneTop) bool { return !top.child && !ends.settled(top.command, map[string]bool{}) })
+	}
+	for _, key := range ends.order {
+		for index, top := range ends.tops[key] {
+			name, function := strings.CutPrefix(key, "function ")
+			caller := map[bool]string{true: name}[function]
+			if top.program == "" || !reading.bashProgram(top.program, caller) || !reading.scriptVariable(top.script, top.program, caller, bodies, rooted) {
+				continue
+			}
+			switch {
+			case key == "0":
+				ends.tops[key][index].reruns = top.level && settled(ends.tops[key][:index])
+			case function:
+				var calls []int
+				for at, call := range ends.tops["0"] {
+					if call.command[0] == name {
+						calls = append(calls, at)
+					}
+				}
+				mentions, definitions := 0, 0
+				for _, text := range bodies {
+					mentions, definitions = mentions+laneMentions(text, name), definitions+len(laneDefinition(name).FindAllStringIndex(text, -1))
+				}
+				ends.tops[key][index].reruns = len(calls) > 0 && mentions == definitions+len(calls) &&
+					settled(slices.Delete(slices.Clone(ends.tops[key]), index, index+1)) &&
+					!slices.ContainsFunc(calls, func(at int) bool {
+						call := ends.tops["0"][at]
+						return !call.forward || !call.level || !settled(ends.tops["0"][:at])
+					})
+			}
+		}
+	}
+}
+
+// settled reports whether a command leaves the lane's arguments, its $0 and
+// its directory as they were: no cd, pushd, popd, shift, set with an operand
+// other than an option, eval, trap, call of a function the lane or a library
+// defines, or source of a file other than a library whose own commands are
+// settled. An exec leaves all three as they were or ends the shell. A
+// command word with an expansion that the reader reads names a program, which
+// runs in a child, as each command a subshell holds does.
+func (ends *laneEnds) settled(command []string, seen map[string]bool) bool {
+	if library, fixed := laneLibraryPath(command); fixed && ends.sourced[library] > 0 {
+		key := fmt.Sprint(ends.sourced[library])
+		if seen[key] {
+			return true
+		}
+		seen[key] = true
+		return !slices.ContainsFunc(ends.tops[key], func(top laneTop) bool { return !top.child && !ends.settled(top.command, seen) })
+	}
+	words := unwrapBuiltins(command)
+	switch {
+	case len(words) == 0:
+		return true
+	case words[0] == "set":
+		named := false // the operand after an option that ends in o is the option's name
+		for _, word := range words[1:] {
+			if named {
+				named = false
+				continue
+			}
+			if !laneSetOption.MatchString(word) {
+				return false
+			}
+			named = strings.HasSuffix(word, "o")
+		}
+		return true
+	}
+	return !slices.Contains([]string{"cd", "pushd", "popd", "shift", "eval", "trap", "source", "."}, words[0]) && !ends.functions[words[0]]
+}
+
+// laneSetOption is a set operand that sets or clears options, as -euo does.
+var laneSetOption = regexp.MustCompile(`^[-+][A-Za-z]+$`)
+
+// laneArgvZero names BASH_ARGV0, whose write sets $0.
+var laneArgvZero = regexp.MustCompile(`BASH_ARGV0`)
+
+// laneRerunProgram returns the program and script words of exec "$P" -p
+// "$S" "$@", with P an absolute path or one quoted expansion of a variable
+// and S $0 or one quoted expansion of a variable, as the line spells each
+// word, or "".
+func laneRerunProgram(run []word) (program, script string) {
+	if len(run) != 5 || run[0].raw != "exec" || run[2].raw != "-p" || run[4].raw != `"$@"` ||
+		!laneBashPath.MatchString(run[1].raw) && !laneQuotedVariable.MatchString(run[1].raw) ||
+		run[3].raw != `"$0"` && !laneQuotedVariable.MatchString(run[3].raw) {
+		return "", ""
+	}
+	return run[1].raw, run[3].raw
+}
+
+// laneRerunScript is each value the script variable of a rerun may hold:
+// $0, the lane script, or the script of $0's name in the root's scripts
+// directory, which is the lane when the lane stands there.
+var laneRerunScript = []string{"$0", "${ROOT_DIR}/scripts/${0##*/}"}
+
+// scriptVariable reports whether a script word laneRerunProgram returns
+// names the lane script where the caller's body runs it: "$0", or a
+// variable no command may read before the lane assigns it, which no unset
+// bares and no expansion computes a name of, every write of which
+// programWrites finds holds a laneRerunScript value, and which every line of
+// the lane and its libraries that names it spells as local S="$0",
+// S="${ROOT_DIR}/scripts/${0##*/}" or the exec, so each value is the
+// expansion it reads as. The second value is the lane only where rooted: the
+// lane stands in the scripts directory of a ROOT_DIR the reader pins.
+func (reading laneReading) scriptVariable(script, program, caller string, bodies []string, rooted bool) bool {
+	if script == `"$0"` {
+		return true
+	}
+	match := laneQuotedVariable.FindStringSubmatch(script)
+	name := match[1] + match[2]
+	spelled := []string{"local " + name + `="$0"`, "exec " + program + " -p " + script + ` "$@"`}
+	if rooted {
+		spelled = append(spelled, name+`="`+laneRerunScript[1]+`"`)
+	}
+	for _, text := range bodies {
+		for line := range strings.Lines(text) {
+			if laneMentions(line, name) > 0 && !slices.Contains(spelled, strings.TrimSpace(line)) { // each spelling names it once
+				return false
+			}
+		}
+	}
+	reading.caller = caller
+	writes := reading.programWrites(strings.Trim(script, `"`), name)
+	return len(writes) > 0 && len(reading.computed) == 0 && !reading.inherited[name] && !reading.bares(name) &&
+		!slices.ContainsFunc(writes, func(write laneWrite) bool { return !slices.Contains(laneRerunScript, write.value) })
+}
+
+// laneBashPath is an absolute path whose last part is bash.
+var laneBashPath = regexp.MustCompile(`^/(?:[A-Za-z0-9_.+-]+/)*bash$`)
+
+// laneQuotedVariable is one quoted expansion of a variable, as "${name}" or
+// "$name", and captures its name.
+var laneQuotedVariable = regexp.MustCompile(`^"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"$`)
+
+// bashProgram reports whether a word laneRerunProgram returns runs a bash
+// where the caller's body, a function's or the lane's, runs it: an absolute
+// path whose last part is bash, or a variable expandedReason proves a
+// program, which no unset bares and every write of which programWrites
+// finds is literal, with such a path or the empty string as its value.
+func (reading laneReading) bashProgram(program, caller string) bool {
+	if laneBashPath.MatchString(program) {
+		return true
+	}
+	match := laneQuotedVariable.FindStringSubmatch(program)
+	text := strings.Trim(program, `"`)
+	reading.caller = caller
+	return reading.expandedReason(text) == "" && !reading.bares(match[1]+match[2]) &&
+		!slices.ContainsFunc(reading.programWrites(text, match[1]+match[2]), func(write laneWrite) bool {
+			return !write.literal || write.unset || write.names || write.integer || write.parameter ||
+				write.value != "" && !laneBashPath.MatchString(write.value)
+		})
+}
+
+// laneMentions counts the places a text spells a name as a word of its own,
+// with no name character on either side.
+func laneMentions(text, name string) int {
+	count := 0
+	inName := func(at int) bool {
+		return at >= 0 && at < len(text) && (strings.ContainsRune("_-:.", rune(text[at])) || text[at] >= '0' && text[at] <= '9' ||
+			text[at] >= 'A' && text[at] <= 'Z' || text[at] >= 'a' && text[at] <= 'z')
+	}
+	for at := 0; ; at++ {
+		found := strings.Index(text[at:], name)
+		if found < 0 {
+			return count
+		}
+		at += found
+		if !inName(at-1) && !inName(at+len(name)) {
+			count++
+		}
+	}
+}
+
+// laneDefinition matches a definition of a function name, as name() or
+// function name spells it.
+func laneDefinition(name string) *regexp.Regexp {
+	return regexp.MustCompile(`(?:^|[^A-Za-z0-9_:.-])(?:function[ \t]+` + regexp.QuoteMeta(name) + `|` + regexp.QuoteMeta(name) + `[ \t]*\(\s*\))`)
+}
+
 // laneEventPatch is a command that runs only in a branch of each of some
 // event cases and ifs on the event name: its top's place among its body's
 // tops, the cases and the ifs. It may end the body when each is covered.
@@ -1547,10 +1788,18 @@ type laneEventPatch struct {
 
 // laneTop is one command a body runs, and where it stands.
 type laneTop struct {
-	command []string
-	placed  bool // any exit there ends the body: no branch, loop, subshell or group behind || or && holds it
-	may     bool // an exit there that may end with 0 ends the body: no if branch, subshell, group behind || or &&, or case branch of a lane option holds it
-	certain bool // a return there runs whenever the body runs
+	command  []string
+	index    int    // its place among the commands laneScanCases reads in its body's text
+	placed   bool   // any exit there ends the body: no branch, loop, subshell or group behind || or && holds it
+	may      bool   // an exit there that may end with 0 ends the body: no if branch, subshell, group behind || or &&, or case branch of a lane option holds it
+	possible bool   // an exit there may end the lane's shell: it runs in this shell, and the reader cannot prove its branch never runs
+	certain  bool   // a return there runs whenever the body runs
+	level    bool   // no branch, loop, subshell or group holds it in its body
+	child    bool   // a subshell holds it, as $(cd x) does
+	program  string // the program word of a lane script's exec "$P" -p "$0" "$@", as laneRerunProgram reads it
+	script   string // the script word of that exec
+	forward  bool   // a lane script's call NAME "$@", with no other word
+	reruns   bool   // it reruns the lane script, as rerunning proves
 }
 
 // ended returns where a body runs a command that ends the lane's shell, and
@@ -1619,6 +1868,40 @@ func (ends *laneEnds) ends(key string, zero bool) bool {
 			continue
 		}
 		if zero && top.may && ends.ending(top.command, true) || !zero && top.placed && (ends.ending(top.command, false) || ends.ending(top.command, true)) {
+			ends.memo[memo] = true
+			break
+		}
+	}
+	return ends.memo[memo]
+}
+
+// possibly reports whether a command may end the lane's shell with 0, as
+// ending reads it with zero, where a function it calls or a library it
+// sources ends it, as mayEnd reads that body.
+func (ends *laneEnds) possibly(command []string) bool {
+	if library, fixed := laneLibraryPath(command); fixed && ends.sourced[library] > 0 {
+		return ends.mayEnd(fmt.Sprint(ends.sourced[library]))
+	}
+	if ends.functions[command[0]] {
+		return ends.mayEnd("function " + command[0])
+	}
+	return ends.ending(command, true)
+}
+
+// mayEnd reports whether a body may end the lane's shell with 0: before any
+// return that always runs, it runs a command that may run, as possible
+// says, and that possibly reads as one that may end it so.
+func (ends *laneEnds) mayEnd(key string) bool {
+	memo := "possibly " + key
+	if ended, seen := ends.memo[memo]; seen {
+		return ended
+	}
+	ends.memo[memo] = false // a body that calls itself ends nothing more by that call
+	for _, top := range ends.tops[key] {
+		if top.command[0] == "return" && top.certain {
+			break
+		}
+		if top.command[0] != "return" && top.possible && !top.reruns && ends.possibly(top.command) {
 			ends.memo[memo] = true
 			break
 		}

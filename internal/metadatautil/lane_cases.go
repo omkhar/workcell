@@ -70,9 +70,10 @@ type laneOwnBranch struct {
 // laneOwnPatch is a command that ends the lane only when a caller selects its
 // branch: its top's place among its body's tops, and its branch.
 type laneOwnPatch struct {
-	key    string
-	index  int
-	branch *laneOwnBranch
+	key      string
+	index    int
+	branch   *laneOwnBranch
+	possible bool // it marks whether the top may run, not whether it ends the body
 }
 
 // lanePatternEnds reports whether a word ends a pattern list: its last byte is
@@ -237,12 +238,39 @@ func (cases *laneCases) condition(function int) (named []*laneCase, own *laneOwn
 	return named, own
 }
 
+// never reports whether a command in function never runs, as far as the
+// cases it is in show: it runs in a branch of an event case whose patterns
+// name none of the events that may reach the step, read as bash reads them
+// with nocasematch on or off. It also returns the own branch the command is
+// in, if any. Where the reader is blind or lost track, it proves nothing.
+func (cases *laneCases) never(function int, lost bool) (never bool, own *laneOwnBranch) {
+	if cases.blind || lost {
+		return false, nil
+	}
+	for _, c := range cases.open {
+		if c.function != function {
+			continue
+		}
+		never = never || c.cond && c.event && !slices.ContainsFunc(c.pieces, func(piece string) bool { return laneMatchesEvent(cases.events, piece) })
+		if c.branch != nil {
+			own = c.branch
+		}
+	}
+	return never, own
+}
+
+// laneMatchesEvent reports whether a literal pattern or test word may match
+// one of events, as it does with nocasematch on, which ignores case.
+func laneMatchesEvent(events []string, literal string) bool {
+	return slices.ContainsFunc(events, func(event string) bool { return strings.EqualFold(event, literal) })
+}
+
 // covered reports whether the branches of an event case that run a command
 // name every event that starts the workflow, so on each run the case runs
 // one of them, as if it had no condition. A branch that runs any command
 // counts, which only fails closed.
 func (c *laneCase) covered() bool {
-	return c.event && !slices.ContainsFunc(c.cases.events, func(event string) bool { return !slices.Contains(c.ran, event) })
+	return c.event && !slices.ContainsFunc(c.cases.events, func(event string) bool { return !laneMatchesEvent(c.ran, event) })
 }
 
 // shift records a shift or a set of the lane's own parameters, outside a
@@ -411,6 +439,12 @@ type laneEventIf struct {
 	test   func(string) bool
 }
 
+// never reports whether the branch the reader is in never runs: each heading
+// so far is one test of the event name, and the branch takes no event.
+func (state *laneEventIf) never() bool {
+	return !state.opaque && state.judged && len(state.taken) == 0
+}
+
 // covered reports whether the if runs a branch that runs a command on each
 // event, so each command in its branches runs as if it had no condition. An
 // if whose headings read the event name some other way always counts.
@@ -437,7 +471,9 @@ func (cases *laneCases) heading(state *laneEventIf, words []word, first bool) {
 		return
 	}
 	literal, not := t[3], t[2] == "!="
-	state.test = func(event string) bool { return event == literal != not }
+	state.test = func(event string) bool { // == may match with nocasematch on, and != may hold with it off
+		return not && event != literal || !not && strings.EqualFold(event, literal)
+	}
 }
 
 // branch starts the branch that a then, or with otherwise an else, opens. A

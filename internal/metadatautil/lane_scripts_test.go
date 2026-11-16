@@ -29,6 +29,11 @@ const (
 	laneEntryRoot    = `ROOT_DIR="${workcell_entry_root}"`
 )
 
+// rerunRooted defines f, which reruns the lane under a newer bash from the
+// root's scripts directory, as canonical-build-env.sh's
+// workcell_require_modern_privileged_bash does.
+const rerunRooted = "f() {\n  local s=\"$0\"\n  s=\"${ROOT_DIR}/scripts/${0##*/}\"\n  if [[ -n \"${OLD:-}\" ]]; then\n    exec /usr/local/bin/bash -p \"${s}\" \"$@\"\n  fi\n}\n"
+
 // laneEntry returns the entry guard of the script at rel, with its stop.
 func laneEntry(rel string) string {
 	return strings.Replace(metadatautil.LaneEntryGuard, "REL", rel, 1) + "\n" + laneEntryStop
@@ -188,6 +193,10 @@ func TestLaneScriptsReadsTheRootAndShadowingFunctions(t *testing.T) {
 		// A ( inside an array in a substitution closes nothing outside it.
 		{"array in a substitution before an arithmetic test", laneRoot + "\ny=\"$(a=(/) && echo x)\"\nX=0\nif [[ \"${X}\" -eq 1 ]]; then echo; fi\n" + gate, "", "wired"},
 		{"array in a subshell before an arithmetic test", laneRoot + "\n( a=(/) b=1 )\nX=0\nif [[ \"${X}\" -eq 1 ]]; then echo; fi\n" + gate, "", "wired"},
+		// A rerun from the root's scripts directory is the lane where the lane stands there.
+		{"rerun of the script of $0's name under the root", laneRoot + "\n" + rerunRooted + "f \"$@\"\n" + gate, "", "wired"},
+		{"rerun of the script of $0's name under the root spelled by a quoted root", laneRoot + "\n" + strings.Replace(rerunRooted, `s="${ROOT_DIR}`, `s='${ROOT_DIR}'"`, 1) + "f \"$@\"\n" + gate, "", "unwired"},
+		{"rerun of the script of $0's name under the root after a write of another value", laneRoot + "\n" + strings.Replace(rerunRooted, "  if", "  s=/tmp/x.sh\n  if", 1) + "f \"$@\"\n" + gate, "", "unwired"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -853,7 +862,7 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 		{"f() { case \"$1\" in -h) exit 0;; esac; }; f x", ended}, {"case x in\n  x)\n    exit 1\n    ;;\nesac", "wired"},
 		{"case x in a | b | x) exit 0;; esac", ended}, {"case x in\n  a) : ;;\n  x | y)\n    exit 0\n    ;;\nesac", ended},
 		{"f() {\n  case \"$1\" in\n    -h | --help)\n      exit 0\n      ;;\n  esac\n}\nf -h", ended},
-		{"[ -n \"${x:-}\" ] || { echo x; exit 0; }", "wired"}, {"eval ': ; exec true'", ended}, {"g() { for i in 1; do exit 0; done; }; eval g", ended},
+		{"[ -n \"${x:-}\" ] || { echo x; exit 0; }", "unwired"}, {"eval ': ; exec true'", ended}, {"g() { for i in 1; do exit 0; done; }; eval g", ended},
 		{"g() { exit 1; }; eval g", ended}, {"exec 3<<<\"x\"", "wired"},
 		{"f() { false && return 0; exit 0; }; f", ended}, {"f() {\n  for i in; do\n    return\n  done\n  exit 0\n}\nf", ended},
 		{"f() {\n" + nineGuards + "  v0=\"$1\"\n  eval \"exec ${v0}<&-\"\n}\nf 1", spelling + "$"},
@@ -881,9 +890,9 @@ func TestLaneScriptsReadsLocalNumbersGuardsAndEvals(t *testing.T) {
 			writeLaneTree(t, root, map[string]string{"scripts/validate-repo.sh": "#!/bin/bash\nset -euo pipefail\n" + laneRoot + "\n" + tc.lane + "\nbash \"${ROOT_DIR}/scripts/gate.sh\"\n",
 				"scripts/lib/l.sh": tc.library, "scripts/ci/job-x.sh": "true\n", ".github/workflows/w.yml": "name: w\n"})
 			got, err := metadatautil.LaneScripts(root)
-			if tc.want == "wired" {
-				if err != nil || !slices.Contains(got, "scripts/gate.sh") {
-					t.Fatalf("LaneScripts() = %q, %v, want scripts/gate.sh wired", got, err)
+			if tc.want == "wired" || tc.want == "unwired" {
+				if err != nil || slices.Contains(got, "scripts/gate.sh") != (tc.want == "wired") {
+					t.Fatalf("LaneScripts() = %q, %v, want scripts/gate.sh %s", got, err, tc.want)
 				}
 				return
 			}
@@ -916,7 +925,7 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 	type row struct{ name, on, top, job, steps, lane, library, validate, caller, want string }
 	mention := "    if: >-\n      github.actor_id == '22666538' &&\n      github.event.sender.id == 22666538 &&\n      (\n        (\n          github.event_name == 'issue_comment' &&\n          github.event.comment.user.id == 22666538 &&\n          (!github.event.issue.pull_request || github.event.issue.user.id == 22666538) &&\n          contains(github.event.comment.body, '@claude')\n        ) ||\n        (\n          github.event_name == 'issues' &&\n          github.event.issue.user.id == 22666538 && contains(github.event.issue.body, '@claude')\n        )\n      )\n"
 	rows := []row{
-		{name: "an env value from the github context", steps: gated("case \"${E}\" in\n  issues)\n    exit 0\n    ;;\n  issue_comment) ;;\n  *)\n    exit 1\n    ;;\nesac", event), want: "wired"},
+		{name: "an env value from the github context", steps: gated("case \"${E}\" in\n  issues)\n    exit 0\n    ;;\n  issue_comment) ;;\n  *)\n    exit 1\n    ;;\nesac", event), want: "ungated"},
 		{name: "a literal pattern list", steps: gated("case $E in a | b) exit 0;; esac", event), want: "wired"},
 		{name: "a pattern list opened by (", steps: gated("case $E in (a) exit 0;; esac", event), want: "wired"},
 		{name: "a later literal pattern list", steps: gated("case $E in y) :;; x | z) exit 0;; esac", event), want: "wired"},
@@ -1045,7 +1054,7 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a step whose if is a false expression", steps: gated("true", "        if: ${{ 1 == 2 }}\n"), want: "unwired"},
 		row{name: "a job whose if is false", job: "    if: ${{ false }}\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a step whose if calls a status function", steps: gated("true", "        if: always()\n"), want: "wired"},
-		row{name: "a step whose if reads a context", steps: gated("true", "        if: github.event_name == 'push'\n"), want: "wired"},
+		row{name: "a step whose if reads a context", on: "[push, issues]", steps: gated("true", "        if: github.event_name == 'push'\n"), want: "wired"},
 		row{name: "a workflow only a run by hand starts", on: "workflow_dispatch", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a workflow no event starts", on: "{}", steps: step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a workflow a push or a run by hand starts", on: "[push, workflow_dispatch]", steps: step("./scripts/gate.sh", ""), want: "wired"},
@@ -1151,11 +1160,11 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "an event case under a job if that names the event", on: "[push, pull_request]", job: "    if: github.event_name == 'push'\n", steps: gated("case \"$E\" in\n  push) exit 0 ;;\nesac", event), want: ended},
 		row{name: "an event case under a step if that names the event", on: "[push, pull_request]", steps: gated("case \"$E\" in\n  push) exit 0 ;;\nesac", "        if: github.event_name == 'push'\n"+event), want: ended},
 		row{name: "an event case whose exiting branches cover every event", steps: gated("case $E in issues) exit 0;; issue_comment) exit 0;; esac", event), want: ended},
-		row{name: "an event case whose exiting branches name as many events, not each", steps: gated("case $E in issues) exit 0;; push) exit 0;; esac", event), want: "wired"},
+		row{name: "an event case whose exiting branches name as many events, not each", steps: gated("case $E in issues) exit 0;; push) exit 0;; esac", event), want: "ungated"},
 		row{name: "an event case after a step that writes GITHUB_ENV", steps: step("echo \"E=x\" >> \"$GITHUB_ENV\"", "") + gated("case $E in issues) exit 0;; issue_comment) ;; *) exit 1;; esac", event), want: ended},
 		row{name: "an event case of a workflow another workflow may call", on: "[issues, issue_comment, workflow_call]", steps: gated("case $E in issues) exit 0;; issue_comment) ;; *) exit 1;; esac", event), want: ended},
 		// The events that reach a step are those of the job's and the step's if, read with the event name fixed to each.
-		row{name: "an event case under the job if of the Claude mention workflow", on: "[issue_comment, issues]", job: mention, steps: gated("case \"${E}\" in\n  issues)\n    echo x\n    exit 0\n    ;;\n  issue_comment) ;;\n  *)\n    exit 1\n    ;;\nesac\nif [[ -z \"${X}\" ]]; then\n  exit 0\nfi", event), want: "wired"},
+		row{name: "an event case under the job if of the Claude mention workflow", on: "[issue_comment, issues]", job: mention, steps: gated("case \"${E}\" in\n  issues)\n    echo x\n    exit 0\n    ;;\n  issue_comment) ;;\n  *)\n    exit 1\n    ;;\nesac\nif [[ -z \"${X}\" ]]; then\n  exit 0\nfi", event), want: "ungated"},
 		row{name: "an event case under a job if of a negated group", on: "[push, pull_request]", job: "    if: ${{ !(github.event_name == 'push') }}\n", steps: gated("case $E in push) exit 0;; esac", event), want: "wired"},
 		row{name: "an event case under a job if of a negated group that leaves its event", on: "[push, pull_request]", job: "    if: ${{ !(github.event_name == 'pull_request') }}\n", steps: gated("case $E in push) exit 0;; esac", event), want: ended},
 		row{name: "an event case under a job if that contradicts itself", on: "[push, pull_request]", job: "    if: (github.event_name == 'push' && github.ref == 'a' && github.ref == 'b') || github.event_name == 'pull_request'\n", steps: gated("case $E in pull_request) exit 0;; esac", event), want: ended},
@@ -1163,17 +1172,17 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "an event case under a job if of ! before a comparison", on: "[push, pull_request]", job: "    if: ${{ !github.event_name == 'push' }}\n", steps: gated("case $E in push) exit 0;; esac", event), want: ended},
 		row{name: "an event case under a job if that calls contains on the event name", on: "[push, pull_request]", job: "    if: contains(github.event_name, 'pull')\n", steps: gated("case $E in push) exit 0;; esac", event), want: ended},
 		row{name: "an event case under a job if that formats the event name", on: "[push, pull_request]", job: "    if: format('{0}', github.event_name) == 'pull_request'\n", steps: gated("case $E in push) exit 0;; esac", event), want: ended},
-		row{name: "an event case under a step if that leaves two events", on: "[push, pull_request, issues]", steps: gated("case $E in push) exit 0;; issues) ;; esac", "        if: github.event_name != 'pull_request'\n"+event), want: "wired"},
+		row{name: "an event case under a step if that leaves two events", on: "[push, pull_request, issues]", steps: gated("case $E in push) exit 0;; issues) ;; esac", "        if: github.event_name != 'pull_request'\n"+event), want: "ungated"},
 		row{name: "an event case under a step if that leaves one event", on: "[push, issues]", steps: gated("case $E in push) exit 0;; issues) ;; esac", "        if: github.event_name != 'issues'\n"+event), want: ended},
 		// A bash if on the event name reads the same events.
 		row{name: "a bash if on the event name under a job if that names the event", on: "[push, pull_request]", job: "    if: github.event_name == 'push'\n", steps: gated("if [[ \"$E\" == \"push\" ]]; then exit 0; fi", event), want: ended},
-		row{name: "a bash if and elif on the event name as the Claude mention workflow tests it", steps: gated("if [[ \"${E}\" == issues ]]; then\n  exit 0\nelif [[ \"${E}\" != issue_comment ]]; then\n  exit 1\nfi", event), want: "wired"},
+		row{name: "a bash if and elif on the event name as the Claude mention workflow tests it", steps: gated("if [[ \"${E}\" == issues ]]; then\n  exit 0\nelif [[ \"${E}\" != issue_comment ]]; then\n  exit 1\nfi", event), want: "ungated"},
 		row{name: "a bash if and else on the event name that both exit", steps: gated("if [[ $E == issues ]]; then exit 0; else exit 0; fi", event), want: ended},
 		row{name: "a bash if and elif whose exiting branches take each event", steps: gated("if [[ $E == issues ]]; then\n  exit 0\nelif [[ $E == issue_comment ]]; then\n  echo x\nfi", event), want: ended},
-		row{name: "a bash if and elif after a heading that names no event", steps: gated("if [[ $E == issues ]]; then exit 0; elif [[ -n $X ]]; then :; else exit 0; fi", event), want: "wired"},
-		row{name: "a bash if and elifs whose event tests take each event before a heading that names none", steps: gated("if [[ $E == issues ]]; then exit 0; elif [[ $E == issue_comment ]]; then :; elif [[ -n $X ]]; then :; fi", event), want: "wired"},
+		row{name: "a bash if and elif after a heading that names no event", steps: gated("if [[ $E == issues ]]; then exit 0; elif [[ -n $X ]]; then :; else exit 0; fi", event), want: "ungated"},
+		row{name: "a bash if and elifs whose event tests take each event before a heading that names none", steps: gated("if [[ $E == issues ]]; then exit 0; elif [[ $E == issue_comment ]]; then :; elif [[ -n $X ]]; then :; fi", event), want: "ungated"},
 		row{name: "a bash else if after an if on the event name at the same depth", steps: gated("if [[ $E == issues ]]; then if [[ $E != nothing ]]; then :; fi; else if [[ $E == nothing ]]; then exit 0; fi; fi", event), want: "wired"},
-		row{name: "a bash exit in an elif heading on the event name", steps: gated("if [[ $E == issues ]]; then :; elif exit 0; [[ $E == issue_comment ]]; then :; fi", event), want: "wired"},
+		row{name: "a bash exit in an elif heading on the event name", steps: gated("if [[ $E == issues ]]; then :; elif exit 0; [[ $E == issue_comment ]]; then :; fi", event), want: ended},
 		row{name: "a bash test on the event name that closes [ with ]]", steps: gated("if [ \"$E\" = issues ]]; then exit 0; fi", event), want: ended},
 		row{name: "a bash if on the event name whose test has more words", steps: gated("if [ \"$E\" = issues ] ]; then exit 0; fi", event), want: ended},
 		row{name: "a bash if that matches the event name to a pattern", steps: gated("if [[ $E =~ issues ]]; then exit 0; fi", event), want: ended},
@@ -1217,6 +1226,80 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		row{name: "a step after one that writes a relative path after a cd", steps: step("cd scripts\necho exit > gate.sh", "") + step("./scripts/gate.sh", ""), want: "unwired"},
 		row{name: "a workflow only a run by hand starts that a workflow calls", on: "workflow_dispatch", steps: step("./scripts/gate.sh", ""), caller: "on: push\njobs:\n  c:\n    uses: ./.github/workflows/w.yml\n", want: "unwired"},
 	)
+	// An exit that may end the body with 0, which the reader cannot prove never runs, ends it for wiring: a later script runs but gates nothing.
+	iffed := func(cond, text string) string {
+		return "      - if: " + cond + "\n        " + strings.TrimPrefix(gated(text, event), "      - ")
+	}
+	other := "  first:\n    runs-on: ubuntu-latest\n    if: github.event_name == 'push'\n    steps:\n      - run: true\n"
+	maybe := "f() { [[ -z \"${X:-}\" ]] || exit 0; }\n"
+	sha := event + "          S: ${{ github.sha }}\n"
+	rerun := "f() {\n  local b=\"\"\n  for b in /opt/homebrew/bin/bash /usr/local/bin/bash; do\n    [[ -x \"${b}\" ]] || continue\n    if [[ -n \"${OLD:-}\" ]]; then\n      exec \"${b}\" -p \"$0\" \"$@\"\n    fi\n  done\n}\n"
+	rows = append(rows,
+		row{name: "an event case under a step if that ors in a context value", on: "[push, pull_request]", steps: iffed("github.event_name == 'pull_request' || github.base_ref != ''", "case \"$E\" in pull_request) exit 0;; esac"), want: "ungated"},
+		row{name: "an event case under a step if that ors in a payload value", on: "[push, pull_request]", steps: iffed("github.event_name == 'pull_request' || github.event.pull_request", "case \"$E\" in pull_request) exit 0;; esac"), want: "ungated"},
+		row{name: "an event case under a step if whose && binds first", on: "[push, pull_request]", steps: iffed("github.event_name == 'push' || github.event_name == 'pull_request' && github.event.pull_request.number < 0", "case \"$E\" in push) exit 0;; esac"), want: "ungated"},
+		row{name: "an event case under a job if on the head ref", on: "[push, pull_request]", job: "    if: github.head_ref != '' && github.event_name != 'merge_group'\n", steps: gated("case \"$E\" in pull_request) exit 0;; esac", event), want: "ungated"},
+		row{name: "an event case whose env a merge key brings", on: "[push, pull_request]", steps: "      - env: &e\n          E: ${{ github.event_name }}\n        run: echo hi\n      - if: github.event_name == 'push' || github.event.pull_request.number < 0\n        env:\n          <<: *e\n        run: |\n          case \"$E\" in push) exit 0;; esac\n          ./scripts/gate.sh\n", want: "ungated"},
+		row{name: "an event case on an event that reaches the step", on: "[push, pull_request]", steps: gated("case \"$E\" in push) exit 0;; esac", event), want: "ungated"},
+		row{name: "an event case under a job if that leaves the other event, read without case", on: "[push, pull_request]", job: "    if: github.event_name != 'PUSH'\n", steps: gated("case \"$E\" in push) exit 0;; esac", event), want: "wired"},
+		row{name: "a lane script whose exit 0 a function runs", steps: runs(""), lane: "f() { [[ -z \"${X:-}\" ]] || exit 0; }\nf\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose exit 0 a library runs", steps: runs(""), lane: jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\n\"${ROOT_DIR}/scripts/gate.sh\"\n", library: "[[ -z \"${X:-}\" ]] || exit 0\n", want: "ungated"},
+		row{name: "a lane script whose gate a function runs after an exit 0", steps: runs(""), lane: "g() { ./scripts/gate.sh; }\n[[ -z \"${X:-}\" ]] || exit 0\ng\n", want: "ungated"},
+		row{name: "a lane script whose exit 0 a subshell holds", steps: runs(""), lane: "( exit 0 )\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script that execs its gate", steps: runs(""), lane: "exec ./scripts/gate.sh\n", want: "wired"},
+		// A step no automatic event reaches wires nothing, nor one whose job needs another.
+		row{name: "a step whose if names an event that never starts the workflow", on: "push", steps: gated("true", "        if: github.event_name == 'pull_request'\n"), want: "unwired"},
+		row{name: "a job whose if names an event that never starts the workflow", on: "push", job: "    if: github.event_name == 'release'\n", steps: step("./scripts/gate.sh", ""), want: "unwired"},
+		row{name: "an event case in a job that needs one an if narrows", on: "[push, pull_request]", job: "    needs: first\n", steps: gated("case \"$E\" in push) exit 0;; esac", event) + other, want: ended},
+		// nocasematch matches an event name in any case, and an exit in an elif heading runs as the if's does.
+		row{name: "an event case under nocasematch", on: "push", steps: gated("shopt -s nocasematch\ncase \"$E\" in PUSH) exit 0;; esac", event), want: ended},
+		row{name: "a bash if under nocasematch", on: "push", steps: gated("shopt -s nocasematch\nif [[ $E == PUSH ]]; then exit 0; fi", event), want: ended},
+		row{name: "an exit in an elif heading", on: "push", steps: gated("if false; then :; elif exit 0; then :; fi", event), want: ended},
+		// A lane script that reruns itself under another bash runs every later command in the new shell.
+		row{name: "a lane script that reruns itself under a newer bash", steps: runs(""), lane: rerun + "f \"$@\"\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script that reruns itself by a literal bash", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script that runs another shell on itself", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /bin/sh -p \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself without -p", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that runs bash on another script", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p ./scripts/x.sh \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after a cd", steps: runs(""), lane: jobRoot + "\ncd /tmp\n[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p \"$0\" \"$@\"\n\"${ROOT_DIR}/scripts/gate.sh\"\n", want: "ungated"},
+		row{name: "a lane script that reruns itself in a branch", steps: runs(""), lane: "if [[ -n \"${OLD:-}\" ]]; then\n  exec /usr/local/bin/bash -p \"$0\" \"$@\"\nfi\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after it sets $0", steps: runs(""), lane: "BASH_ARGV0=./scripts/x.sh\n[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after a shift", steps: runs(""), lane: "shift\n" + rerun + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after a set of its parameters", steps: runs(""), lane: "set -e -- x\n" + rerun + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after a library that shifts", steps: runs(""), lane: jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\n" + rerun + "f \"$@\"\n\"${ROOT_DIR}/scripts/gate.sh\"\n", library: "shift\n", want: "ungated"},
+		row{name: "a lane script whose rerun function shifts", steps: runs(""), lane: strings.Replace(rerun, "  local", "  shift\n  local", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function takes other arguments", steps: runs(""), lane: rerun + "f -h\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function a branch calls", steps: runs(""), lane: rerun + "if true; then f \"$@\"; fi\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function another function names", steps: runs(""), lane: rerun + "g() { f -h; }\nf \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose function takes a rerun's words", steps: runs(""), lane: maybe + "f /usr/local/bin/bash -p \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself with another option", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -x \"$0\" \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself with other arguments", steps: runs(""), lane: "[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p \"$0\" x\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun function a group calls", steps: runs(""), lane: rerun + "{ f \"$@\"; }\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after a set that clears its parameters", steps: runs(""), lane: "set --\n" + rerun + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after a call of a function that moves its directory", steps: runs(""), lane: jobRoot + "\n" + rerun + "g() { cd /tmp; }\ng\nf \"$@\"\n\"${ROOT_DIR}/scripts/gate.sh\"\n", want: "ungated"},
+		row{name: "a lane script that reruns itself after a library that sources itself", steps: runs(""), lane: jobRoot + "\nsource \"${ROOT_DIR}/scripts/lib/l.sh\"\n" + rerun + "f \"$@\"\n\"${ROOT_DIR}/scripts/gate.sh\"\n", library: "[[ -n \"${L:-}\" ]] || { L=1; source \"${ROOT_DIR}/scripts/lib/l.sh\"; }\n", want: "wired"},
+		row{name: "a lane script whose rerun function a group calls on a line of its own", steps: runs(""), lane: rerun + "{\n  f \"$@\"\n}\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun reads its script variable before it assigns it", steps: runs(""), lane: strings.Replace(strings.Replace(rerun, "-p \"$0\"", "-p \"${s}\"", 1), "  done\n}", "  done\n  local s=\"$0\"\n}", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun script variable a computed name may write", steps: runs(""), lane: strings.Replace(strings.Replace(rerun, "-p \"$0\"", "-p \"${s}\"", 1), "  local b=\"\"", "  local s=\"$0\"\n  local b=\"\"", 1) + "n=s\nprintf -v \"${n}\" /tmp/x\nf \"$@\"\n./scripts/gate.sh\n", want: "assigns a variable whose name this reader cannot spell"},
+		row{name: "a lane script whose rerun script variable is read as $0", steps: runs(""), lane: strings.Replace(strings.Replace(rerun, "-p \"$0\"", "-p \"${s}\"", 1), "  local b=\"\"", "  local s=\"$0\"\n  local b=\"\"", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "an exit 0 under a heading whose status a later test gives", on: "push", steps: gated(maybe+"if [[ $E == nothing ]]; [[ -n \"${X:-}\" ]]; then f; fi", event), want: "ungated"},
+		row{name: "a lane script whose rerun program may be another shell", steps: runs(""), lane: strings.Replace(rerun, "/opt/homebrew/bin/bash", "/bin/sh", 1) + "f \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose rerun script is a variable", steps: runs(""), lane: strings.Replace(rerun, "-p \"$0\"", "-p \"${s}\"", 1) + "s=\"$0\"\nf \"$@\"\n./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script out of the scripts directory that reruns the script of $0's name under the root", steps: runs(""), lane: jobRoot + "\n" + rerunRooted + "f \"$@\"\n\"${ROOT_DIR}/scripts/gate.sh\"\n", want: "ungated"},
+		row{name: "a step that reruns its own text", steps: gated("[[ -z \"${OLD:-}\" ]] || exec /usr/local/bin/bash -p \"$0\" \"$@\"", ""), want: "ungated"},
+		// An exit 0 that only a function runs is as possible as one at the top level, unless a case or test proves its branch never runs.
+		row{name: "an exit 0 in a branch of a case on another github value", steps: gated(maybe+"case \"$S\" in nothing) f;; esac", sha), want: "ungated"},
+		row{name: "an exit 0 in a branch of a case whose patterns hold one that may match", on: "push", steps: gated(maybe+"case \"$E\" in nothing | p*) f;; esac", event), want: "ungated"},
+		row{name: "an exit 0 under a test of the event name against a pattern", on: "push", steps: gated(maybe+"if [[ $E == p* ]]; then f; fi", event), want: "ungated"},
+		row{name: "an exit 0 in the heading of an if that names no event", steps: gated(maybe+"if [[ $E == nothing ]] || f; then :; fi", event), want: "ungated"},
+		row{name: "an exit 0 in a subshell after the reader lost track", steps: gated(maybe+"coproc c ( :; )\n( f )", event), want: "ungated"},
+		row{name: "a lane script whose exec of its gate follows an exit 0", steps: runs(""), lane: "[[ -z \"${X:-}\" ]] || exit 0\nexec ./scripts/gate.sh\n", want: "ungated"},
+		row{name: "a lane script whose function exits only a subshell", steps: runs(""), lane: "f() { ( exit 0 ); }\nf\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script whose function returns before its exit 0", steps: runs(""), lane: "f() {\n  return 0\n  [[ -z \"${X:-}\" ]] || exit 0\n}\nf\n./scripts/gate.sh\n", want: "wired"},
+		row{name: "a lane script whose function runs its gate and then may exit 0", steps: runs(""), lane: "set -euo pipefail\n" + maybe + "g() {\n  ./scripts/gate.sh\n  f\n}\ng\n", want: "ungated"},
+		row{name: "a lane script a step runs after an exit 0", steps: step("[[ -z \"${X:-}\" ]] || exit 0\n./scripts/ci/job-a.sh", ""), lane: "./scripts/gate.sh\n", want: "unwired"},
+		row{name: "a job that needs another whose if names an event that never starts the workflow", on: "push", job: "    needs: first\n    if: github.event_name == 'release'\n", steps: step("./scripts/gate.sh", "") + other, want: "unwired"},
+	)
 	// An operand the reader cannot judge alone voids the event subject, and one it judges keeps the events the if leaves.
 	narrowed := func(operand, want string) row {
 		return row{name: "an event case under a job if of " + operand, on: "[push, pull_request, issues]", want: want,
@@ -1231,8 +1314,8 @@ func TestLaneScriptsReadsCaseBranches(t *testing.T) {
 		"github.event.a0 && github.event.a1 && github.event.a2 && github.event.a3 && github.event.a4 && github.event.a5 && github.event.a6 && github.event.a7 && github.event.a8 && github.event.a9 && github.event.a10 && github.event.a11 && github.event.a12"} {
 		rows = append(rows, narrowed(operand, ended))
 	}
-	rows = append(rows, narrowed("github.ref == 'a' && github.ref == 'a'", "wired"), narrowed("'x' && true && 1 && github.ref", "wired"), narrowed("!github.ref", "wired"),
-		narrowed("github.event.b0 && github.event.b1 && github.event.b2 && github.event.b3 && github.event.b4 && github.event.b5 && github.event.b6 && github.event.b7 && github.event.b8 && github.event.b9 && github.event.b10 && github.event.b11", "wired"))
+	rows = append(rows, narrowed("github.ref == 'a' && github.ref == 'a'", "ungated"), narrowed("'x' && true && 1 && github.ref", "ungated"), narrowed("!github.ref", "ungated"),
+		narrowed("github.event.b0 && github.event.b1 && github.event.b2 && github.event.b3 && github.event.b4 && github.event.b5 && github.event.b6 && github.event.b7 && github.event.b8 && github.event.b9 && github.event.b10 && github.event.b11", "ungated"))
 	for _, falsy := range []string{"''", "false", "null", "0"} {
 		rows = append(rows, row{name: "an event case under a job if that " + falsy + " narrows", on: "[push, pull_request]", want: ended,
 			job: "    if: (github.event_name == 'pull_request' && " + falsy + ") || github.event_name == 'push'\n", steps: gated("case $E in push) exit 0;; esac", event)})
