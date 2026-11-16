@@ -716,8 +716,10 @@ func shellBudgetedPipefailTurns(raw string, budget *int, depth int) (turns pipef
 		}
 		switch {
 		case len(command) == 0:
-		case expands(command[0]), command[0] == "source" || command[0] == ".", command[0] == "eval" && slices.ContainsFunc(command[1:], expands):
-			turns.may, turns.cleared = true, false // a command an expansion or a library spells may turn pipefail on
+		case expands(command[0]):
+			turns.may, turns.cleared = true, false // a command an expansion spells may turn pipefail on
+		case command[0] == "source" || command[0] == "." || command[0] == "alias", command[0] == "eval" && slices.ContainsFunc(command[1:], expands):
+			turns.may, turns.cleared, turns.off = true, false, true // a library, an alias or an expansion eval runs may turn pipefail on or off
 		case command[0] == "eval" && len(command) > 1:
 			inner(strings.Join(command[1:], " "), true)
 		case command[0] == "trap" && len(command) > 1 && !strings.HasPrefix(command[1], "-"):

@@ -608,7 +608,13 @@ done
 for scratch_dir in \
   "${ROOT_DIR}/adapters/codex/.codex/memories" \
   "${ROOT_DIR}/adapters/codex/.codex/tmp"; do
-  if find "${scratch_dir}" -mindepth 1 -print -quit 2>/dev/null | grep . >/dev/null; then
+  scratch_entries=()
+  if [[ -d "${scratch_dir}" ]]; then
+    shopt -s nullglob dotglob
+    scratch_entries=("${scratch_dir}"/*)
+    shopt -u nullglob dotglob
+  fi
+  if [[ "${#scratch_entries[@]}" -gt 0 ]]; then
     echo "Unexpected adapter scratch state present: ${scratch_dir}" >&2
     exit 1
   fi
