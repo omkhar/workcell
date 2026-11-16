@@ -442,8 +442,42 @@ An `exit` or an `exec` of a program that always runs stops the check when any
 command follows it. So does a call, a `source` or an `eval` whose body or text
 always runs one (`internal/metadatautil/lane_reading.go`). An `exit` whose
 status may be 0 stops the check in a loop, a `case` branch or an `if`
-condition too, since those may run. One in an `if` branch, behind `||` or `&&`,
-or in a subshell still counts, as a lane's failed check does.
+condition too, since those may run. One in an `if` branch or behind `||` or
+`&&` does not stop it, as a lane's failed check does not.
+
+Such an `exit` still ends the lane where it runs in the lane's shell, unless
+the check proves that it never runs. An `exec` of a program there does the
+same, and so does a call, a `source` or an `eval` that may run either. A
+script that the lane runs after it counts as run but not gating, since the
+lane may have ended with 0 first. An `exec` of the gate itself still gates,
+and an `exit` in a subshell ends nothing.
+
+A lane script that runs itself again under another bash ends nothing either.
+It does so by an `exec` of a `bash` with `-p "$0" "$@"`, as the canonical
+build library does for `scripts/validate-repo.sh` under an old bash. The
+`bash` is `/bin/bash`, `/usr/bin/bash`, `/usr/local/bin/bash` or
+`/opt/homebrew/bin/bash`, or a variable whose every value is one of them. The
+check trusts that path by its name alone, since it cannot read what the
+runner holds there. The new shell runs the script from its first line, so
+each later command still runs.
+
+The `exec` must stand in a function that the script and its libraries
+define once. The check counts definitions as bash parses them, with each `\`
+newline joined. That function must first run
+`((BASH_VERSINFO[0] >= 4)) && return 0` as a list of its own. The line takes
+no redirection and stands outside any branch or loop. Under bash 4 or newer
+the function returns there, so the `exec` runs only under an older bash. An
+`exec` in the script's own body has no `return` to guard it, so it ends the
+lane.
+
+This counts only where `$0`, the arguments and the directory stay as they
+were. No `cd`, `shift`, `set` of the parameters, `eval`, `trap`, call of a
+function or `BASH_ARGV0` may come first. The script must call the function
+as `f "$@"` at its top level and name it nowhere else. That holds for its
+text as spelled and with each `\` newline joined. The script word may also be
+a variable whose every write is `"$0"`, or `"${ROOT_DIR}/scripts/${0##*/}"`
+for a script in `scripts/`. A step's text never runs itself again this way,
+since a new bash does not take the options of the step's shell.
 
 A `case` branch is a condition only when each of its patterns is a literal
 word and no `;&` or `;;&` runs it (`internal/metadatautil/lane_cases.go`). Its
@@ -464,6 +498,16 @@ name set to that event and each other operand unknown
 (`internal/metadatautil/lane_events.go`). A `case` whose exiting branches name
 each event it keeps always exits.
 
+A step that no such event can reach runs on no automatic event, so it wires
+nothing. The check drops it when its `if` and its job's `if` hold on none of
+those events. That holds for `if: github.event_name == 'pull_request'` in a
+workflow that only `push` starts, with a `needs` or without.
+
+GitHub compares strings with no regard to case, and the check reads an `if`
+in the same way. A bash pattern or test may run under `nocasematch`, so the
+check reads it to match more. A branch that names an event in any case may run
+on that event. A `!=` test takes each event that differs from its word at all.
+
 The check must be sure that each event it keeps can reach the step, or the
 `event_name` does not count. It reads the event name only in a test with `==`
 or `!=` against a quoted literal. Any other use, `fromJSON`, `format` or an
@@ -473,13 +517,28 @@ event name, as the whole `github` context or a value of `env`, `matrix`,
 value inside the other, since they may contradict. So does a `!` in front of a
 comparison with no parentheses round it.
 
+The check names each operand by its text, with each name in any case but each
+string as spelled. So `hashFiles('A')` and `hashFiles('a')` are two operands,
+since the files they read may differ. Dropping an event assumes that the
+events the check keeps over-count those that reach the step. Two operands
+read as one could hide an event, and an exit on it could then end the lane
+with 0 before its gates.
+
+An `if` with more than 12 operands voids the subject too, since the check
+tries every value of each. A job that `needs` another keeps no event either.
+It runs only on the events that reach the job it needs, and the check does not
+follow that chain.
+
 A bash `if` on the variable is read in the same way. Each heading is one
 `[[ ]]` or `[ ]` test of the variable against a literal word. The test uses
 `=`, `==` or `!=`. When the branches that run a command take each event the
-check keeps, an `exit` in any of them counts as one that always runs. A heading that reads the event
-name in any other way, as through a pattern or `GITHUB_EVENT_NAME`, has the
-same result. A chain with a heading that does not read the event name is read
-as any other `if`.
+check keeps, an `exit` in any of them counts as one that always runs. A
+heading that reads the event name in any other way, as through a pattern or
+`GITHUB_EVENT_NAME`, has the same result. A chain with a heading that does not
+read the event name is read as any other `if`.
+
+An `exit` in the heading of an `elif` stops the check, as one in the heading
+of an `if` does.
 
 The other such value is the `$1` of a CI job script, read against the
 arguments that each step passes.
@@ -492,29 +551,37 @@ it holds no unquoted expansion, brace or pattern, and no `@`. A branch that an
 argument selects runs.
 
 A second `case` on `$1`, a `shift` outside a branch or a `set` of the
-parameters makes every branch run. So does a step that runs the script through
-`xargs`, `find` or `env`, since the check cannot pair those arguments with the
-step's text.
+parameters makes every branch run. So does a step that runs the script
+through `xargs`, `find` or `env`, since the check cannot pair those arguments
+with the step's text.
+
+A `set` sets the parameters with any operand but an option, as `-` and `--`
+are, even right after `-o`: `set -o -- x` does. Only a lower-case word after
+`-o` reads as the option's name.
 
 Under any other subject every branch counts as running, as under a literal
 word, `$LINENO` or a function's `$1`. So does every branch of a `case` that an
 `eval` or a child shell opens, and every command of a function a branch
 defines.
 
-Some residuals remain. The check does not work out an `if` that names a
-context, which may still never hold. It counts a workflow as started whatever
-branch, path or schedule filter its `on` sets, though a filter may never match.
-It does not read a write that an interpreter such as `python`, `perl` or `awk`
-makes, so such a step may still rewrite a gate. It does not follow a
-status that a lane saves and returns later, as through `PIPESTATUS` or `$?`, and
-it reads `if ! X; then exit 1; fi` as a condition. So a gate that either guards
-counts as run but not gating.
+Some residuals remain. The check reads each operand of an `if` but the event
+name as unknown. Such an operand, as `github.base_ref` or a value of the event
+payload, may hold only on some events or never. So a step or job whose `if`
+never holds may still count its gates. The check does not follow `needs`
+either, so a job that needs one that never runs may count its gates too. When
+the check keeps an event that never reaches the step, more of its exits may
+run, so fewer gates count.
 
-The check also reads a value of the event payload as unknown, though it may
-hold only on some events. It does not follow an event name that a step writes
-to `GITHUB_ENV`. So a bash `if` on such a variable in a later step counts as
-any other `if`. An `exit` in the heading of an `elif` counts as a condition,
-though the events that no earlier test takes always reach it.
+The check counts a workflow as started whatever branch, path or schedule
+filter its `on` sets, though a filter may never match. It does not read a
+write that an interpreter such as `python`, `perl` or `awk` makes, so such a
+step may still rewrite a gate. It does not follow a status that a lane saves
+and returns later, as through `PIPESTATUS` or `$?`, and it reads
+`if ! X; then exit 1; fi` as a condition. So a gate that either guards counts
+as run but not gating.
+
+The check does not follow an event name that a step writes to `GITHUB_ENV`.
+So a bash `if` on such a variable in a later step counts as any other `if`.
 
 A call stops the check when its body may exit with 0 before a `return` that
 always runs. A `return` in a branch or a loop does not count, since the body
