@@ -256,6 +256,18 @@ The updater does not move the snapshot pin to an older date.
 The `--apply` run records its Debian snapshot plan in `WORKCELL_DEBIAN_PLAN_RECORD`, and the `--check` run of `scripts/update-upstream-pins.sh` reuses that plan.
 So `snapshot.debian.org` can come back or fail between the two runs, and the check still sees the same plan.
 
+The weekly `pin-hygiene.yml` run comes 45 minutes after a daily refresh, so pending updates are normal at that time.
+It runs `scripts/update-upstream-pins.sh --hygiene`, which fails only on drift that the refresh should have handled:
+
+- A provider release is older than the cool-off plus a grace of 72 hours, and no provider refresh PR opened within the grace.
+- A toolchain pin differs from upstream, the last toolchain refresh is older than the grace, and no toolchain refresh PR opened within the grace.
+- A provider release has been held for the cool-off plus the grace on a CLI surface that the provider policy does not classify.
+
+The last toolchain refresh is the date of the pinned Debian snapshot, because each toolchain refresh moves that pin to its own day.
+`scripts/update-upstream-pins.sh --hygiene` reads the open PRs with the job token and fails when it cannot read them or the provider plan.
+The job summary lists every pending update, so updates that are within the grace stay visible.
+`WORKCELL_PIN_HYGIENE_GRACE_HOURS` sets the grace.
+
 The `refresh` job uploads one artifact, `upstream-refresh-candidate`.
 It contains a `provider` directory and a `toolchain` directory. Each directory contains `patch`, `diffstat`, and `metadata.json`. The `candidate` field in `metadata.json` names the kind.
 The artifact also contains `provider-summary`, the provider bump plan.
