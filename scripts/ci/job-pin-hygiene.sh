@@ -37,6 +37,18 @@ echo "[ci/pin-hygiene] upstream Amp release"
 echo "[ci/pin-hygiene] upstream goose release"
 "${ROOT_DIR}/scripts/verify-upstream-goose-release.sh"
 
+# The report quotes upstream release names, so the summary escapes it as HTML
+# inside <pre>: no backtick fence or tag in a name can end the block.
+append_pin_hygiene_summary() {
+  local report="$1"
+  local summary="$2"
+  {
+    printf '%s\n\n%s\n' '## Pin hygiene' '<pre>'
+    sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' "${report}"
+    printf '%s\n' '</pre>'
+  } >>"${summary}"
+}
+
 # The daily upstream refresh opens its PRs shortly before this lane runs, so
 # pending drift alone is normal. --hygiene fails only on drift that outlived
 # its grace with no fresh refresh PR to carry it, and on a release held that
@@ -48,13 +60,7 @@ hygiene_status=0
 WORKCELL_PIN_HYGIENE_REPOSITORY="${WORKCELL_PIN_HYGIENE_REPOSITORY:-${GITHUB_REPOSITORY:-omkhar/workcell}}" \
   "${ROOT_DIR}/scripts/update-upstream-pins.sh" --hygiene | tee "${hygiene_report}" || hygiene_status=$?
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-  {
-    echo "## Pin hygiene"
-    echo
-    echo '```text'
-    cat "${hygiene_report}"
-    echo '```'
-  } >>"${GITHUB_STEP_SUMMARY}"
+  append_pin_hygiene_summary "${hygiene_report}" "${GITHUB_STEP_SUMMARY}"
 fi
 rm -f "${hygiene_report}"
 if [[ "${hygiene_status}" -ne 0 ]]; then

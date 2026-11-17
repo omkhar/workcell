@@ -263,8 +263,10 @@ It runs `scripts/update-upstream-pins.sh --hygiene`, which fails only on drift t
 - A toolchain pin differs from upstream, the last toolchain refresh is older than the grace, and no toolchain refresh PR opened within the grace.
 - A provider release has been held for the cool-off plus the grace on a CLI surface that the provider policy does not classify.
 
-The last toolchain refresh is the date of the pinned Debian snapshot, because each toolchain refresh moves that pin to its own day.
-`scripts/update-upstream-pins.sh --hygiene` reads the open PRs with the job token and fails when it cannot read them or the provider plan.
+The toolchain clock is the older of two dates: the pinned Debian snapshot and the merge of the last toolchain refresh PR.
+A change to the snapshot alone leaves the other toolchain pins as they were.
+Only a refresh PR that is not a draft and comes from the refresh app or the repository owner counts.
+`scripts/update-upstream-pins.sh --hygiene` reads the open and closed PRs with the job token and fails when it cannot read them or the provider plan.
 The job summary lists every pending update, so updates that are within the grace stay visible.
 `WORKCELL_PIN_HYGIENE_GRACE_HOURS` sets the grace.
 

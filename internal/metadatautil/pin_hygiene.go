@@ -42,11 +42,15 @@ type PinHygieneInput struct {
 	// ToolchainPending is true when any toolchain pin differs from upstream.
 	ToolchainPending *bool `json:"toolchain_pending"`
 	// DebianSnapshot is the pinned Debian snapshot. Each toolchain refresh
-	// moves it to the snapshot of its day, so its age bounds the age of any
-	// toolchain drift.
-	DebianSnapshot     string          `json:"debian_snapshot"`
-	ProviderPlan       json.RawMessage `json:"provider_plan"`
-	LaggedProviderPlan json.RawMessage `json:"lagged_provider_plan"`
+	// moves it to the snapshot of its day.
+	DebianSnapshot string `json:"debian_snapshot"`
+	// ToolchainRefreshMergedAt is when the last toolchain refresh PR merged,
+	// or null when none is among the closed PRs read. A change that moves only
+	// the snapshot does not refresh the other toolchain pins, so the toolchain
+	// clock is the older of the two.
+	ToolchainRefreshMergedAt json.RawMessage `json:"toolchain_refresh_merged_at"`
+	ProviderPlan             json.RawMessage `json:"provider_plan"`
+	LaggedProviderPlan       json.RawMessage `json:"lagged_provider_plan"`
 	// RefreshPRs holds the open refresh pull request of each kind, or null.
 	RefreshPRs map[string]*PinHygieneRefreshPR `json:"refresh_prs"`
 }
@@ -123,6 +127,10 @@ func pinHygieneVerdict(input PinHygieneInput) ([]string, []string, error) {
 	if snapshot.After(now) {
 		return nil, nil, fmt.Errorf("pin hygiene Debian snapshot %s is later than now %s", input.DebianSnapshot, input.Now)
 	}
+	toolchainMerged, err := decodePinHygieneMergedAt(input.ToolchainRefreshMergedAt, now)
+	if err != nil {
+		return nil, nil, err
+	}
 	current, err := decodePinHygienePlan("provider_plan", input.ProviderPlan)
 	if err != nil {
 		return nil, nil, err
@@ -134,6 +142,10 @@ func pinHygieneVerdict(input PinHygieneInput) ([]string, []string, error) {
 	laggedAt := now.Add(-grace).Format(time.RFC3339)
 	if lagged.GeneratedAt != laggedAt {
 		return nil, nil, fmt.Errorf("the lagged provider plan was made at %q, not at now minus the grace (%s)", lagged.GeneratedAt, laggedAt)
+	}
+	laggedCutoff, err := time.Parse(time.RFC3339, lagged.Cutoff)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the lagged provider plan cutoff %q is not RFC 3339", lagged.Cutoff)
 	}
 	if len(input.RefreshPRs) != 2 {
 		return nil, nil, errors.New("pin hygiene refresh_prs must name exactly the provider and toolchain kinds")
@@ -160,8 +172,8 @@ func pinHygieneVerdict(input PinHygieneInput) ([]string, []string, error) {
 			return nil, nil, fmt.Errorf("the open %s refresh PR %s has no RFC 3339 created_at", kind, pr.URL)
 		}
 		if now.Sub(opened) > grace {
-			prNotes[kind] = fmt.Sprintf("open %s refresh PR %s is stale: opened %s, %s ago, past the grace", kind, pr.URL, pr.CreatedAt, pinHygieneAge(now.Sub(opened)))
-			uncovered[kind] = "only a stale PR: " + prNotes[kind]
+			prNotes[kind] = fmt.Sprintf("open %s refresh PR %s awaiting review/merge since %s, %s old, past the grace", kind, pr.URL, pr.CreatedAt, pinHygieneAge(now.Sub(opened)))
+			uncovered[kind] = "only the " + prNotes[kind]
 			continue
 		}
 		freshPR[kind] = pr
@@ -171,16 +183,29 @@ func pinHygieneVerdict(input PinHygieneInput) ([]string, []string, error) {
 	lines := []string{fmt.Sprintf("Pin hygiene verdict at %s with a %dh grace:", now.Format(time.RFC3339), input.GraceHours)}
 	var problems []string
 
-	toolchainAge := now.Sub(snapshot)
+	// With no merged toolchain refresh PR in view, the toolchain age is
+	// unknown, and pending toolchain drift counts as past the grace.
+	toolchainClock := fmt.Sprintf("the last toolchain refresh (Debian snapshot %s, no merged toolchain refresh PR found)", input.DebianSnapshot)
+	toolchainAge := "of unknown age"
+	toolchainWithinGrace := false
+	if toolchainMerged != nil {
+		toolchainClock = fmt.Sprintf("the last toolchain refresh (Debian snapshot %s, toolchain refresh PR merged %s)", input.DebianSnapshot, toolchainMerged.Format(time.RFC3339))
+		since := snapshot
+		if toolchainMerged.Before(snapshot) {
+			since = *toolchainMerged
+		}
+		toolchainAge = pinHygieneAge(now.Sub(since)) + " old"
+		toolchainWithinGrace = now.Sub(since) <= grace
+	}
 	switch {
 	case !*input.ToolchainPending:
 		lines = append(lines, "  toolchain: up to date")
-	case toolchainAge <= grace:
-		lines = append(lines, fmt.Sprintf("  toolchain: update pending, expected: the last toolchain refresh, at Debian snapshot %s, is %s old, within the grace", input.DebianSnapshot, pinHygieneAge(toolchainAge)))
+	case toolchainWithinGrace:
+		lines = append(lines, fmt.Sprintf("  toolchain: update pending, expected: %s is %s, within the grace", toolchainClock, toolchainAge))
 	case freshPR["toolchain"] != nil:
-		lines = append(lines, fmt.Sprintf("  toolchain: update pending since the last toolchain refresh, at Debian snapshot %s, %s old, carried by the %s", input.DebianSnapshot, pinHygieneAge(toolchainAge), prNotes["toolchain"]))
+		lines = append(lines, fmt.Sprintf("  toolchain: update pending since %s, %s, carried by the %s", toolchainClock, toolchainAge, prNotes["toolchain"]))
 	default:
-		problems = append(problems, fmt.Sprintf("a toolchain update is pending and the last toolchain refresh, at Debian snapshot %s, is %s old, past the grace; there is %s", input.DebianSnapshot, pinHygieneAge(toolchainAge), uncovered["toolchain"]))
+		problems = append(problems, fmt.Sprintf("a toolchain update is pending and %s is %s, past the grace; there is %s", toolchainClock, toolchainAge, uncovered["toolchain"]))
 	}
 
 	currentSelections := pinHygieneSelections(current)
@@ -204,6 +229,19 @@ func pinHygieneVerdict(input PinHygieneInput) ([]string, []string, error) {
 		}
 		if !entry.selection.Changed {
 			continue
+		}
+		// The cool-off picks only releases from before the cutoff, so a later
+		// one came from a Claude approved_version. Its release date judges it,
+		// as it judges every other release.
+		if entry.selection.PublishedAt != "" {
+			published, err := time.Parse(time.RFC3339, entry.selection.PublishedAt)
+			if err != nil {
+				return nil, nil, fmt.Errorf("the lagged provider plan gives %s a published_at %q that is not RFC 3339", entry.label, entry.selection.PublishedAt)
+			}
+			if published.After(laggedCutoff) {
+				lines = append(lines, fmt.Sprintf("  provider: %s %s -> %s, released %s, is an approved release within the %s", entry.label, entry.selection.CurrentVersion, entry.selection.TargetVersion, entry.selection.PublishedAt, cutoff))
+				continue
+			}
 		}
 		staleProvider = append(staleProvider, entry.label)
 		switch {
@@ -229,6 +267,28 @@ func pinHygieneVerdict(input PinHygieneInput) ([]string, []string, error) {
 	}
 	lines = append(lines, "  refresh PRs: "+prNotes["provider"]+"; "+prNotes["toolchain"])
 	return lines, problems, nil
+}
+
+func decodePinHygieneMergedAt(raw json.RawMessage, now time.Time) (*time.Time, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, errors.New("pin hygiene input must set toolchain_refresh_merged_at to a time or null")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return nil, errors.New("pin hygiene toolchain_refresh_merged_at must be an RFC 3339 string or null")
+	}
+	merged, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return nil, fmt.Errorf("pin hygiene toolchain_refresh_merged_at %q is not RFC 3339", text)
+	}
+	if merged.After(now) {
+		return nil, fmt.Errorf("pin hygiene toolchain_refresh_merged_at %s is later than now", text)
+	}
+	merged = merged.UTC()
+	return &merged, nil
 }
 
 func decodePinHygienePlan(field string, raw json.RawMessage) (*ProviderBumpPlan, error) {
