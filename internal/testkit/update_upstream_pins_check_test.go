@@ -1590,6 +1590,13 @@ go() {
         fi
         printf '%s\n' "${WORKCELL_FIXTURE_OPEN_PRS:-}"
         ;;
+      'https://api.github.com/repos/omkhar/workcell/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100')
+        if [[ "${WORKCELL_FIXTURE_CLOSED_PRS_CODE:-0}" != "0" ]]; then
+          printf '%s\n' 'fixture closed pull request listing failure' >&2
+          return "${WORKCELL_FIXTURE_CLOSED_PRS_CODE}"
+        fi
+        printf '%s\n' "${WORKCELL_FIXTURE_CLOSED_PRS:-}"
+        ;;
       'https://api.github.com/repos/zizmorcore/zizmor/releases/latest')
         printf '{"tag_name":"v%s","assets":[{"id":424244,"name":"zizmor-x86_64-unknown-linux-gnu.tar.gz"}]}\n' "${WORKCELL_FIXTURE_ZIZMOR_VERSION}"
         ;;

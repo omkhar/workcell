@@ -92,7 +92,7 @@ internal/metadatautil	TestCheckPinnedInputsRequiresRootOwnedCodexArtifacts	c15d7
 internal/metadatautil	TestCheckPinnedInputsValidatesGoosePin	da012d9d	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPinnedInputsValidatesUncertifiedProviderLock	5d0758ee	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	unreviewed debt in a test: review the subject, then port or justify
-internal/metadatautil	TestEvaluatePinHygieneVerdicts	3dae1cb5,4b5a70bc	a test assertion on the verdict output that the code under test produces
+internal/metadatautil	TestEvaluatePinHygieneVerdicts	3dae1cb5,4b5a70bc,45b5a717	a test assertion on the verdict output that the code under test produces
 internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	4a260cf1,7ec6e521	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes	5170f81d	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateWorkflowLaneManifestExpandsMatrixAndPathFilters	4370e2b0	unreviewed debt in a test: review the subject, then port or justify

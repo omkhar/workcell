@@ -84,8 +84,10 @@ Modes:
             drift when the last toolchain refresh is older than the grace, with
             no refresh PR opened within the grace to carry it, or a release
             held on an unclassified CLI surface for that long. It reads the
-            open pull requests of WORKCELL_PIN_HYGIENE_REPOSITORY (default
-            omkhar/workcell). WORKCELL_PIN_HYGIENE_GRACE_HOURS sets the grace
+            open and the recently closed pull requests of
+            WORKCELL_PIN_HYGIENE_REPOSITORY (default omkhar/workcell). Only a
+            ready refresh PR from the refresh app or the repository owner
+            carries drift. WORKCELL_PIN_HYGIENE_GRACE_HOURS sets the grace
             (default 72, at most 720).
 
 Options:
@@ -945,7 +947,11 @@ if [[ "${mode}" == "hygiene" ]]; then
     echo "Unable to list the open pull requests of ${hygiene_repository}." >&2
     exit 1
   }
-  hygiene_refresh_prs="$(jq -L "${ROOT_DIR}/scripts/ci" -ce '
+  # Only a ready PR from the refresh app or the repository owner carries
+  # drift: a draft waits on nobody, and anyone can open a PR on a refresh
+  # branch name.
+  hygiene_owner="${hygiene_repository%%/*}"
+  hygiene_refresh_prs="$(jq -L "${ROOT_DIR}/scripts/ci" -ce --arg owner "${hygiene_owner}" '
     include "upstream-refresh-overlap";
     def refresh_pr($kind): overlap($kind) | if . == null then null else {url, created_at} end;
     if type != "array" then
@@ -953,7 +959,8 @@ if [[ "${mode}" == "hygiene" ]]; then
     elif length >= 100 then
       error("the open pull request list fills a page, so it may be incomplete")
     else
-      map({
+      map(select(.draft == false and (.user.login == "workcell-upstream-refresh[bot]" or .user.login == $owner)))
+      | map({
         title,
         url: .html_url,
         headRefName: .head.ref,
@@ -966,6 +973,34 @@ if [[ "${mode}" == "hygiene" ]]; then
     echo "Unable to read the open refresh pull requests of ${hygiene_repository}." >&2
     exit 1
   }
+  # A change that moves only the Debian snapshot leaves the other toolchain
+  # pins as old as the last toolchain refresh PR, so the verdict also reads
+  # when that PR merged. Merging a PR updates it, so the newest merge is on
+  # this page unless 100 later updates hide it; then the verdict gets null.
+  hygiene_closed_prs="$(github_api_get "https://api.github.com/repos/${hygiene_repository}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=100")" || {
+    echo "Unable to list the closed pull requests of ${hygiene_repository}." >&2
+    exit 1
+  }
+  hygiene_toolchain_merged_at="$(jq -c --arg owner "${hygiene_owner}" '
+    if type != "array" then
+      error("the closed pull request list is not an array")
+    else
+      [.[]
+        | select(.merged_at != null
+            and (.head.repo.full_name // "") == (.base.repo.full_name // "-")
+            and (.head.ref | test("^codex/upstream-refresh-toolchain-"))
+            and (.user.login == "workcell-upstream-refresh[bot]" or .user.login == $owner))
+        | .merged_at]
+      | max
+    end
+  ' <<<"${hygiene_closed_prs}")" || {
+    echo "Unable to read the merged toolchain refresh pull requests of ${hygiene_repository}." >&2
+    exit 1
+  }
+  if [[ "${hygiene_toolchain_merged_at}" != null && ! "${hygiene_toolchain_merged_at}" =~ ^\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\"$ ]]; then
+    echo "Unable to read the merged toolchain refresh pull requests of ${hygiene_repository}." >&2
+    exit 1
+  fi
   hygiene_toolchain_pending=false
   if [[ "${toolchain_has_changes}" -eq 1 ]]; then
     hygiene_toolchain_pending=true
@@ -976,10 +1011,11 @@ if [[ "${mode}" == "hygiene" ]]; then
     --argjson grace_hours "${hygiene_grace_hours}" \
     --argjson toolchain_pending "${hygiene_toolchain_pending}" \
     --arg debian_snapshot "${current_debian_snapshot}" \
+    --argjson toolchain_refresh_merged_at "${hygiene_toolchain_merged_at}" \
     --argjson provider_plan "${provider_plan_json}" \
     --argjson lagged_provider_plan "${hygiene_lagged_plan}" \
     --argjson refresh_prs "${hygiene_refresh_prs}" \
-    '{now: $now, grace_hours: $grace_hours, toolchain_pending: $toolchain_pending, debian_snapshot: $debian_snapshot, provider_plan: $provider_plan, lagged_provider_plan: $lagged_provider_plan, refresh_prs: $refresh_prs}' |
+    '{now: $now, grace_hours: $grace_hours, toolchain_pending: $toolchain_pending, debian_snapshot: $debian_snapshot, toolchain_refresh_merged_at: $toolchain_refresh_merged_at, provider_plan: $provider_plan, lagged_provider_plan: $lagged_provider_plan, refresh_prs: $refresh_prs}' |
     run_upstream_citools pin-hygiene-verdict || hygiene_status=$?
   exit "${hygiene_status}"
 fi
