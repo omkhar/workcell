@@ -73,12 +73,20 @@ trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
-Usage: scripts/update-upstream-pins.sh [--apply | --check] [--toolchain-only] [--debian-snapshot STAMP]
+Usage: scripts/update-upstream-pins.sh [--apply | --check | --hygiene] [--toolchain-only] [--debian-snapshot STAMP]
 
 Modes:
   --apply   Refresh pinned provider versions, Linux base images, toolchains, and
             release-build inputs to the newest reviewed upstream versions.
   --check   Exit non-zero when any eligible pinned upstream refresh is pending.
+  --hygiene Exit non-zero only when a pending refresh outlived its grace: a
+            provider release older than the cool-off plus the grace, toolchain
+            drift when the last toolchain refresh is older than the grace, with
+            no refresh PR opened within the grace to carry it, or a release
+            held on an unclassified CLI surface for that long. It reads the
+            open pull requests of WORKCELL_PIN_HYGIENE_REPOSITORY (default
+            omkhar/workcell). WORKCELL_PIN_HYGIENE_GRACE_HOURS sets the grace
+            (default 72, at most 720).
 
 Options:
   --toolchain-only  Leave provider pins to scripts/update-provider-pins.sh.
@@ -100,6 +108,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check)
       mode="check"
+      shift
+      ;;
+    --hygiene)
+      mode="hygiene"
       shift
       ;;
     --toolchain-only)
@@ -125,6 +137,23 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${mode}" == "hygiene" ]]; then
+  if [[ "${toolchain_only}" -eq 1 || -n "${debian_snapshot_pin}" ]]; then
+    echo "--hygiene judges every pin at the live upstream state; it takes neither --toolchain-only nor --debian-snapshot." >&2
+    exit 2
+  fi
+  hygiene_grace_hours="${WORKCELL_PIN_HYGIENE_GRACE_HOURS:-72}"
+  if [[ ! "${hygiene_grace_hours}" =~ ^[1-9][0-9]{0,2}$ ]] || ((10#${hygiene_grace_hours} > 720)); then
+    echo "WORKCELL_PIN_HYGIENE_GRACE_HOURS must be an integer from 1 through 720" >&2
+    exit 2
+  fi
+  hygiene_repository="${WORKCELL_PIN_HYGIENE_REPOSITORY:-omkhar/workcell}"
+  if [[ ! "${hygiene_repository}" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$ ]]; then
+    echo "WORKCELL_PIN_HYGIENE_REPOSITORY must be OWNER/REPO" >&2
+    exit 2
+  fi
+fi
 
 require_tool awk
 require_tool curl
@@ -280,6 +309,15 @@ replace_line_with_prefix() {
     exit 1
   fi
   replace_tmp_over_file "${tmp}" "${file}"
+}
+
+# epoch_to_rfc3339 EPOCH prints EPOCH as a UTC RFC 3339 time.
+epoch_to_rfc3339() {
+  if date -u -d '@0' +%Y-%m-%dT%H:%M:%SZ >/dev/null 2>&1; then
+    date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ # portability-exempt: the GNU date form is probed first
+  else
+    date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
+  fi
 }
 
 date_stamp_for_offset() {
@@ -765,7 +803,7 @@ for current_target_pair in \
   fi
 done
 
-has_changes=0
+toolchain_has_changes=0
 for current_target_pair in \
   "${current_runtime_base}|${target_runtime_base}" \
   "${current_validator_base}|${target_validator_base}" \
@@ -809,10 +847,11 @@ for current_target_pair in \
   current_value="${current_target_pair%%|*}"
   target_value="${current_target_pair#*|}"
   if [[ "${current_value}" != "${target_value}" ]]; then
-    has_changes=1
+    toolchain_has_changes=1
     break
   fi
 done
+has_changes="${toolchain_has_changes}"
 if [[ "${provider_has_changes}" -eq 1 && "${toolchain_only}" -eq 0 ]]; then
   has_changes=1
 fi
@@ -881,6 +920,68 @@ if [[ "${mode}" == "check" ]]; then
     exit 1
   fi
   exit 0
+fi
+
+# --hygiene: the daily refresh opens its PRs shortly before the weekly
+# hygiene run, so pending drift alone is normal. The verdict in
+# workcell-citools pin-hygiene-verdict fails only on drift that outlived the
+# grace with no fresh refresh PR, and on a release held that long on an
+# unclassified CLI surface. Every input it cannot read fails the run.
+if [[ "${mode}" == "hygiene" ]]; then
+  print_summary
+  hygiene_now_epoch="$(date -u +%s)"
+  if [[ ! "${hygiene_now_epoch}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Unable to read the current time." >&2
+    exit 1
+  fi
+  hygiene_now="$(epoch_to_rfc3339 "${hygiene_now_epoch}")"
+  hygiene_lagged_now="$(epoch_to_rfc3339 "$((hygiene_now_epoch - 10#${hygiene_grace_hours} * 3600))")"
+  hygiene_lagged_plan="$("${ROOT_DIR}/scripts/update-provider-pins.sh" --json --now "${hygiene_lagged_now}")" || {
+    echo "Unable to compute the provider bump plan as of ${hygiene_lagged_now}." >&2
+    exit 1
+  }
+  # One page of open PRs. A full page may hide a refresh PR, so it fails.
+  hygiene_open_prs="$(github_api_get "https://api.github.com/repos/${hygiene_repository}/pulls?state=open&base=main&per_page=100")" || {
+    echo "Unable to list the open pull requests of ${hygiene_repository}." >&2
+    exit 1
+  }
+  hygiene_refresh_prs="$(jq -L "${ROOT_DIR}/scripts/ci" -ce '
+    include "upstream-refresh-overlap";
+    def refresh_pr($kind): overlap($kind) | if . == null then null else {url, created_at} end;
+    if type != "array" then
+      error("the open pull request list is not an array")
+    elif length >= 100 then
+      error("the open pull request list fills a page, so it may be incomplete")
+    else
+      map({
+        title,
+        url: .html_url,
+        headRefName: .head.ref,
+        isCrossRepository: ((.head.repo.full_name // "") != (.base.repo.full_name // "-")),
+        created_at
+      })
+      | {provider: refresh_pr("provider"), toolchain: refresh_pr("toolchain")}
+    end
+  ' <<<"${hygiene_open_prs}")" || {
+    echo "Unable to read the open refresh pull requests of ${hygiene_repository}." >&2
+    exit 1
+  }
+  hygiene_toolchain_pending=false
+  if [[ "${toolchain_has_changes}" -eq 1 ]]; then
+    hygiene_toolchain_pending=true
+  fi
+  hygiene_status=0
+  jq -n \
+    --arg now "${hygiene_now}" \
+    --argjson grace_hours "${hygiene_grace_hours}" \
+    --argjson toolchain_pending "${hygiene_toolchain_pending}" \
+    --arg debian_snapshot "${current_debian_snapshot}" \
+    --argjson provider_plan "${provider_plan_json}" \
+    --argjson lagged_provider_plan "${hygiene_lagged_plan}" \
+    --argjson refresh_prs "${hygiene_refresh_prs}" \
+    '{now: $now, grace_hours: $grace_hours, toolchain_pending: $toolchain_pending, debian_snapshot: $debian_snapshot, provider_plan: $provider_plan, lagged_provider_plan: $lagged_provider_plan, refresh_prs: $refresh_prs}' |
+    run_upstream_citools pin-hygiene-verdict || hygiene_status=$?
+  exit "${hygiene_status}"
 fi
 
 if [[ "${has_changes}" -eq 0 ]]; then

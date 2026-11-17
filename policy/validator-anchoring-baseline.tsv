@@ -567,6 +567,7 @@ internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePubl
 internal/testkit	TestUpdateUpstreamPinsCheckReusesRecordedDebianPlan	565a5a3f,e7267aca,e7267aca,f1211436	the search checks the output of an updater fixture run that reuses a recorded plan, not script text
 internal/testkit	TestUpdateUpstreamPinsDebianArchiveOutage	15d9b107,3d7d78ab,e59f2b53,edf34290	the search checks the output and the resolution log of an updater fixture run, not script text
 internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateUpstreamPinsHygieneJudgesDriftAge	45f3d61f,70877d17	the search checks the output of an updater fixture run, not script text
 internal/testkit	TestUpdateUpstreamPinsRefusesImageOutsideItsRepository	510ec2d4	a test assertion on the refusal text or rendered output that the test itself produces
 internal/testkit	TestUpdateUpstreamPinsToolPinBumpChangesNoWorkflow	8ac3433b	a test assertion on the summary output that the updater under test produces
 internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify

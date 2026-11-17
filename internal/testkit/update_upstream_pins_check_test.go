@@ -792,6 +792,7 @@ func writeUpdaterFixture(t *testing.T, manifest updaterFixtureManifest, manifest
 		"scripts/check-dead-code.sh",
 		"scripts/ci/build-validator-image.sh",
 		"scripts/ci/lib/local-docker-parity.sh",
+		"scripts/ci/upstream-refresh-overlap.jq",
 		"scripts/ci/load-tool-pins.sh",
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
@@ -826,6 +827,19 @@ case "${1:-}" in
     printf '%s\n' 'Provider pin refresh summary: fixture (up to date)'
     ;;
   --json)
+    if [[ "${2:-}" == "--now" && "$#" -eq 3 ]]; then
+      printf 'json-now %s\n' "$3" >>"${WORKCELL_FIXTURE_PROVIDER_LOG}"
+      if [[ "${WORKCELL_FIXTURE_LAGGED_PROVIDER_PLAN_CODE:-0}" -ne 0 ]]; then
+        printf '%s\n' 'fixture lagged provider plan failure' >&2
+        exit "${WORKCELL_FIXTURE_LAGGED_PROVIDER_PLAN_CODE}"
+      fi
+      printf '%s\n' "${WORKCELL_FIXTURE_LAGGED_PROVIDER_PLAN:-}"
+      exit 0
+    fi
+    [[ "$#" -eq 1 ]] || {
+      printf 'unexpected fixture provider command: %s\n' "$*" >&2
+      exit 97
+    }
     printf '%s\n' json >>"${WORKCELL_FIXTURE_PROVIDER_LOG}"
     if [[ "${WORKCELL_FIXTURE_PROVIDER_PLAN_CODE}" -ne 0 ]]; then
       printf '%s\n' 'fixture provider plan failure' >&2
@@ -1392,6 +1406,15 @@ date() {
     printf '%s\n' "${WORKCELL_FIXTURE_DEBIAN_SNAPSHOT}"
     return 0
   fi
+  # The pin hygiene verdict reads the time once and lags the provider plan.
+  if [[ "$#" -eq 2 && "$1" == "-u" && "$2" == "+%s" && -n "${WORKCELL_FIXTURE_NOW_EPOCH:-}" ]]; then
+    printf '%s\n' "${WORKCELL_FIXTURE_NOW_EPOCH}"
+    return 0
+  fi
+  if [[ "$#" -eq 4 && "$1" == "-u" && "$2" == "-d" && "$3" =~ ^@[0-9]+$ && "$4" == "+%Y-%m-%dT%H:%M:%SZ" ]]; then
+    command date "$@"
+    return
+  fi
   # The Debian outage hold compares the current pin with the stamp 7 days ago.
   if [[ "$#" -eq 4 && "$1" == "-u" && "$2" == "-d" && "$3" == "-7 day" && "$4" == "+%Y%m%dT000000Z" ]]; then
     printf '%s\n' "${WORKCELL_FIXTURE_HOLD_CUTOFF_STAMP}"
@@ -1559,6 +1582,13 @@ go() {
       'https://api.github.com/repos/rhysd/actionlint/releases/latest')
         printf '{"tag_name":"v%s","assets":[{"id":%s,"name":"actionlint_%s_checksums.txt"}]}\n' \
           "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}" "${WORKCELL_FIXTURE_ACTIONLINT_ASSET_ID}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
+        ;;
+      'https://api.github.com/repos/omkhar/workcell/pulls?state=open&base=main&per_page=100')
+        if [[ "${WORKCELL_FIXTURE_OPEN_PRS_CODE:-0}" != "0" ]]; then
+          printf '%s\n' 'fixture pull request listing failure' >&2
+          return "${WORKCELL_FIXTURE_OPEN_PRS_CODE}"
+        fi
+        printf '%s\n' "${WORKCELL_FIXTURE_OPEN_PRS:-}"
         ;;
       'https://api.github.com/repos/zizmorcore/zizmor/releases/latest')
         printf '{"tag_name":"v%s","assets":[{"id":424244,"name":"zizmor-x86_64-unknown-linux-gnu.tar.gz"}]}\n' "${WORKCELL_FIXTURE_ZIZMOR_VERSION}"
