@@ -104,6 +104,7 @@ func subcommands() []subcommand {
 		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
 		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE UNCERTIFIED_PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", 5, 6, cmdProviderBumpPlan},
+		{"pin-hygiene-verdict", "", 0, 0, cmdPinHygieneVerdict},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON UNCERTIFIED_PROVIDERS_PACKAGE_JSON", 5, 5, cmdApplyProviderBumpPlan},
 		{"verify-goose-release", "DOCKERFILE", 1, 1, cmdVerifyGooseRelease},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
@@ -580,6 +581,12 @@ func cmdProviderBumpPlan(args []string) error {
 	}
 	fmt.Printf("%s\n", content)
 	return nil
+}
+
+// cmdPinHygieneVerdict reads the pin hygiene input on stdin and writes the
+// verdict. It fails when drift outlived its grace with no fresh refresh PR.
+func cmdPinHygieneVerdict([]string) error {
+	return metadatautil.EvaluatePinHygiene(os.Stdin, os.Stdout)
 }
 
 func cmdApplyProviderBumpPlan(args []string) error {

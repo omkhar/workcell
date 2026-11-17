@@ -92,6 +92,7 @@ internal/metadatautil	TestCheckPinnedInputsRequiresRootOwnedCodexArtifacts	c15d7
 internal/metadatautil	TestCheckPinnedInputsValidatesGoosePin	da012d9d	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPinnedInputsValidatesUncertifiedProviderLock	5d0758ee	a test precondition on the fixture text that the test itself rewrites
 internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestEvaluatePinHygieneVerdicts	3dae1cb5,4b5a70bc	a test assertion on the verdict output that the code under test produces
 internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	4a260cf1,7ec6e521	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes	5170f81d	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateWorkflowLaneManifestExpandsMatrixAndPathFilters	4370e2b0	unreviewed debt in a test: review the subject, then port or justify
@@ -247,6 +248,7 @@ internal/metadatautil	parseOperatorWorkflow	1cac3ece	unreviewed debt: review the
 internal/metadatautil	parseBuildStampedVersion	c1d7340c,f0c4e7f3	the pattern and the cut check one npm version string, not file content
 internal/metadatautil	parseShellFailOpenBaseline	bd45fee8	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseStableVersion	dabcc20c	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	pinHygieneUnclassifiedHold	8dc36840	the pattern checks the reason field of the decoded JSON provider plan, which holdCodexOnUnclassifiedCLISurface writes
 internal/metadatautil	pinnedInputsCheck.loadCIReproBuildJob	d666d2a3,eb3871b0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCIReproEntriesAndTail	9d3f0df3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.validateCIReproStrategy	7e8452b9,c6a9cfca,ccbc910c	unreviewed debt: review the subject, then port or justify
