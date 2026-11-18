@@ -299,9 +299,9 @@ RUN install-provider-packages.sh /opt/workcell/providers-uncertified \
 # second RUN is one set -eu command list, so the pinned-input check reads the
 # commands it runs. scripts/verify-upstream-goose-release.sh checks these pins
 # against the GitHub release digests.
-ARG GOOSE_VERSION=1.59.1
-ARG GOOSE_SHA256_ARM64=e8c8c67697e911cba4c7d72b29447591b54a72584d8223c8123ef749e4a157a1
-ARG GOOSE_SHA256_AMD64=bec6a9f3075fec077657a0115affb90bb34eae8792248bc2e92c1d6d6854e9d3
+ARG GOOSE_VERSION=1.59.2
+ARG GOOSE_SHA256_ARM64=d5d2b4b999c6664a15684d0972e84afd6a1b7cb8ca9e72b49bf335d0e8e08b93
+ARG GOOSE_SHA256_AMD64=73c40735b207e583cc827b087df07680fbd97d56d42a2940ffe692f9e077f6c8
 RUN case "${TARGETARCH}" in \
     arm64) echo aarch64-unknown-linux-musl ;; \
     amd64) echo x86_64-unknown-linux-musl ;; \
