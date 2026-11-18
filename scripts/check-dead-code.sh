@@ -6,7 +6,7 @@ workcell_entry_root="$(shopt -s nullglob && f="${BASH_SOURCE[0]}" r=scripts/chec
 }
 set -euo pipefail
 
-readonly DEADCODE_VERSION="v0.52.0"
+readonly DEADCODE_VERSION="v0.53.0"
 ROOT_DIR="${workcell_entry_root}"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
