@@ -709,3 +709,11 @@ Workcell does not use these workflow features:
 `pr-base-policy.yml` is the only `pull_request_target` exception.
 It uses trusted base-branch code and reads PR metadata only.
 It does not check out repository content or use an external action.
+
+`internal/metadatautil/pinnedinputs_workflows.go` holds it to that shape.
+Each level allows only the reviewed keys. A run line may only echo fixed text
+or exit. An expression may read only the workflow name, the PR number, base
+branch and draft flag, and the job env.
+`internal/metadatautil/pinnedinputs_workflows.go` refuses secrets,
+`github.token`, YAML anchors, a job environment or container, and any other
+runner or shell.
