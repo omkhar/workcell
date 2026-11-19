@@ -15,3 +15,7 @@ var ValidateClaudeMentionPlacement = validateClaudeMentionPlacement
 // LaneEntryGuard exposes the entry guard line, with REL for the script's path,
 // to the lane rows that build a guarded lane.
 var LaneEntryGuard = laneEntryGuard
+
+// WorkflowDeclaresTrigger exposes the decoded trigger check that gates the
+// pull_request_target safety contract.
+var WorkflowDeclaresTrigger = workflowDeclaresTrigger
