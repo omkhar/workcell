@@ -212,7 +212,361 @@ func IsSafePullRequestTargetWorkflow(workflowText, workflowPath string) error {
 			}
 		}
 	}
+	return validatePRBasePolicyLockdown(root, workflowPath)
+}
+
+// The pull_request_target exception is trusted only for the reviewed,
+// metadata-only shape of pr-base-policy.yml. The checks above reject the
+// obvious escapes (checkout, actions, reusable workflows, permissions); the
+// lockdown below is default-deny for everything else, so a later edit cannot
+// read secrets, change the shell, or fetch pull request code through run:.
+// Every check decodes structure (YAML nodes, a closed expression tokenizer, a
+// closed run-line grammar) instead of matching text, so anything it does not
+// recognize is refused.
+var (
+	prBaseTopLevelKeys = map[string]bool{"name": true, "on": true, "permissions": true, "defaults": true, "concurrency": true, "jobs": true}
+	prBaseJobKeys      = map[string]bool{"name": true, "runs-on": true, "timeout-minutes": true, "env": true, "steps": true}
+	prBaseStepKeys     = map[string]bool{"name": true, "if": true, "run": true}
+	prBaseRunners      = map[string]bool{"ubuntu-latest": true, "ubuntu-24.04": true, "ubuntu-22.04": true}
+	// The only contexts an expression may read. env.NAME is also allowed: job
+	// env values are expressions too, so they can only carry these contexts.
+	prBaseAllowedContexts = map[string]bool{
+		"github.workflow":                    true,
+		"github.event.pull_request.number":   true,
+		"github.event.pull_request.base.ref": true,
+		"github.event.pull_request.draft":    true,
+	}
+	prBaseDefaultShell = "bash --noprofile --norc -euo pipefail {0}"
+)
+
+func validatePRBasePolicyLockdown(root *yaml.Node, workflowPath string) error {
+	if err := rejectYAMLAnchors(root, workflowPath); err != nil {
+		return err
+	}
+	if err := requireOnlyKeys(root, prBaseTopLevelKeys, workflowPath, "top level"); err != nil {
+		return err
+	}
+	onNodes := yamlMappingValues(root, "on")
+	if len(onNodes) != 1 || onNodes[0].Kind != yaml.MappingNode || len(onNodes[0].Content) != 2 || onNodes[0].Content[0].Value != "pull_request_target" {
+		return fmt.Errorf("%s must trigger on pull_request_target only", workflowPath)
+	}
+	if defaults := yamlMappingValues(root, "defaults"); len(defaults) > 0 {
+		run := yamlMappingValues(defaults[0], "run")
+		if defaults[0].Kind != yaml.MappingNode || len(defaults[0].Content) != 2 || len(run) != 1 ||
+			run[0].Kind != yaml.MappingNode || len(run[0].Content) != 2 ||
+			yamlScalarValue(firstOrNil(yamlMappingValues(run[0], "shell"))) != prBaseDefaultShell {
+			return fmt.Errorf("%s must keep defaults.run.shell set to %q under pull_request_target", workflowPath, prBaseDefaultShell)
+		}
+	}
+	jobs := yamlMappingValues(root, "jobs")[0]
+	for i := 0; i+1 < len(jobs.Content); i += 2 {
+		job := jobs.Content[i+1]
+		if err := requireOnlyKeys(job, prBaseJobKeys, workflowPath, "job "+jobs.Content[i].Value); err != nil {
+			return err
+		}
+		runsOn := yamlMappingValues(job, "runs-on")
+		if len(runsOn) != 1 || runsOn[0].Kind != yaml.ScalarNode || !prBaseRunners[runsOn[0].Value] {
+			return fmt.Errorf("%s must run pull_request_target jobs on a GitHub-hosted ubuntu runner", workflowPath)
+		}
+		for _, env := range yamlMappingValues(job, "env") {
+			if env.Kind != yaml.MappingNode {
+				return fmt.Errorf("%s must define pull_request_target job env as a mapping", workflowPath)
+			}
+			for j := 1; j < len(env.Content); j += 2 {
+				if env.Content[j].Kind != yaml.ScalarNode {
+					return fmt.Errorf("%s must keep pull_request_target env values scalar", workflowPath)
+				}
+			}
+		}
+		for _, steps := range yamlMappingValues(job, "steps") {
+			for _, step := range steps.Content {
+				if err := requireOnlyKeys(step, prBaseStepKeys, workflowPath, "step"); err != nil {
+					return err
+				}
+				for _, run := range yamlMappingValues(step, "run") {
+					if run.Kind != yaml.ScalarNode {
+						return fmt.Errorf("%s must keep pull_request_target run scripts scalar", workflowPath)
+					}
+					for _, line := range scriptLines(run.Value) {
+						if !isPRBaseRunLine(line) {
+							return fmt.Errorf("%s run steps under pull_request_target may only echo fixed text or exit; found %q", workflowPath, line)
+						}
+					}
+				}
+				for _, cond := range yamlMappingValues(step, "if") {
+					if err := checkPRBaseCondition(yamlScalarValue(cond), workflowPath); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return checkPRBaseExpressions(root, workflowPath)
+}
+
+// workflowDeclaresTrigger decodes the workflow (aliases, merge keys and
+// escaped scalars resolved) and reports whether its on: names trigger, so an
+// escaped spelling of the trigger cannot skip the pull_request_target checks.
+func workflowDeclaresTrigger(workflowText, workflowPath, trigger string) (bool, error) {
+	var workflow map[string]any
+	if err := yaml.Unmarshal([]byte(workflowText), &workflow); err != nil {
+		return false, fmt.Errorf("%s: parse workflow YAML: %w", workflowPath, err)
+	}
+	switch on := workflow["on"].(type) {
+	case string:
+		return on == trigger, nil
+	case []any:
+		for _, name := range on {
+			if name == trigger {
+				return true, nil
+			}
+		}
+	case map[string]any:
+		_, ok := on[trigger]
+		return ok, nil
+	}
+	return false, nil
+}
+
+func firstOrNil(nodes []*yaml.Node) *yaml.Node {
+	if len(nodes) == 0 {
+		return nil
+	}
+	return nodes[0]
+}
+
+func rejectYAMLAnchors(node *yaml.Node, workflowPath string) error {
+	if node.Kind == yaml.AliasNode || node.Anchor != "" {
+		return fmt.Errorf("%s must not use YAML anchors or aliases under pull_request_target", workflowPath)
+	}
+	for _, child := range node.Content {
+		if err := rejectYAMLAnchors(child, workflowPath); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func requireOnlyKeys(mapping *yaml.Node, allowed map[string]bool, workflowPath, where string) error {
+	if mapping.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s must define the pull_request_target %s as a mapping", workflowPath, where)
+	}
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		key := mapping.Content[i]
+		if key.Kind != yaml.ScalarNode || !allowed[key.Value] {
+			return fmt.Errorf("%s must not set %q in the pull_request_target %s", workflowPath, key.Value, where)
+		}
+		if seen[key.Value] {
+			return fmt.Errorf("%s must not repeat %q in the pull_request_target %s", workflowPath, key.Value, where)
+		}
+		seen[key.Value] = true
+	}
+	return nil
+}
+
+// scriptLines returns the non-blank lines of a run script, trimmed of the
+// spaces and tabs around them.
+func scriptLines(script string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i <= len(script); i++ {
+		if i == len(script) || script[i] == '\n' {
+			line := trimBlanks(script[start:i])
+			if line != "" {
+				lines = append(lines, line)
+			}
+			start = i + 1
+		}
+	}
+	return lines
+}
+
+func trimBlanks(text string) string {
+	start, end := 0, len(text)
+	for start < end && (text[start] == ' ' || text[start] == '\t' || text[start] == '\r') {
+		start++
+	}
+	for end > start && (text[end-1] == ' ' || text[end-1] == '\t' || text[end-1] == '\r') {
+		end--
+	}
+	return text[start:end]
+}
+
+// isPRBaseRunLine accepts exactly the closed run-line grammar the reviewed
+// workflow uses: true, exit DIGITS, or echo "TEXT" with an optional >&2, where
+// TEXT holds no character the shell would expand or end the word on.
+func isPRBaseRunLine(line string) bool {
+	if line == "true" {
+		return true
+	}
+	if len(line) > len("exit ") && line[:len("exit ")] == "exit " {
+		for i := len("exit "); i < len(line); i++ {
+			if line[i] < '0' || line[i] > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	const opener = "echo \""
+	if len(line) < len(opener)+1 || line[:len(opener)] != opener {
+		return false
+	}
+	i := len(opener)
+	for ; i < len(line) && line[i] != '"'; i++ {
+		switch line[i] {
+		case '$', '`', '\\', '!':
+			return false
+		}
+	}
+	if i == len(line) {
+		return false
+	}
+	rest := line[i+1:]
+	return rest == "" || rest == " >&2"
+}
+
+// checkPRBaseCondition checks an if: value, which GitHub reads as an
+// expression whether or not it is wrapped in ${{ }}. A wrapped value must be
+// exactly one expression; checkPRBaseExpressions checks its body.
+func checkPRBaseCondition(condition, workflowPath string) error {
+	if len(condition) < 3 || condition[:3] != "${{" {
+		return checkPRBaseExpression(condition, workflowPath)
+	}
+	expressions, ok := workflowExpressions(condition)
+	if !ok || len(expressions) != 1 || "${{"+expressions[0]+"}}" != condition {
+		return fmt.Errorf("%s must write an if: condition as one expression under pull_request_target", workflowPath)
+	}
+	return nil
+}
+
+// checkPRBaseExpressions walks every scalar, keys included, and checks each
+// ${{ }} expression it holds.
+func checkPRBaseExpressions(node *yaml.Node, workflowPath string) error {
+	if node.Kind == yaml.ScalarNode {
+		expressions, ok := workflowExpressions(node.Value)
+		if !ok {
+			return fmt.Errorf("%s has an unterminated expression under pull_request_target", workflowPath)
+		}
+		for _, expression := range expressions {
+			if err := checkPRBaseExpression(expression, workflowPath); err != nil {
+				return err
+			}
+		}
+	}
+	for _, child := range node.Content {
+		if err := checkPRBaseExpressions(child, workflowPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// workflowExpressions returns the body of each ${{ }} in text. A '...' string
+// literal inside an expression may hold }}. It reports false when an
+// expression or a string literal is never closed.
+func workflowExpressions(text string) ([]string, bool) {
+	var expressions []string
+	for i := 0; i+2 < len(text); i++ {
+		if text[i] != '$' || text[i+1] != '{' || text[i+2] != '{' {
+			continue
+		}
+		start := i + 3
+		closed := false
+		for j := start; j < len(text); j++ {
+			if text[j] == '\'' {
+				for j++; j < len(text) && text[j] != '\''; j++ {
+				}
+				continue
+			}
+			if text[j] == '}' && j+1 < len(text) && text[j+1] == '}' {
+				expressions = append(expressions, text[start:j])
+				i = j + 1
+				closed = true
+				break
+			}
+		}
+		if !closed {
+			return nil, false
+		}
+	}
+	return expressions, true
+}
+
+// checkPRBaseExpression tokenizes a GitHub Actions expression and refuses any
+// property path that is not an allowed context, any index or function call,
+// and any character outside the operators the reviewed workflow needs.
+func checkPRBaseExpression(expression, workflowPath string) error {
+	for i := 0; i < len(expression); {
+		c := expression[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			i++
+		case c == '\'':
+			j := i + 1
+			for ; j < len(expression); j++ {
+				if expression[j] == '\'' {
+					if j+1 < len(expression) && expression[j+1] == '\'' {
+						j++
+						continue
+					}
+					break
+				}
+			}
+			if j >= len(expression) {
+				return fmt.Errorf("%s has an unterminated string in an expression under pull_request_target", workflowPath)
+			}
+			i = j + 1
+		case c == '=' || c == '!' || c == '&' || c == '|' || c == '<' || c == '>' || c == '(' || c == ')':
+			i++
+		case isExpressionNameByte(c):
+			j := i
+			for j < len(expression) && (isExpressionNameByte(expression[j]) || expression[j] == '.') {
+				j++
+			}
+			path := expression[i:j]
+			if j < len(expression) && (expression[j] == '[' || expression[j] == '(') {
+				return fmt.Errorf("%s must not index or call %q in an expression under pull_request_target", workflowPath, path)
+			}
+			if !isPRBaseExpressionPath(path) {
+				return fmt.Errorf("%s must not read %q under pull_request_target", workflowPath, path)
+			}
+			i = j
+		default:
+			return fmt.Errorf("%s has %q in an expression under pull_request_target", workflowPath, string(c))
+		}
+	}
+	return nil
+}
+
+func isExpressionNameByte(c byte) bool {
+	return c == '_' || c == '-' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+}
+
+func isPRBaseExpressionPath(path string) bool {
+	if prBaseAllowedContexts[path] || path == "true" || path == "false" || path == "null" {
+		return true
+	}
+	isNumber := path != ""
+	for i := 0; i < len(path); i++ {
+		if (path[i] < '0' || path[i] > '9') && path[i] != '.' {
+			isNumber = false
+		}
+	}
+	if isNumber {
+		return true
+	}
+	const envPrefix = "env."
+	if len(path) <= len(envPrefix) || path[:len(envPrefix)] != envPrefix {
+		return false
+	}
+	for i := len(envPrefix); i < len(path); i++ {
+		c := path[i]
+		if c != '_' && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func parseWorkflowRoot(workflowText, workflowPath string) (*yaml.Node, error) {
