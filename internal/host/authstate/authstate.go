@@ -27,6 +27,7 @@ var forbiddenCredentialSourceRoots = []string{
 	".cache/github-copilot",
 	".ssh",
 	".aws",
+	".vault-token",
 	".docker",
 	".kube",
 	".gnupg",

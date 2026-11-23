@@ -110,10 +110,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - Never pass through host sockets or auth state including `docker.sock`,
   `ssh-agent`, GPG agent sockets, launchd sockets, host `~/.codex`,
   `~/.claude`, `~/.gemini`, `~/.config/gh`, `~/.config/op`, host
-  Keychains, AWS credential state, or git credential-helper state. The
-  conflict-free subset (`docker.sock`, `SSH_AUTH_SOCK`, `/.ssh`,
-  `/.aws`, `/.vault-token`, `Library/Keychains`, `.gnupg`,
-  `.git-credentials`) lives in
+  Keychains, AWS credential state, Vault CLI tokens, or git
+  credential-helper state. The conflict-free subset (`docker.sock`,
+  `SSH_AUTH_SOCK`, `/.ssh`, `/.aws`, `/.vault-token`,
+  `Library/Keychains`, `.gnupg`, `.git-credentials`) lives in
   `policy/forbidden-host-paths.toml` and is enforced by
   `scripts/verify-invariants.sh` against the dry-run Docker invocation.
   The same verifier checks host-side mount sources for the provider-state
