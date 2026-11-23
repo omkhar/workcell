@@ -5510,6 +5510,33 @@ if [[ "${#FORBIDDEN_HOST_PATHS[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+# Lockstep: each policy entry must appear in AGENTS.md as a code span.
+agents_names_forbidden_path() {
+  local agents_file="$1"
+  local entry="$2"
+  grep -F -- "\`${entry}\`" "${agents_file}" >/dev/null
+}
+
+# Negative fixture: the check must reject a doc that omits an entry.
+LOCKSTEP_FIXTURE="$(mktemp "${VERIFY_RUN_ROOT}/agents-lockstep.XXXXXX")"
+printf '%s\n' 'The subset (`/.ssh`, `/.aws`) lives in the policy file.' >"${LOCKSTEP_FIXTURE}"
+if agents_names_forbidden_path "${LOCKSTEP_FIXTURE}" "/.vault-token"; then
+  echo "Expected AGENTS.md lockstep check to reject a missing entry" >&2
+  exit 1
+fi
+if ! agents_names_forbidden_path "${LOCKSTEP_FIXTURE}" "/.aws"; then
+  echo "Expected AGENTS.md lockstep check to accept a listed entry" >&2
+  exit 1
+fi
+
+for forbidden in "${FORBIDDEN_HOST_PATHS[@]}"; do
+  if ! agents_names_forbidden_path "${ROOT_DIR}/AGENTS.md" "${forbidden}"; then
+    echo "AGENTS.md does not name forbidden host path: ${forbidden}" >&2
+    echo "Add it to the conflict-free subset in AGENTS.md" >&2
+    exit 1
+  fi
+done
+
 for forbidden in "${FORBIDDEN_HOST_PATHS[@]}"; do
   # grep -F so regex metacharacters in policy entries (e.g. the `.` in
   # `docker.sock` or `.gnupg`) match literally; otherwise a future entry

@@ -26,6 +26,7 @@ ssh_agent     = "SSH_AUTH_SOCK"
 # Generic SSH / cloud credential stores.
 ssh_state = "/.ssh"
 aws_state = "/.aws"
+vault_token = "/.vault-token"
 
 # OS-level secret stores.
 mac_keychains = "Library/Keychains"
