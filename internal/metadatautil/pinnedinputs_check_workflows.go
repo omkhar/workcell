@@ -508,7 +508,11 @@ func (check *pinnedInputsCheck) validateWorkflowPolicy(text, path string) error 
 	if !workflowPermissionsRE.MatchString(text) {
 		return fmt.Errorf("workflow-level empty permissions declaration missing in %s", path)
 	}
-	if strings.Contains(text, "pull_request_target") {
+	hasTarget, err := workflowDeclaresTrigger(text, path, "pull_request_target")
+	if err != nil {
+		return err
+	}
+	if hasTarget || strings.Contains(text, "pull_request_target") {
 		if err := IsSafePullRequestTargetWorkflow(text, path); err != nil {
 			return err
 		}
