@@ -26,7 +26,8 @@ var CodexGUISubcommands = []string{"app", "app-server"}
 // CodexDeniedSubcommands is every known control-plane, daemon, marketplace,
 // sandbox-escape and self-update subcommand, refused on every UI.
 // cloud-tasks is the alias of cloud. responses-api-proxy and stdio-to-uds are
-// hidden daemon and bridge subcommands. agents, queue and migrate-rollouts
+// hidden daemon and bridge subcommands. Codex 0.171.0 removed stdio-to-uds.
+// The name stays denied, so an older pinned binary cannot run it. agents, queue and migrate-rollouts
 // reach the shared app-server, change an existing session, or rewrite session
 // history. debug reaches the app-server test client and mutates local memory.
 // git-credential (hidden) prints the Codex login to Git's credential-helper
