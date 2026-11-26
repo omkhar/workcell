@@ -42,10 +42,13 @@ var CodexDeniedSubcommands = []string{
 // --yolo is the hidden alias of --dangerously-bypass-approvals-and-sandbox.
 // --approve-for-me and --not-so-yolo pick auto review. --trust persists project
 // trust, MCP commands outside the sandbox included.
+// --codex-run-as-sandbox-launcher is a hidden first argument of Codex 0.172.0
+// that starts the shared sandbox launcher before clap parses the command line.
+// It is in neither --help nor the subcommand enum.
 var codexUnsafeOptions = []string{
 	"--yolo", "--approve-for-me", "--not-so-yolo", "--trust", "--ignore-rules", "--search", "--add-dir",
 	"--remote", "--remote-auth-token-env", "--full-auto", "-a", "--ask-for-approval", "-s",
-	"--sandbox", "--enable", "--disable",
+	"--sandbox", "--enable", "--disable", "--codex-run-as-sandbox-launcher",
 }
 
 // codexUnsafeAttached die in their --name=value form, with the name in the

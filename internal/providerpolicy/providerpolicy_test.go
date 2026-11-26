@@ -68,6 +68,11 @@ func TestCodexPolicy(t *testing.T) {
 		{[]string{"--yolo"}, codexUnsafe + "--yolo"},
 		{[]string{"--yolo=true"}, codexUnsafe + "--yolo=true"},
 		{[]string{"--trust"}, codexUnsafe + "--trust"},
+		{[]string{"--codex-run-as-sandbox-launcher"}, codexUnsafe + "--codex-run-as-sandbox-launcher"},
+		{[]string{"--model", "gpt-5", "--codex-run-as-sandbox-launcher"}, codexUnsafe + "--codex-run-as-sandbox-launcher"},
+		// Codex 0.172.0 lets exec take --remote and --remote-auth-token-env.
+		{[]string{"exec", "--remote", "wss://example.invalid", "hi"}, codexUnsafe + "--remote"},
+		{[]string{"exec", "--remote-auth-token-env", "TOKEN", "hi"}, codexUnsafe + "--remote-auth-token-env"},
 		{[]string{"exec", "--trust=1", "hi"}, codexUnsafe + "--trust=1"},
 		{[]string{"--dangerously-bypass-approvals-and-sandbox"}, codexUnsafe + "--dangerously-bypass-approvals-and-sandbox"},
 		{[]string{"--dangerously-bypass-hook-trust=1"}, codexUnsafe + "--dangerously-bypass-hook-trust=1"},
