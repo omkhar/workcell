@@ -28,7 +28,9 @@
 # A reviewed classification may land ahead of the pin: a name that the next
 # release adds is listed here once internal/providerpolicy/codex.go classifies
 # it, so the updater's exact-set check passes for that release and advances the
-# stamp.
+# stamp. A removal lands the same way: Codex 0.171.0 removed the hidden
+# stdio-to-uds bridge, so it is not listed here, and the Codex policy still
+# denies the name for any older pinned binary.
 # One name per line; blank/`#` lines are ignored.
 agents
 tcp-tunnel
@@ -62,7 +64,6 @@ fork
 cloud
 cloud-tasks
 responses-api-proxy
-stdio-to-uds
 exec-server
 features
 help
