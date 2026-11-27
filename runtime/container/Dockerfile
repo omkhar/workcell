@@ -299,9 +299,9 @@ RUN install-provider-packages.sh /opt/workcell/providers-uncertified \
 # second RUN is one set -eu command list, so the pinned-input check reads the
 # commands it runs. scripts/verify-upstream-goose-release.sh checks these pins
 # against the GitHub release digests.
-ARG GOOSE_VERSION=1.59.2
-ARG GOOSE_SHA256_ARM64=d5d2b4b999c6664a15684d0972e84afd6a1b7cb8ca9e72b49bf335d0e8e08b93
-ARG GOOSE_SHA256_AMD64=73c40735b207e583cc827b087df07680fbd97d56d42a2940ffe692f9e077f6c8
+ARG GOOSE_VERSION=1.60.2
+ARG GOOSE_SHA256_ARM64=7445e977a9465189000d92c227c906d55833a6892f5999aadc97f0c6b0d15604
+ARG GOOSE_SHA256_AMD64=20844fb828b43090bdf1c6f5931028695922843884e4f01083175dbdba0bd99f
 RUN case "${TARGETARCH}" in \
     arm64) echo aarch64-unknown-linux-musl ;; \
     amd64) echo x86_64-unknown-linux-musl ;; \
@@ -330,19 +330,19 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.326
+ARG CLAUDE_VERSION=2.1.331
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
 # consumes the signed, statically linked musl Linux CLI and code-mode host.
 # To update manually, verify all four GitHub release asset digests. Then
 # refresh both checksum values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.169.0
+ARG CODEX_VERSION=0.172.0
 # GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
 # state.
-ARG COPILOT_VERSION=1.0.112
+ARG COPILOT_VERSION=1.0.115
 ARG CODEX_RELEASE_URL=
 ARG CODEX_CODE_MODE_HOST_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
@@ -419,11 +419,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="98d56f6ffe53469767a74864a38eaf359d62ef557a8de1b1ad524d61a66ec119"; \
+      CLAUDE_SHA256="3e5afea76cf6ed53f42076d8b175c4ee3d9ab34cd9b90452da115d21ad0d5d31"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="b6b3647d981130dc44fc670846ae97b6cde531ffb667cf9c4d17cfcafb38cb37"; \
+      CLAUDE_SHA256="4c00839cf46beb2b38ec310105f2d538f7f9321fe46c636299b74bcab94626b1"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -455,13 +455,13 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="97b97d87eea075c5cb7709c7f6156a451622a7667953ecda40e0276637196f3f"; \
-      CODEX_CODE_MODE_HOST_SHA256="059397e4d5beda7a7acc7441a6a56457d0f79e1001d129976ac0d26b0e6ee04c"; \
+      CODEX_SHA256="0b99526c185a4425fe96a2214fb7b6a6a7f7c1471883b7afbebe97e15e83e79e"; \
+      CODEX_CODE_MODE_HOST_SHA256="b6637ebaa353ea3a934d40e3751289a9a39ed81cf96fe3fa3afea11e3840dc68"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="9af4d751fce183faedea629437d5252dbf458eeb04130cf4f97be844621ea985"; \
-      CODEX_CODE_MODE_HOST_SHA256="cbed6a8d25e8268792b757767fbc76d4c62e84bcf8ee4a63f97547f0de3aaceb"; \
+      CODEX_SHA256="a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392"; \
+      CODEX_CODE_MODE_HOST_SHA256="20b0a4bcf332415a5997914c943d04af6c3627af0c379fdbf65400550e352bb4"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -523,11 +523,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="491d18303505935675dc20987ef0c5f3ae899f81e66c53d567ad97a8b03e504e"; \
+      COPILOT_SHA256="889b423ce7e0dd41a298b95716d3d8fe80dc30f1fd9cf5419a95b6fb8d4e1bc8"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="dfe7e59acf04f0b7f59b024ea9db101a9246503e9bf7152eb668fbb2a469b151"; \
+      COPILOT_SHA256="e01975bf3a73791b0c0adfdf0d7093b8616186db61b78b33604b124806808816"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
