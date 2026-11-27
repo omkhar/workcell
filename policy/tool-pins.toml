@@ -12,14 +12,14 @@
 # them (actionlint, zizmor and ORAS versions have no leading `v`).
 
 [tool_pins]
-cosign = "v3.1.4"
-buildx = "v0.39.0"
-buildkit = "moby/buildkit:buildx-stable-1@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe"
+cosign = "v3.1.6"
+buildx = "v0.39.1"
+buildkit = "moby/buildkit:buildx-stable-1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c"
 qemu = "tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 syft = "v1.57.2"
 actionlint_version = "1.7.12"
 actionlint_sha256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
-zizmor_version = "1.32.0"
-zizmor_sha256 = "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b"
+zizmor_version = "1.33.1"
+zizmor_sha256 = "3e6a301c7a820a2501915f5a9de8c0486da82bdec7965f068477538a98743d43"
 oras_version = "1.3.3"
 oras_linux_amd64_sha256 = "9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59"

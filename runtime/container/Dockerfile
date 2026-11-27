@@ -1,13 +1,13 @@
 # Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0
+ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:4d00acb4bcc42c454c4eb801526f7ad7f772ea3bd4fd168c5cc2e384abcbb9d4
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
 
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.100.0-slim-trixie@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.100.0-slim-trixie@sha256:3b199fd6db7d709274df56565b8f4003f9e30d7bfcff9d53148c86053b7855e2
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 

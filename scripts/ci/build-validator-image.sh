@@ -25,7 +25,7 @@ CACHE_SCOPE="${WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE:-validator-local}"
 # layer in the gha cache from untrusted PR sources.  CI sets this to
 # "max" only on push-to-main runs where the cache is operator-trusted.
 CACHE_WRITE_MODE="${WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE:-min}"
-BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe}"
+BUILDKIT_IMAGE="${WORKCELL_BUILDKIT_IMAGE:-moby/buildkit:buildx-stable-1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c}"
 # The image must name the reviewed BuildKit repository with no registry host or
 # other prefix, in the format policy/tool-pins.toml requires. The bracket lists
 # are spelled out so the match does not depend on the locale.
