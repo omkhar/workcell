@@ -5520,6 +5520,7 @@ agents_forbidden_subset() {
   [[ "${joined}" == *'conflict-free subset ('* ]] || return 1
   joined="${joined#*conflict-free subset (}"
   joined="${joined%%)*}"
+  # shellcheck disable=SC2016 # the backticks are literal Markdown code spans, not command substitution
   printf '%s\n' "${joined}" | grep -o '`[^`]*`' | tr -d '`' | LC_ALL=C sort -u
 }
 
@@ -5536,6 +5537,7 @@ agents_subset_matches_policy() {
 # Fixtures: the check must accept an exact match and reject a missing
 # entry, an extra entry, and an entry named only outside the subset.
 LOCKSTEP_FIXTURE="$(mktemp "${VERIFY_RUN_ROOT}/agents-lockstep.XXXXXX")"
+# shellcheck disable=SC2016 # the fixture holds literal Markdown code spans
 printf '%s\n' 'The conflict-free subset (`/.ssh`,' '`/.aws`) lives in the policy file.' >"${LOCKSTEP_FIXTURE}"
 if ! agents_subset_matches_policy "${LOCKSTEP_FIXTURE}" "/.ssh" "/.aws"; then
   echo "Expected AGENTS.md lockstep check to accept a matching subset" >&2
@@ -5549,6 +5551,7 @@ if agents_subset_matches_policy "${LOCKSTEP_FIXTURE}" "/.ssh"; then
   echo "Expected AGENTS.md lockstep check to reject an extra entry" >&2
   exit 1
 fi
+# shellcheck disable=SC2016 # the fixture holds a literal Markdown code span
 printf '%s\n' 'Never mount `/.vault-token`.' >>"${LOCKSTEP_FIXTURE}"
 if agents_subset_matches_policy "${LOCKSTEP_FIXTURE}" "/.ssh" "/.aws" "/.vault-token"; then
   echo "Expected AGENTS.md lockstep check to reject an entry named only outside the subset" >&2
