@@ -483,6 +483,7 @@ host_provider_state_roots() {
     "${REAL_HOME}/.cache/github-copilot" \
     "${REAL_HOME}/.ssh" \
     "${REAL_HOME}/.aws" \
+    "${REAL_HOME}/.vault-token" \
     "${REAL_HOME}/.docker" \
     "${REAL_HOME}/.kube" \
     "${REAL_HOME}/.gnupg" \
@@ -5510,6 +5511,56 @@ if [[ "${#FORBIDDEN_HOST_PATHS[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+# Lockstep: the conflict-free subset in AGENTS.md must name exactly the
+# entries in the policy file, in both directions.
+agents_forbidden_subset() {
+  local agents_file="$1"
+  local joined=""
+  joined="$(tr '\n' ' ' <"${agents_file}" | tr -s ' ')"
+  [[ "${joined}" == *'conflict-free subset ('* ]] || return 1
+  joined="${joined#*conflict-free subset (}"
+  joined="${joined%%)*}"
+  printf '%s\n' "${joined}" | grep -o '`[^`]*`' | tr -d '`' | LC_ALL=C sort -u
+}
+
+agents_subset_matches_policy() {
+  local agents_file="$1"
+  shift
+  local documented=""
+  local expected=""
+  documented="$(agents_forbidden_subset "${agents_file}")" || return 1
+  expected="$(printf '%s\n' "$@" | LC_ALL=C sort -u)"
+  [[ "${documented}" == "${expected}" ]]
+}
+
+# Fixtures: the check must accept an exact match and reject a missing
+# entry, an extra entry, and an entry named only outside the subset.
+LOCKSTEP_FIXTURE="$(mktemp "${VERIFY_RUN_ROOT}/agents-lockstep.XXXXXX")"
+printf '%s\n' 'The conflict-free subset (`/.ssh`,' '`/.aws`) lives in the policy file.' >"${LOCKSTEP_FIXTURE}"
+if ! agents_subset_matches_policy "${LOCKSTEP_FIXTURE}" "/.ssh" "/.aws"; then
+  echo "Expected AGENTS.md lockstep check to accept a matching subset" >&2
+  exit 1
+fi
+if agents_subset_matches_policy "${LOCKSTEP_FIXTURE}" "/.ssh" "/.aws" "/.vault-token"; then
+  echo "Expected AGENTS.md lockstep check to reject a missing entry" >&2
+  exit 1
+fi
+if agents_subset_matches_policy "${LOCKSTEP_FIXTURE}" "/.ssh"; then
+  echo "Expected AGENTS.md lockstep check to reject an extra entry" >&2
+  exit 1
+fi
+printf '%s\n' 'Never mount `/.vault-token`.' >>"${LOCKSTEP_FIXTURE}"
+if agents_subset_matches_policy "${LOCKSTEP_FIXTURE}" "/.ssh" "/.aws" "/.vault-token"; then
+  echo "Expected AGENTS.md lockstep check to reject an entry named only outside the subset" >&2
+  exit 1
+fi
+
+if ! agents_subset_matches_policy "${ROOT_DIR}/AGENTS.md" "${FORBIDDEN_HOST_PATHS[@]}"; then
+  echo "The conflict-free subset in AGENTS.md does not match ${FORBIDDEN_HOST_PATHS_FILE}" >&2
+  echo "Make the subset name exactly the policy entries" >&2
+  exit 1
+fi
+
 for forbidden in "${FORBIDDEN_HOST_PATHS[@]}"; do
   # grep -F so regex metacharacters in policy entries (e.g. the `.` in
   # `docker.sock` or `.gnupg`) match literally; otherwise a future entry
@@ -5535,6 +5586,7 @@ for case_varied_provider_state in \
   "${REAL_HOME}/Library/keychains/login.keychain-db" \
   "${REAL_HOME}/.Docker/config.json" \
   "${REAL_HOME}/.Kube/config" \
+  "${REAL_HOME}/.Vault-Token" \
   "${REAL_HOME}/.Netrc"; do
   if [[ -z "$(find_forbidden_host_mount_source "docker run -v ${case_varied_provider_state}:/state/agent-home/provider-state:ro workcell:local")" ]]; then
     echo "Expected mount-source parser to reject case-varied host provider/auth state root: ${case_varied_provider_state}" >&2

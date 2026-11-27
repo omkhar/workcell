@@ -62,16 +62,29 @@ func TestForbiddenCredentialSourceRootRejectsProviderState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	source := filepath.Join(home, ".config", "gh", "hosts.yml")
-	root, ok, err := ForbiddenCredentialSourceRoot(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatalf("ForbiddenCredentialSourceRoot(%q) did not reject provider state", source)
-	}
-	if want := filepath.Join(home, ".config", "gh"); root != want {
-		t.Fatalf("root = %q, want %q", root, want)
+	for _, tc := range []struct {
+		source string
+		want   string
+	}{
+		{
+			source: filepath.Join(home, ".config", "gh", "hosts.yml"),
+			want:   filepath.Join(home, ".config", "gh"),
+		},
+		{
+			source: filepath.Join(home, ".vault-token"),
+			want:   filepath.Join(home, ".vault-token"),
+		},
+	} {
+		root, ok, err := ForbiddenCredentialSourceRoot(tc.source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Fatalf("ForbiddenCredentialSourceRoot(%q) did not reject provider state", tc.source)
+		}
+		if root != tc.want {
+			t.Fatalf("root = %q, want %q", root, tc.want)
+		}
 	}
 }
 
@@ -138,6 +151,11 @@ func TestForbiddenCredentialSourceRootRejectsCaseVariedProviderState(t *testing.
 			source: filepath.Join(home, ".Netrc"),
 			want:   filepath.Join(home, ".netrc"),
 		},
+		{
+			name:   "vault cli token",
+			source: filepath.Join(home, ".Vault-Token"),
+			want:   filepath.Join(home, ".vault-token"),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, ok, err := forbiddenCredentialSourceRoot(tc.source, home, true)
@@ -161,6 +179,7 @@ func TestForbiddenCredentialSourceRootAllowsSiblingAndManagedState(t *testing.T)
 	for _, source := range []string{
 		filepath.Join(home, ".config", "github-copilot-export", "token.txt"),
 		filepath.Join(home, ".local", "state", "workcell", "credentials", "copilot", "github-token.txt"),
+		filepath.Join(home, ".vault-token.bak"),
 	} {
 		if root, ok, err := ForbiddenCredentialSourceRoot(source); err != nil {
 			t.Fatal(err)

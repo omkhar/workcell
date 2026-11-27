@@ -14,8 +14,8 @@
 # "Never pass through host sockets or auth state"); this file is the
 # machine-checked enumeration that scripts/verify-invariants.sh
 # (forbidden_host_paths section) reads. Anything added here MUST also be
-# called out in the AGENTS.md narrative — verify-invariants.sh enforces
-# that lockstep.
+# named in the AGENTS.md conflict-free subset. verify-invariants.sh
+# requires the subset and this section to name the same entries.
 
 [forbidden_host_paths]
 
@@ -26,6 +26,7 @@ ssh_agent     = "SSH_AUTH_SOCK"
 # Generic SSH / cloud credential stores.
 ssh_state = "/.ssh"
 aws_state = "/.aws"
+vault_token = "/.vault-token"
 
 # OS-level secret stores.
 mac_keychains = "Library/Keychains"
